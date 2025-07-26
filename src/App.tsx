@@ -50,15 +50,15 @@ function App() {
   };
 
   return (
-<div className="w-full max-w-2xl h-screen">
-      <Container
-        text={nestedData.text}
-        subgroups={nestedData.subgroups}
-        level={nestedData.level}
-        style={nestedData.style}
-      />
-    </div>
-  );
+    <div className="w-full max-w-2xl h-screen">
+          <Container
+            text={nestedData.text}
+            subgroups={nestedData.subgroups}
+            level={nestedData.level}
+            style={nestedData.style}
+          />
+        </div>
+      );
 }
 
 export default App;

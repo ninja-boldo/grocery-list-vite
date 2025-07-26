@@ -22,3 +22,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+openfoodfacts-products.jsonl
+openfoodfacts.db
