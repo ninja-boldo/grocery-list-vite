@@ -50,7 +50,7 @@ function App() {
   };
 
   return (
-<div className="max-w-4xl">
+<div className="w-full max-w-2xl h-screen">
       <Container
         text={nestedData.text}
         subgroups={nestedData.subgroups}
