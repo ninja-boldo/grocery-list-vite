@@ -1,20 +1,45 @@
+# server.py
 import duckdb
-import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Query, Request
+import uvicorn
 
-# Print the current working directory
-print("Current Working Directory:", os.getcwd())
+DB_PATH = "data/openfoodfacts.db"
 
-# Create a DuckDB connection to a database file
-db_file = 'data/openfoodfacts.db'  # Specify the name of the database file
-con = duckdb.connect(db_file)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
 
-# Now you can query the table
-result = con.execute("PRAGMA table_info('openfoodfacts')").fetchall()
+    app.state.con = duckdb.connect(DB_PATH)
+    print("DuckDB connection opened")
+    yield
+
+    app.state.con.close()
+    print("DuckDB connection closed")
 
 
+app = FastAPI(lifespan=lifespan)
 
-# Print the result
-print(result)
+@app.get("/")
+async def read_root(request: Request):
+    result = request.app.state.con.execute("select * from openfoodfacts limit 1").fetchall()
+    print(result)
+    return {"message": result}
 
-# Close the connection
-con.close()
+@app.get("/get_info/")
+async def get_info(request: Request, ean: str = Query(..., min_length=8, max_length=14)):
+    con = request.app.state.con
+    cur = con.execute("SELECT * FROM openfoodfacts WHERE ean = ?", (ean,))
+    row = cur.fetchone()
+    return {"ean": ean, "row": row}
+
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "server:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=False,             # True = auto-reload on code changes (dev only)
+        workers=1,
+        loop="uvloop",            # Faster event loop (if available)
+        http="httptools",         # Fast HTTP parser
+    )

@@ -1,0 +1,13 @@
+import { Routes, Route } from 'react-router-dom';
+
+import App from './App';
+import BarcodeScanner from './comp/Scanner';
+
+export default function AppRouter() {
+  return (
+    <Routes>
+      <Route path="/" element={<App />} />
+      <Route path="/scanner" element={<BarcodeScanner />} />
+    </Routes>
+  );
+}
