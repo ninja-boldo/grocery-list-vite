@@ -1,122 +1,224 @@
-import React, { useEffect, useRef, useState } from 'react';
+
+import { useEffect, useRef, useState } from 'react';
 import { BrowserMultiFormatReader, NotFoundException, Result } from '@zxing/library';
 
-export default function BarcodeScanner() {
+export default function FullScreenCameraScanner() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
-  const [ean, setEan] = useState<string>('');
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
-  const [scanning, setScanning] = useState(false);
+  const [ean, setEan] = useState('');
+  const [scanning, setScanning] = useState(true); // Auto-start scanning
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
 
   useEffect(() => {
-    // Initialize code reader
-    const codeReader = new BrowserMultiFormatReader();
-    codeReaderRef.current = codeReader;
-
-    // List available video input devices (cameras)
-    codeReader.listVideoInputDevices()
-      .then(videoInputDevices => {
-        setDevices(videoInputDevices);
-        if (videoInputDevices.length > 0) {
-          setSelectedDeviceId(videoInputDevices[0].deviceId);
-        }
-      })
-      .catch(console.error);
-
-    // Cleanup on unmount
+    // Set full screen styling
+    document.body.style.margin = '0';
+    document.body.style.padding = '0';
+    document.body.style.overflow = 'hidden';
+    document.body.style.width = '100vw';
+    document.body.style.height = '100vh';
+    
     return () => {
-      codeReader.reset();
+      document.body.style.margin = '';
+      document.body.style.padding = '';
+      document.body.style.overflow = '';
+      document.body.style.width = '';
+      document.body.style.height = '';
     };
   }, []);
 
-  // Function to start scanning
-  const startScanning = () => {
-    if (!selectedDeviceId || !videoRef.current || !codeReaderRef.current) return;
-
-    setScanning(true);
-    codeReaderRef.current.decodeFromVideoDevice(
-      selectedDeviceId,
-      videoRef.current,
-      (result: Result | undefined, error: any) => {
-        if (result) {
-          const text = result.getText();
-          // Simple check: EAN-13 is 13 digits numeric
-          if (/^\d{13}$/.test(text)) {
-            setEan(text);
-            setScanning(false); // stop scanning after detection
-            codeReaderRef.current?.reset();
-            sendEanToBackend(text);
-          }
+  // Get available cameras on component mount
+  useEffect(() => {
+    const getCameras = async () => {
+      try {
+        // First request camera permission to get device labels
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach(track => track.stop()); // Stop the test stream
+        
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        console.log('Available cameras:', videoDevices);
+        setAvailableCameras(videoDevices);
+        
+        // Auto-select rear camera: prefer rear camera always
+        if (videoDevices.length > 0) {
+          // Try to find rear camera first, fallback to any camera
+          const rearCamera = videoDevices.find(device => 
+            device.label.toLowerCase().includes('back') || 
+            device.label.toLowerCase().includes('rear') ||
+            device.label.toLowerCase().includes('rück') ||
+            device.label.toLowerCase().includes('hinten') ||
+            device.label.toLowerCase().includes('environment')
+          );
+          setSelectedCameraId(rearCamera?.deviceId || videoDevices[0].deviceId);
         }
-        if (error && !(error instanceof NotFoundException)) {
-          console.error(error);
+      } catch (error) {
+        console.error('Error getting cameras:', error);
+        console.error('Camera error details:', error.name, error.message);
+        
+        // Fallback: try without specific device ID (prefer rear camera)
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: 'environment' } 
+          });
+          stream.getTracks().forEach(track => track.stop());
+          setSelectedCameraId('fallback');
+          setAvailableCameras([{ deviceId: 'fallback', label: 'Rear Camera', kind: 'videoinput' }]);
+        } catch (fallbackError) {
+          console.error('Fallback camera access failed:', fallbackError);
         }
       }
-    );
-  };
+    };
 
-  const sendEanToBackend = async (ean: string) => {
-    try {
-      const res = await fetch('/api/check_ean', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ean }),
+    getCameras();
+  }, []);
+
+  const sendEan = () => {}
+
+  useEffect(() => {
+    if (!scanning || !selectedCameraId) return;
+
+    const codeReader = new BrowserMultiFormatReader();
+    codeReaderRef.current = codeReader;
+
+    // Faster scanning
+    (codeReader as BrowserMultiFormatReader & { _timeoutBetweenDecodingAttempts?: number })._timeoutBetweenDecodingAttempts = 100;
+
+    const constraints = selectedCameraId === 'fallback' 
+      ? {
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1920, min: 640 },
+            height: { ideal: 1080, min: 480 },
+            frameRate: { ideal: 60, min: 30 },
+            focusMode: 'continuous',
+            focusDistance: 0.1, // Close focus for barcodes
+            whiteBalanceMode: 'continuous',
+            exposureMode: 'continuous',
+          },
+        }
+      : {
+          video: {
+            deviceId: { exact: selectedCameraId },
+            width: { ideal: 1920, min: 640 },
+            height: { ideal: 1080, min: 480 },
+            frameRate: { ideal: 60, min: 30 },
+            focusMode: 'continuous',
+            focusDistance: 0.1, // Close focus for barcodes
+            whiteBalanceMode: 'continuous',
+            exposureMode: 'continuous',
+          },
+        };
+
+    navigator.mediaDevices.getUserMedia(constraints)
+      .then(async (stream) => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+
+        // Apply additional camera settings for better performance
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack && videoTrack.applyConstraints) {
+          try {
+            await videoTrack.applyConstraints({
+              focusMode: 'continuous',
+              focusDistance: 0.1,
+              exposureMode: 'continuous',
+              whiteBalanceMode: 'continuous',
+            });
+          } catch (constraintError) {
+            console.log('Advanced constraints not supported:', constraintError);
+          }
+        }
+
+        // Optimized decoding with reduced overhead
+        let lastDecodeTime = 0;
+        const DECODE_THROTTLE = 16; // ~60fps max decode attempts
+
+        codeReader.decodeFromVideoElementContinuously(videoRef.current!, (result: Result | undefined, err: unknown) => {
+          const now = performance.now();
+          if (now - lastDecodeTime < DECODE_THROTTLE) return; // Throttle decoding
+          lastDecodeTime = now;
+
+          if (result) {
+            const text = result.getText();
+            // More flexible barcode detection - accepts EAN-13, UPC-A, and other common formats
+            if (/^\d{8,14}$/.test(text)) {
+
+              setEan(text);
+              setScanning(false);
+              codeReader.reset();
+
+              console.log('Barcode detected:', text);
+              
+              // Haptic feedback if available
+              if ('vibrate' in navigator) {
+                navigator.vibrate(200);
+              }
+            }
+          }
+          // Suppress most error logging for performance
+          if (err && !(err instanceof NotFoundException) && Math.random() < 0.01) {
+            console.error(err);
+          }
+        });
+      })
+      .catch((error) => {
+        console.error('Camera access error:', error);
+        setScanning(false);
       });
-      if (!res.ok) throw new Error('Network error');
-      const data = await res.json();
-      console.log('Backend response:', data);
-    } catch (err) {
-      console.error('Error sending EAN:', err);
-    }
-  };
 
-  // Stop scanning (reset)
-  const resetScanner = () => {
-    codeReaderRef.current?.reset();
-    setEan('');
-    setScanning(false);
-  };
+    return () => {
+      codeReader.reset();
+      if (videoRef.current?.srcObject) {
+        (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [scanning, selectedCameraId]);
 
   return (
-    <div>
-      <h2>Barcode Scanner</h2>
-      <div>
-        <label htmlFor="deviceSelect">Choose camera:</label>
-        <select
-          id="deviceSelect"
-          onChange={e => setSelectedDeviceId(e.target.value)}
-          value={selectedDeviceId ?? ''}
-          disabled={scanning}
-        >
-          {devices.map(device => (
-            <option key={device.deviceId} value={device.deviceId}>
-              {device.label || device.deviceId}
-            </option>
-          ))}
-        </select>
-      </div>
-
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      width: '100vw',
+      height: '100vh',
+      backgroundColor: 'black',
+      overflow: 'hidden',
+    }}>
       <video
         ref={videoRef}
-        style={{ width: '100%', maxHeight: '300px', border: '1px solid black' }}
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          backgroundColor: 'black',
+          willChange: 'transform', // GPU acceleration hint
+          transform: 'translateZ(0)', // Force hardware acceleration
+        }}
         muted
-        autoPlay
         playsInline
-      ></video>
+        autoPlay
+        preload="none" // Faster loading
+      />
 
-      <div style={{ marginTop: 10 }}>
-        {!scanning ? (
-          <button onClick={startScanning} disabled={!selectedDeviceId}>
-            Start Scanning
-          </button>
-        ) : (
-          <button onClick={resetScanner}>Stop Scanning</button>
-        )}
-      </div>
-
-      <div>
-        <h3>EAN: {ean || 'No code detected yet'}</h3>
+      {/* Status text at bottom */}
+      <div style={{
+        position: 'fixed',
+        bottom: 20,
+        left: 0,
+        right: 0,
+        textAlign: 'center',
+        color: 'white',
+        textShadow: '2px 2px 4px rgba(0,0,0,0.8)',
+        fontSize: 24,
+        fontWeight: 'bold',
+        zIndex: 10000,
+        padding: '0 20px',
+      }}>
+        {ean ? `Barcode: ${ean}` : 'Point your camera at a barcode'}
       </div>
     </div>
   );
