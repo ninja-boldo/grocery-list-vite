@@ -1,0 +1,1054 @@
+{
+  "message": [
+    [
+      "code",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "url",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "creator",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "created_t",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "created_datetime",
+      "TIMESTAMP WITH TIME ZONE",
+      "YES",
+      null, null, null],
+    [
+      "last_modified_t",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "last_modified_datetime",
+      "TIMESTAMP WITH TIME ZONE",
+      "YES",
+      null, null, null],
+    [
+      "last_modified_by",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "last_updated_t",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "last_updated_datetime",
+      "TIMESTAMP WITH TIME ZONE",
+      "YES",
+      null, null, null],
+    [
+      "product_name",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "abbreviated_product_name",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "generic_name",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "quantity",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "packaging",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "packaging_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "packaging_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "packaging_text",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "brands",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "brands_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "brands_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "categories",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "categories_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "categories_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "origins",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "origins_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "origins_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "manufacturing_places",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "manufacturing_places_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "labels",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "labels_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "labels_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "emb_codes",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "emb_codes_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "first_packaging_code_geo",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "cities",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "cities_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "purchase_places",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "stores",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "countries",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "countries_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "countries_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "ingredients_text",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "ingredients_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "ingredients_analysis_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "allergens",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "allergens_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "traces",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "traces_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "traces_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "serving_size",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "serving_quantity",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "no_nutrition_data",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "additives_n",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "additives",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "additives_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "additives_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "nutriscore_score",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "nutriscore_grade",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "nova_group",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "pnns_groups_1",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "pnns_groups_2",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "food_groups",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "food_groups_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "food_groups_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "states",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "states_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "states_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "brand_owner",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "environmental_score_score",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "environmental_score_grade",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "nutrient_levels_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "product_quantity",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "owner",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "data_quality_errors_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "unique_scans_n",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "popularity_tags",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "completeness",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "last_image_t",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "last_image_datetime",
+      "TIMESTAMP WITH TIME ZONE",
+      "YES",
+      null, null, null],
+    [
+      "main_category",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "main_category_en",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "image_url",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "image_small_url",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "image_ingredients_url",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "image_ingredients_small_url",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "image_nutrition_url",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "image_nutrition_small_url",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "energy-kj_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "energy-kcal_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "energy_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "energy-from-fat_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "fat_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "saturated-fat_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "butyric-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "caproic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "caprylic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "capric-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "lauric-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "myristic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "palmitic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "stearic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "arachidic-acid_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "behenic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "lignoceric-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "cerotic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "montanic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "melissic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "unsaturated-fat_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "monounsaturated-fat_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "omega-9-fat_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "polyunsaturated-fat_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "omega-3-fat_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "omega-6-fat_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "alpha-linolenic-acid_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "eicosapentaenoic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "docosahexaenoic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "linoleic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "arachidonic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "gamma-linolenic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "dihomo-gamma-linolenic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "oleic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "elaidic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "gondoic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "mead-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "erucic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "nervonic-acid_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "trans-fat_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "cholesterol_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "carbohydrates_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "sugars_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "added-sugars_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "sucrose_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "glucose_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "fructose_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "galactose_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "lactose_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "maltose_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "maltodextrins_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "starch_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "polyols_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "erythritol_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "fiber_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "soluble-fiber_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "insoluble-fiber_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "proteins_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "casein_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "serum-proteins_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "nucleotides_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "salt_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "added-salt_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "sodium_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "alcohol_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-a_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "beta-carotene_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-d_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-e_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-k_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-c_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-b1_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-b2_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-pp_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-b6_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-b9_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "folates_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "vitamin-b12_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "biotin_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "pantothenic-acid_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "silica_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "bicarbonate_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "potassium_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "chloride_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "calcium_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "phosphorus_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "iron_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "magnesium_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "zinc_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "copper_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "manganese_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "fluoride_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "selenium_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "chromium_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "molybdenum_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "iodine_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "caffeine_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "taurine_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "methylsulfonylmethane_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "ph_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "fruits-vegetables-nuts_100g",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "fruits-vegetables-nuts-dried_100g",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "fruits-vegetables-nuts-estimate_100g",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "fruits-vegetables-nuts-estimate-from-ingredients_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "collagen-meat-protein-ratio_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "cocoa_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "chlorophyl_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "carbon-footprint_100g",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "carbon-footprint-from-meat-or-fish_100g",
+      "DOUBLE",
+      "YES",
+      null, null, null],
+    [
+      "nutrition-score-fr_100g",
+      "BIGINT",
+      "YES",
+      null, null, null],
+    [
+      "nutrition-score-uk_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "glycemic-index_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "water-hardness_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "choline_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "phylloquinone_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "beta-glucan_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "inositol_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "carnitine_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "sulphate_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "nitrate_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "acidity_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null],
+    [
+      "carbohydrates-total_100g",
+      "VARCHAR",
+      "YES",
+      null, null, null]
+  ]
+}
