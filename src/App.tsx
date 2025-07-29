@@ -9,7 +9,7 @@ interface Props {
 }
 
 function App() {
-  // 👇 Example nested structure
+  
   const nestedData: Props = {
     text: "Drinks",
     level: 0,
@@ -47,6 +47,25 @@ function App() {
         subgroups: null,
       },
     ],
+  };
+
+  const fetchItems = async () => {
+      try {
+          const req = await fetch("api/item_list");
+          
+          // Check if the response is ok (status in the range 200-299)
+          if (!req.ok) {
+              throw new Error(`HTTP error! Status: ${req.status}`);
+          }
+
+          // Parse the JSON response
+          const data = await req.json();
+
+          // Now you can use the data
+          console.log(data);
+      } catch (error) {
+          console.error("Error fetching items:", error);
+      }
   };
 
   return (

@@ -1,16 +1,27 @@
-
+// vite.config.js
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { loadEnv } from 'vite';
 
-// https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  server: {
-    host: true,           // Allows access from any host (0.0.0.0)
-    port: 0,             // Let Vite choose any available port
-    strictPort: false,   // Allow port changes if needed
-    cors: true,          // Enable CORS for cross-origin requests
-    allowedHosts: true, // Allow all hosts including tunnel domains
-  },
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+
+  return {
+    plugins: [react(), tailwindcss()],
+    server: {
+      host: true,
+      port: 0,
+      strictPort: false,
+      cors: true,
+      allowedHosts: true,
+      proxy: {
+        '/api': {
+          target: env.VITE_API_BASE_URL || 'http://localhost:3030',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+      },
+    },
+  };
 });

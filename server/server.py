@@ -25,22 +25,37 @@ async def read_root(request: Request):
     
     #use this to get info about the names of the columns: DESCRIBE main.food;
     #code is the ean
-    ean = "5411188128601"
-    columns = request.app.state.con.execute(f"""
+    ean = "4260596131663"
+    answer = request.app.state.con.execute(f"""
         SELECT code, product_name FROM main.food where code = '{ean}'
     """).df() 
-    print(columns.head())
 
-    return {"message": columns}
-
+    return {"result": answer}
 
 
-@app.get("/get_info/")
+
+@app.get("/add_ean_to_list/")
 async def get_info(request: Request, ean: str = Query(..., min_length=8, max_length=14)):
+    
+    done = False
+    
+    print(f"we have gotten a request for this ean: {ean}")
+    
     con = request.app.state.con
-    cur = con.execute("SELECT * FROM food WHERE ean = ?", (ean,))
-    row = cur.fetchone()
-    return {"ean": ean, "row": row}
+    answer = con.execute(f"""
+        SELECT product_name FROM main.food where code = '{ean}'
+    """).fetchall()
+    print(f"answer: {answer}")
+    
+    done = True
+    
+    return {"ean": ean, "row": answer, "done": done}
+
+
+# @app.get("/item_list")
+# async def get_items(request: Request):
+    
+
 
 
 if __name__ == "__main__":       
@@ -48,9 +63,9 @@ if __name__ == "__main__":
     uvicorn.run(
         "server:app",
         host="127.0.0.1",
-        port=8000,
-        reload=False,             # True = auto-reload on code changes (dev only)
+        port=3030,
+        reload=False,            
         workers=1,
-        loop="uvloop",            # Faster event loop (if available)
-        http="httptools",         # Fast HTTP parser
+        loop="uvloop",            
+        http="httptools",        
     )
