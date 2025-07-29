@@ -1,8 +1,10 @@
-
 import { useEffect, useRef, useState } from 'react';
 import { BrowserMultiFormatReader, NotFoundException, Result } from '@zxing/library';
+import { useNavigate } from 'react-router-dom';
 
 export default function FullScreenCameraScanner() {
+  const navHook = useNavigate()
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
   const [ean, setEan] = useState('');
@@ -48,14 +50,17 @@ export default function FullScreenCameraScanner() {
             device.label.toLowerCase().includes('back') || 
             device.label.toLowerCase().includes('rear') ||
             device.label.toLowerCase().includes('rück') ||
-            device.label.toLowerCase().includes('hinten') ||
-            device.label.toLowerCase().includes('environment')
-          );
+            (device.label.toLowerCase().includes('hinten') &&
+            !device.label.toLowerCase().includes('Kamera von „iPhone'))
+             );
           setSelectedCameraId(rearCamera?.deviceId || videoDevices[0].deviceId);
+          
         }
       } catch (error) {
         console.error('Error getting cameras:', error);
-        console.error('Camera error details:', error.name, error.message);
+        if (error && typeof error === 'object' && 'name' in error && 'message' in error) {
+          console.error('Camera error details:', (error as { name: string; message: string }).name, (error as { name: string; message: string }).message);
+        }
         
         // Fallback: try without specific device ID (prefer rear camera)
         try {
@@ -64,7 +69,18 @@ export default function FullScreenCameraScanner() {
           });
           stream.getTracks().forEach(track => track.stop());
           setSelectedCameraId('fallback');
-          setAvailableCameras([{ deviceId: 'fallback', label: 'Rear Camera', kind: 'videoinput' }]);
+          setAvailableCameras([{
+            deviceId: 'fallback',
+            label: 'Rear Camera',
+            kind: 'videoinput',
+            groupId: '',
+            toJSON: () => ({
+              deviceId: 'fallback',
+              label: 'Rear Camera',
+              kind: 'videoinput',
+              groupId: ''
+            })
+          } as MediaDeviceInfo]);
         } catch (fallbackError) {
           console.error('Fallback camera access failed:', fallbackError);
         }
@@ -74,16 +90,23 @@ export default function FullScreenCameraScanner() {
     getCameras();
   }, []);
 
-  const sendEan = () => {}
+  const sendEan = (ean: string) => {
+    fetch(`/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}`)
+  }
+
+  const goHome = () => {
+    navHook("/")
+  }
 
   useEffect(() => {
+    
     if (!scanning || !selectedCameraId) return;
 
     const codeReader = new BrowserMultiFormatReader();
     codeReaderRef.current = codeReader;
 
     // Faster scanning
-    (codeReader as BrowserMultiFormatReader & { _timeoutBetweenDecodingAttempts?: number })._timeoutBetweenDecodingAttempts = 100;
+    (codeReader as BrowserMultiFormatReader & { _timeoutBetweenDecodingAttempts?: number })._timeoutBetweenDecodingAttempts = 500;
 
     const constraints = selectedCameraId === 'fallback' 
       ? {
@@ -92,10 +115,6 @@ export default function FullScreenCameraScanner() {
             width: { ideal: 1920, min: 640 },
             height: { ideal: 1080, min: 480 },
             frameRate: { ideal: 60, min: 30 },
-            focusMode: 'continuous',
-            focusDistance: 0.1, // Close focus for barcodes
-            whiteBalanceMode: 'continuous',
-            exposureMode: 'continuous',
           },
         }
       : {
@@ -104,10 +123,7 @@ export default function FullScreenCameraScanner() {
             width: { ideal: 1920, min: 640 },
             height: { ideal: 1080, min: 480 },
             frameRate: { ideal: 60, min: 30 },
-            focusMode: 'continuous',
-            focusDistance: 0.1, // Close focus for barcodes
-            whiteBalanceMode: 'continuous',
-            exposureMode: 'continuous',
+            // Removed non-standard properties
           },
         };
 
@@ -122,12 +138,8 @@ export default function FullScreenCameraScanner() {
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack && videoTrack.applyConstraints) {
           try {
-            await videoTrack.applyConstraints({
-              focusMode: 'continuous',
-              focusDistance: 0.1,
-              exposureMode: 'continuous',
-              whiteBalanceMode: 'continuous',
-            });
+            // Optionally, you can apply standard constraints here if needed
+            await videoTrack.applyConstraints({});
           } catch (constraintError) {
             console.log('Advanced constraints not supported:', constraintError);
           }
@@ -135,27 +147,39 @@ export default function FullScreenCameraScanner() {
 
         // Optimized decoding with reduced overhead
         let lastDecodeTime = 0;
-        const DECODE_THROTTLE = 16; // ~60fps max decode attempts
+        const DECODE_THROTTLE = 100; // ~60fps max decode attempts
 
         codeReader.decodeFromVideoElementContinuously(videoRef.current!, (result: Result | undefined, err: unknown) => {
           const now = performance.now();
           if (now - lastDecodeTime < DECODE_THROTTLE) return; // Throttle decoding
           lastDecodeTime = now;
+          console.log("selected the camera with the id: " + selectedCameraId)
 
           if (result) {
             const text = result.getText();
-            // More flexible barcode detection - accepts EAN-13, UPC-A, and other common formats
+
             if (/^\d{8,14}$/.test(text)) {
 
               setEan(text);
               setScanning(false);
-              codeReader.reset();
+
+              sendEan(text)
+              
+              setTimeout(() => {
+                codeReader.reset();
+                goHome();
+              }, 500);
 
               console.log('Barcode detected:', text);
               
               // Haptic feedback if available
               if ('vibrate' in navigator) {
-                navigator.vibrate(200);
+                try{
+                  navigator.vibrate(200);
+                }
+                catch{
+                  { /* empty */ }
+                }
               }
             }
           }
@@ -176,7 +200,7 @@ export default function FullScreenCameraScanner() {
         (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
       }
     };
-  }, [scanning, selectedCameraId]);
+  }, [goHome, navHook, scanning, selectedCameraId]);
 
   return (
     <div style={{
@@ -195,13 +219,13 @@ export default function FullScreenCameraScanner() {
           height: '100%',
           objectFit: 'cover',
           backgroundColor: 'black',
-          willChange: 'transform', // GPU acceleration hint
+          willChange: 'transform', 
           transform: 'translateZ(0)', // Force hardware acceleration
         }}
         muted
         playsInline
         autoPlay
-        preload="none" // Faster loading
+        preload="none"
       />
 
       {/* Status text at bottom */}
