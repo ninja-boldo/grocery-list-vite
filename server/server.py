@@ -4,6 +4,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, Request
 import uvicorn
 
+#   https://swedish-desire-derek-consistency.trycloudflare.com/scanner
+
+
+#      https://requires-ny-force-lift.trycloudflare.com/scanner
 
 DB_PATH = "data/openfoodfacts.db"
 
@@ -20,42 +24,43 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-@app.get("/")
-async def read_root(request: Request):
-    
-    #use this to get info about the names of the columns: DESCRIBE main.food;
-    #code is the ean
-    ean = "4260596131663"
-    answer = request.app.state.con.execute(f"""
-        SELECT code, product_name FROM main.food where code = '{ean}'
-    """).df() 
 
-    return {"result": answer}
+
+@app.get("/fetch_items")
+async def get_items(request: Request):
+    con = request.app.state.con
+    items = con.execute("select * from main.item_list").fetchall()
+    
+    print(f"items: {items}")
+    return {"item_list": items}
 
 
 
 @app.get("/add_ean_to_list/")
-async def get_info(request: Request, ean: str = Query(..., min_length=8, max_length=14)):
+async def add_ean(request: Request, ean: str = Query(..., min_length=8, max_length=14), subgroups: str = Query(...,)):
     
+    #the sent subs will be split by comma in the url
+    
+    subgroups = subgroups.split(",")
     done = False
     
     print(f"we have gotten a request for this ean: {ean}")
     
     con = request.app.state.con
-    answer = con.execute(f"""
+    product_name = con.execute(f"""
         SELECT product_name FROM main.food where code = '{ean}'
     """).fetchall()
-    print(f"answer: {answer}")
+    print(f"product_name: {product_name}")
+    
+    subgroups_string = ""
+    for group in subgroups:
+        subgroups_string += group + " "
+    
+    con.execute("INSERT INTO main.item_list (ean, item_name, subgroups) VALUES (?, ?, ?)", (ean, product_name, subgroups_string))
     
     done = True
     
-    return {"ean": ean, "row": answer, "done": done}
-
-
-# @app.get("/item_list")
-# async def get_items(request: Request):
-    
-
+    return {"ean": ean, "product_name": product_name, "done": done, "subgroups": ""}
 
 
 if __name__ == "__main__":       

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { BrowserMultiFormatReader, NotFoundException, Result } from '@zxing/library';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 export default function FullScreenCameraScanner() {
   const navHook = useNavigate()
@@ -9,8 +9,8 @@ export default function FullScreenCameraScanner() {
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
   const [ean, setEan] = useState('');
   const [scanning, setScanning] = useState(true); // Auto-start scanning
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+   
+  const [, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
 
   useEffect(() => {
@@ -90,15 +90,21 @@ export default function FullScreenCameraScanner() {
     getCameras();
   }, []);
 
-  const sendEan = (ean: string) => {
-    fetch(`/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}`)
-  }
+  const location = useLocation();
+  const queryParams = new URLSearchParams(location.search);
+  const parentsList = queryParams.get('subgroups');
 
-  const goHome = () => {
-    navHook("/")
+  const sendEan = (ean: string) => {
+    console.log("the parentsList read by use params are like this: " + parentsList)
+    fetch(`/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=${parentsList}`)
   }
 
   useEffect(() => {
+
+  
+    const goHome = () => {
+      navHook("/")
+    }
     
     if (!scanning || !selectedCameraId) return;
 
@@ -200,7 +206,7 @@ export default function FullScreenCameraScanner() {
         (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
       }
     };
-  }, [goHome, navHook, scanning, selectedCameraId]);
+  }, [navHook, scanning, selectedCameraId]);
 
   return (
     <div style={{
