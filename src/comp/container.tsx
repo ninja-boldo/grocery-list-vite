@@ -6,10 +6,11 @@ interface Props {
   subgroups: Props[] | null;
   level: number;
   style?: string;
-  onClick: (clickedNode: Props) => void;
+  onClick: (clickedNode: Props) => void; 
+  parent: string | null;
 }
 
-const Container = ({ text, subgroups, level, style, onClick }: Props) => {
+const Container = ({ text, subgroups, level, style, onClick, parent }: Props) => {
   const [open, setOpen] = useState(false);
 
   // Use Tailwind padding classes instead of fixed margin
@@ -25,13 +26,11 @@ const Container = ({ text, subgroups, level, style, onClick }: Props) => {
     return indentClasses[Math.min(level, indentClasses.length - 1)] || 'pl-20';
   };
 
-  let child_level = level
-  if (parent === null) {
-    level = 0
-    child_level = 0
-  }
-  else {
-    child_level += 1
+  let child_level = level;
+  if (subgroups === null) {
+    child_level = 0;
+  } else {
+    child_level += 1;
   }
 
   return (
@@ -65,16 +64,64 @@ const Container = ({ text, subgroups, level, style, onClick }: Props) => {
             <p className="ml-2 text-white truncate">{text}</p>
           </div>
 
-          {/* Right side: Button */}
-          <button 
-            onClick={(e) => {
-              e.stopPropagation(); // prevent toggling the group accidentally
-              onClick({ text, subgroups, level, style, onClick });
-            }}
-            className="bg-gray-800 text-white px-3 py-1 rounded text-sm hover:bg-gray-700 transition-colors ml-4 flex-shrink-0"
-          >
-            add item
-          </button>
+          {/* Right side: Buttons */}
+          <div className="flex space-x-2">
+            <button 
+              onClick={(e) => {
+                e.stopPropagation(); // prevent toggling the group accidentally
+                onClick({ text, subgroups, level, style, onClick, parent });
+              }}
+              className="bg-gray-800 text-white px-3 py-1 rounded text-sm hover:bg-gray-700 transition-colors flex-shrink-0"
+            >
+              Add Item
+            </button>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation(); 
+                if (text && parent) {
+                  const url = `/api/remove_item/?text=${encodeURIComponent(text)}&parent=${encodeURIComponent(parent)}`;
+                  console.log("Making request to:", url);
+                  console.log("Text:", text, "Parent:", parent);
+                  
+                  fetch(url)
+                    .then(async response => {
+                      setTimeout(() => {
+                    
+                       }, 500);
+                      console.log("Response status:", response.status);
+                      console.log("Response headers:", Object.fromEntries(response.headers.entries()));
+                      
+                      if (!response.ok) {
+                        const errorText = await response.text();
+                        console.log("Error response body:", errorText);
+                        throw new Error(`HTTP error! Status: ${response.status}, Response: ${errorText}`);
+                      }
+                      
+                      // Check if response is JSON
+                      const contentType = response.headers.get('content-type');
+                      if (contentType && contentType.includes('application/json')) {
+                        return response.json();
+                      } else {
+                        const text = await response.text();
+                        console.log("Non-JSON response:", text);
+                        return { success: true, message: text };
+                      }
+                    })
+                    .then(data => {
+                      console.log("Item removed successfully:", data);
+                      // You might want to trigger a refresh of your data here
+                    })
+                    .catch(error => {
+                      console.error("Error removing item:", error);
+                      // You might want to show a user-friendly error message here
+                    });
+                }
+              }}
+              className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-500 transition-colors flex-shrink-0"
+            >
+              Remove Item
+            </button>
+          </div>
         </div>
       </div>
 
@@ -87,7 +134,8 @@ const Container = ({ text, subgroups, level, style, onClick }: Props) => {
               subgroups={el.subgroups}
               level={child_level}
               style={el.style}
-              onClick={onClick}
+              onClick={onClick} 
+              parent={text}
             />
           ))}
         </div>

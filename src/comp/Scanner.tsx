@@ -95,8 +95,14 @@ export default function FullScreenCameraScanner() {
   const parentsList = queryParams.get('subgroups');
 
   const sendEan = (ean: string) => {
-    console.log("the parentsList read by use params are like this: " + parentsList)
-    fetch(`/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=${parentsList}`)
+    if (parentsList){  
+      //parentsList = parentsList.slice(0, -1)
+      console.log("the parentsList read by use params are like this: " + parentsList)
+      fetch( `/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=${parentsList}` )
+    }
+    else {
+      fetch( `/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=` )
+    }
   }
 
   useEffect(() => {
@@ -169,12 +175,14 @@ export default function FullScreenCameraScanner() {
               setEan(text);
               setScanning(false);
 
+              console.log("invoking send ean")
               sendEan(text)
-              
+              console.log("send ean invoked")
+
               setTimeout(() => {
                 codeReader.reset();
-                goHome();
-              }, 500);
+                //goHome();
+              }, 1500);
 
               console.log('Barcode detected:', text);
               
