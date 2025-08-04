@@ -75,16 +75,36 @@ def process_upload_file(upload_file: UploadFile):
     """
     Process an UploadFile and return a PIL Image
     """
-    # Read the file content
-    image_data = upload_file.file.read()
-    
-    # Create PIL Image from bytes
-    image = Image.open(io.BytesIO(image_data)).convert('RGB')
-    
-    # Reset file pointer for potential reuse
-    upload_file.file.seek(0)
-    
-    return image
+    try:
+        # Reset file pointer to beginning first
+        upload_file.file.seek(0)
+        
+        # Read the file content
+        image_data = upload_file.file.read()
+        
+        # Check if we actually got data
+        if not image_data:
+            raise ValueError("No image data received - file appears to be empty")
+        
+        print(f"Read {len(image_data)} bytes from uploaded file")
+        
+        # Create PIL Image from bytes
+        image_bytes = io.BytesIO(image_data)
+        image = Image.open(image_bytes).convert('RGB')
+        
+        print(f"Successfully loaded image: {image.size}, mode: {image.mode}")
+        
+        # Reset file pointer for potential reuse
+        upload_file.file.seek(0)
+        
+        return image
+        
+    except Exception as e:
+        print(f"Error processing upload file: {e}")
+        print(f"File info - filename: {upload_file.filename}, content_type: {getattr(upload_file, 'content_type', 'unknown')}")
+        if hasattr(upload_file, 'size'):
+            print(f"File size: {upload_file.size}")
+        raise
 
 def preprocess_image_for_inference(image: Image.Image, device):
     """

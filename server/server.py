@@ -1,6 +1,5 @@
 # server.py
 import datetime
-import shutil
 import duckdb
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, Request, UploadFile
@@ -11,7 +10,7 @@ from fastapi.responses import PlainTextResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from classification import classifier as cl
+#from classification import classifier as cl
 
 from food_classifier.main import run_inference
 
@@ -136,7 +135,7 @@ async def remove_item(
         ...,
     ),
 ):
-    con = request.app.state.con
+    #con = request.app.state.con
 
     print(f"Attempting to delete item with text: '{text}' and parent: '{parent}'")
 
@@ -151,11 +150,13 @@ async def food_classifier(sleep_intervall=60*60):
         while True:
             try:
                 print(f"[{datetime.datetime.now()}] food_classifier task running...")
+                '''
                 item_names = con.execute("SELECT item_name FROM main.item_list where class is NULL").fetchall()
                 
-                '''for name in item_names:
+                for name in item_names:
                     classname = cl.classify(name)
-                    con.execute(f"update main.item_list set class='{classname}' where item_name = '{name}'").fetchall()'''
+                    con.execute(f"update main.item_list set class='{classname}' where item_name = '{name}'").fetchall()
+                    '''
                     
                 time.sleep(sleep_intervall)
             except Exception as e:
@@ -174,13 +175,14 @@ async def create_upload_file(image: UploadFile | None = None):
     else:
         print(f"we have gotten the image with this name {image.filename}")
         
-        with open("image.jpg", "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
-        print("Image saved to: image.jpg")
+        # with open("image.jpg", "wb") as buffer:
+        #     shutil.copyfileobj(image.file, buffer)
+            
+        # print("Image saved to: image.jpg")
             
             
-        run_inference(image)
-        return {"filename": image.filename}
+        prediciton = run_inference(image)
+        return {"predicition": prediciton}
     
     
 if __name__ == "__main__":
