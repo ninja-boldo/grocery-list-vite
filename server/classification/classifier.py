@@ -21,7 +21,7 @@ def classify(sentence):
         """
 
     result = subprocess.run(
-        ["ollama", "run", "qwen3:4b"],
+        ["ollama", "run", "gemma3n:e4b"],
         input=prompt.encode(),
         stdout=subprocess.PIPE,
     )

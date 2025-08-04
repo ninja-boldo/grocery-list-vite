@@ -30,6 +30,10 @@ export default function FullScreenCameraScanner() {
     };
   }, []);
 
+  const navigateMlScanner = () => {
+    navHook("/scanner/ml")
+  }
+
   // Get available cameras on component mount
   useEffect(() => {
     const getCameras = async () => {
@@ -92,18 +96,15 @@ export default function FullScreenCameraScanner() {
 
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
-  const parentsList = queryParams.get('subgroups');
+  let subgroups = queryParams.get('subgroups');
 
   const sendEan = (ean: string) => {
-    if (parentsList){  
-      //parentsList = parentsList.slice(0, -1)
-      console.log("the parentsList read by use params are like this: " + parentsList)
-      fetch( `/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=${parentsList}` )
+      if(!subgroups){
+        subgroups = ""
+      }
+      console.log("the parentsList read by use params are like this: " + subgroups)
+      fetch( `/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=${subgroups}` )
     }
-    else {
-      fetch( `/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=` )
-    }
-  }
 
   useEffect(() => {
 
@@ -181,8 +182,8 @@ export default function FullScreenCameraScanner() {
 
               setTimeout(() => {
                 codeReader.reset();
-                //goHome();
-              }, 1500);
+                goHome();
+              }, 1000);
 
               console.log('Barcode detected:', text);
               
@@ -256,6 +257,8 @@ export default function FullScreenCameraScanner() {
         zIndex: 10000,
         padding: '0 20px',
       }}>
+
+      <button onClick={navigateMlScanner}> use ml without bar code</button>
         {ean ? `Barcode: ${ean}` : 'Point your camera at a barcode'}
       </div>
     </div>
