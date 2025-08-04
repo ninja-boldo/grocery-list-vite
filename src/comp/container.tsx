@@ -1,85 +1,90 @@
+
 import { useState } from "react";
-import { ChevronRight } from "lucide-react"; 
 
 interface Props {
   text: string | null;
-  subgroups: Props[] | null;
-  level: number;
+  subgroups: string | null;
   style?: string;
   onClick: (clickedNode: Props) => void; 
-  parent: string | null;
 }
 
-const Container = ({ text, subgroups, level, style, onClick, parent }: Props) => {
+const Container = ({ text, subgroups, style, onClick }: Props) => {
   const [open, setOpen] = useState(false);
 
-  // Use Tailwind padding classes instead of fixed margin
-  const getIndentClass = (level: number) => {
-    const indentClasses = [
-      'pl-0',    // level 0
-      'pl-4',    // level 1
-      'pl-8',    // level 2
-      'pl-12',   // level 3
-      'pl-16',   // level 4
-      'pl-20',   // level 5
-    ];
-    return indentClasses[Math.min(level, indentClasses.length - 1)] || 'pl-20';
-  };
-
-  let child_level = level;
-  if (subgroups === null) {
-    child_level = 0;
-  } else {
-    child_level += 1;
+  const reloadWindow = () => {
+    window.location.reload();
   }
 
   return (
     <>
-      <div className={`mb-2 ${getIndentClass(level)}`}>
+      <div className={`mb-4`}>
         <div
           onClick={() => setOpen(!open)}
           className={`
+            group relative
             flex items-center justify-between cursor-pointer
-            border-2 border-blue-500
-            bg-green-700 rounded-xl
-            px-4 py-2 transition-colors
-            hover:bg-green-600
-            min-w-0
-            w-full 
+            bg-gradient-to-r from-slate-900/90 to-slate-800/90
+            border border-cyan-500/30
+            rounded-2xl shadow-lg shadow-cyan-500/10
+            px-4 sm:px-6 py-3 sm:py-4 transition-all duration-300
+            hover:shadow-xl hover:shadow-cyan-400/20
+            hover:border-cyan-400/50
+            hover:from-slate-800/95 hover:to-slate-700/95
+            min-w-0 w-full
+            backdrop-blur-md
             ${style || ""}
           `}
         >
-          {/* Left side: Chevron + Text */}
-          <div className="flex items-center min-w-0">
-            {subgroups && subgroups.length !== 0 ? (
-              <ChevronRight
-                size={16}
-                className={`transform transition-transform flex-shrink-0 ${
-                  open ? "rotate-90" : "rotate-0"
-                }`}
-              />
-            ) : null}
-            
+          {/* Neon accent glow */}
+          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 sm:h-8 bg-gradient-to-b from-cyan-400 via-cyan-500 to-blue-500 rounded-r-full shadow-lg shadow-cyan-500/50 group-hover:shadow-cyan-400/70 transition-all duration-300"></div>
+          
+          <div className="flex items-center min-w-0 flex-1 mr-3">            
             {/* Text label */}
-            <p className="ml-2 text-white truncate">{text}</p>
+            <p className="ml-3 sm:ml-4 text-cyan-100 font-medium text-sm sm:text-base truncate group-hover:text-cyan-50 transition-colors pr-2">
+              {text}
+            </p>
           </div>
 
+          {/* Subgroups info - faded on the right */}
+          {subgroups && (
+            <div className="hidden sm:flex items-center mr-4 flex-shrink-0">
+              <span className="text-slate-400/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
+                {subgroups}
+              </span>
+            </div>
+          )}
+
           {/* Right side: Buttons */}
-          <div className="flex space-x-2">
+          <div className="flex items-center space-x-2 sm:space-x-3 flex-shrink-0">
             <button 
               onClick={(e) => {
-                e.stopPropagation(); // prevent toggling the group accidentally
-                onClick({ text, subgroups, level, style, onClick, parent });
+                e.stopPropagation();
+                onClick({ text, subgroups, style, onClick });
               }}
-              className="bg-gray-800 text-white px-3 py-1 rounded text-sm hover:bg-gray-700 transition-colors flex-shrink-0"
-            >
-              Add Item
+              className="
+                relative overflow-hidden
+                w-8 h-8 sm:w-10 sm:h-10
+                bg-gradient-to-br from-emerald-500/90 to-emerald-600/90
+                text-white font-bold text-sm sm:text-lg
+                rounded-xl shadow-lg shadow-emerald-500/25
+                hover:from-emerald-400/95 hover:to-emerald-500/95
+                hover:shadow-xl hover:shadow-emerald-400/40 
+                hover:scale-105
+                active:scale-95
+                transition-all duration-200
+                flex justify-center items-center
+                border border-emerald-400/40
+                before:absolute before:inset-0 before:bg-white/10 before:translate-x-[-100%] 
+                hover:before:translate-x-[100%] before:transition-transform before:duration-500
+              ">
+              +
             </button>
+            
             <button 
               onClick={(e) => {
                 e.stopPropagation(); 
-                if (text && parent) {
-                  const url = `/api/remove_item/?text=${encodeURIComponent(text)}&parent=${encodeURIComponent(parent)}`;
+                if (text && subgroups) {
+                  const url = `/api/remove_item/?text=${encodeURIComponent(text)}`;
                   console.log("Making request to:", url);
                   console.log("Text:", text, "Parent:", parent);
                   
@@ -97,7 +102,7 @@ const Container = ({ text, subgroups, level, style, onClick, parent }: Props) =>
                         throw new Error(`HTTP error! Status: ${response.status}, Response: ${errorText}`);
                       }
                       
-                      // Check if response is JSON
+                      // check that response is of type JSON
                       const contentType = response.headers.get('content-type');
                       if (contentType && contentType.includes('application/json')) {
                         return response.json();
@@ -109,37 +114,46 @@ const Container = ({ text, subgroups, level, style, onClick, parent }: Props) =>
                     })
                     .then(data => {
                       console.log("Item removed successfully:", data);
-                      // You might want to trigger a refresh of your data here
+                      reloadWindow()
                     })
                     .catch(error => {
                       console.error("Error removing item:", error);
-                      // You might want to show a user-friendly error message here
+                      
+                      //implement error message with error container
                     });
+                    
                 }
               }}
-              className="bg-red-600 text-white px-3 py-1 rounded text-sm hover:bg-red-500 transition-colors flex-shrink-0"
-            >
-              Remove Item
+              className="
+                relative overflow-hidden
+                w-8 h-8 sm:w-10 sm:h-10
+                bg-gradient-to-br from-rose-500/90 to-pink-600/90
+                text-white font-bold text-sm sm:text-lg
+                rounded-xl shadow-lg shadow-rose-500/25
+                hover:from-rose-400/95 hover:to-pink-500/95
+                hover:shadow-xl hover:shadow-rose-400/40 
+                hover:scale-105
+                active:scale-95
+                transition-all duration-200
+                flex justify-center items-center
+                border border-rose-400/40
+                before:absolute before:inset-0 before:bg-white/10 before:translate-x-[-100%] 
+                hover:before:translate-x-[100%] before:transition-transform before:duration-500
+              ">
+              −
             </button>
           </div>
         </div>
-      </div>
 
-      {open && subgroups?.length ? (
-        <div className="w-full">
-          {subgroups.map((el, i) => (
-            <Container
-              key={i}
-              text={el.text}
-              subgroups={el.subgroups}
-              level={child_level}
-              style={el.style}
-              onClick={onClick} 
-              parent={text}
-            />
-          ))}
-        </div>
-      ) : null}
+        {/* Mobile subgroups display */}
+        {subgroups && (
+          <div className="sm:hidden mt-2 ml-4">
+            <span className="text-slate-400/50 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/20 border border-slate-700/30">
+              {subgroups}
+            </span>
+          </div>
+        )}
+      </div>
     </>
   );
 };
