@@ -1,9 +1,8 @@
-import { useNavigate } from 'react-router-dom';
 import './App.css';
 import Container from './comp/Container';
 import { useCallback, useEffect, useState } from 'react';
 import ErrorContainer from './comp/ErrorContainer';
-
+import DropdownComp from './comp/Dropdown';
 
 interface Props {
   text: string | null;
@@ -15,117 +14,118 @@ interface Props {
 }
 
 function App() {
-  const usenav = useNavigate()
+  //const usenav = useNavigate();
 
-  const navigateScanner = useCallback((clickedNode: Props) => {
-    const subgroups = clickedNode.subgroups || "";
-    usenav(`/scanner?text=${subgroups}`);
-  }, [usenav]);
-  
-  const increaseItemCount = (clickedNode: Props) => {
-    if(clickedNode.text){
-      fetch(`/api/add_ean_to_list/?ean=${encodeURIComponent(clickedNode.text)}&count=+1`)
-    }
-    else{
-      console.error("the clicked node in the increase item count function seems to be weitd as it doesnt have a real text or in other words: that is its texts clickedNode.text = '" + clickedNode.text + "'")
-    }
-  }
-
-  const decreaseItemCount = (clickedNode: Props) => {
-    if(clickedNode.text){
-      fetch(`/api/add_ean_to_list/?ean=${encodeURIComponent(clickedNode.text)}&count=-1`)
-    }
-    else{
-      console.error(`The clicked node in the increase item count function seems to be weird as it 
-                    doesn't have real text, or in other words: this is its text: clickedNode.text = '${clickedNode.text}'`);
-
-    }
-  }
-
-  // const reloadWindow = useCallback(() => {
-  //   window.location.reload();
-  // }, [])
-
-    const [error, setError] = useState<string | null>(null);
-    const [data, setData] = useState<Props[]>([
-      {
-      text: "none",
-      subgroups: "fridge",
-      style: "", 
-      count: 1,
-      onClickIncrease: (clickedNode: Props) => {increaseItemCount(clickedNode)},
-      onClickDecrease: (clickedNode: Props) => {decreaseItemCount(clickedNode)}
-    }
-  ])
-
+  // const navigateScanner = useCallback((clickedNode: Props) => {
+  //   const subgroups = clickedNode.subgroups || "";
+  //   usenav(`/scanner?text=${subgroups}`);
+  // }, [usenav]);
   
 
-useEffect(() => {
+  const fetchItems =  useCallback( async(subgroups: string | null) => {
+      try {
+        let response
+        if(subgroups) {
+          response = await fetch(`/api/fetch_items?subgroups=${encodeURIComponent(subgroups)}`);
+        }
+        else{
+          response = await fetch(`/api/fetch_items`);
+        }
+        if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+        const data = await response.json();
 
-  const fetchItems = async () => {
-
-    // the structure is a 3 element arary with index 0 being the ean, index 1 is the item name and index 2 represents the subgroups
-   fetch("/api/fetch_items")
-    .then(response => {
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-      return response.json();
-    })
-
-    .then(data => {
-      const temp_data: Props[] = []
-
-      console.log("Success. we have gotten back this data:", data.item_list);
-      for(const row of data.item_list){
-        
-        //const ean = row[0]
-        const item_name = row[1]
-        const subgroups = row[2]
-        //const class_ = row[3]
-        const count = row[4]
-
-        temp_data.push({
-          text: item_name,
-          subgroups: subgroups,
+        const temp_data: Props[] = data.item_list.map((row: [string, string, string, () => void, () => void]) => ({
+          text: row[1],
+          subgroups: row[2],
           style: "",
-          count: count,
-          onClickIncrease: (clickedNode: Props) => {increaseItemCount(clickedNode)},
-          onClickDecrease: (clickedNode: Props) => {decreaseItemCount(clickedNode)}
-        })
-      }
-      setData(temp_data)
-    })
+          count: row[4],
+          onClickIncrease: increaseItemCount,
+          onClickDecrease: decreaseItemCount
+        }));
 
-    .catch(error => {
-      setError(error.message || error.string)
-      console.error("Fetch failed:", error);
-    });
+
+        setData(temp_data);
+      } catch (error: any) {
+        setError(error.message || String(error));
+        console.error("Fetch failed:", error);
+      }
+    }, [])
+
+
+  const increaseItemCount = useCallback((clickedNode: Props) => {
+    if(clickedNode.text){
+      fetch(`/api/add_ean_to_list/?item_name=${encodeURIComponent(clickedNode.text)}&count=+1`);
+      reloadWindow()
+    } else {
+      console.error("Increase: clickedNode.text is invalid:", clickedNode.text);
+    }
+  }, [])
+
+  const decreaseItemCount = useCallback((clickedNode: Props) => {
+    if(clickedNode.text){
+      fetch(`/api/remove/?te=${encodeURIComponent(clickedNode.text)}&count=-1`);
+      window.location.reload();
+    } else {
+      console.error("Decrease: clickedNode.text is invalid:", clickedNode.text);
+    }
+  }, [])
+
+  const reloadWindow = () => {
+    window.location.reload();
   }
 
-    fetchItems()
-  }, [navigateScanner])
+  const fetchSubgroups = (): Promise<string[]> => {
+    return fetch("/api/fetch_subgroups")
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        return data.subgroups;
+      });
+  };
 
-return (
-  <>
-    {error != null ? (
-      <ErrorContainer text={error} />
-    ) : (
-      data.map((element, idx) => (
-        <Container
-          key={idx}
-          text={element.text}
-          subgroups={element.subgroups}
-          count={element.count}
-          onClickIncrease={increaseItemCount}
-          onClickDecrease={decreaseItemCount}
-          style=""
-        />
-      ))
-    )}
-  </>
-);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<Props[]>([]);
+  const [subgroups, setSubgroups] = useState<string[]>([]);
 
-};
+  useEffect(() => {
+  
+
+    fetchItems(null);
+
+    fetchSubgroups()
+      .then(setSubgroups)
+      .catch(error => {
+        setError(error.message || String(error));
+        console.error("Failed to fetch subgroups:", error);
+      });
+  }, [fetchItems]);
+
+  return (
+    <>
+      {error ? (
+        <ErrorContainer text={error} />
+      ) : (
+        <>
+          <DropdownComp elements={subgroups} onClickElement={fetchItems} onClickReset={fetchItems} />
+          {data.map((element, idx) => (
+            <Container
+              key={idx}
+              text={element.text}
+              subgroups={element.subgroups}
+              count={element.count}
+              onClickIncrease={increaseItemCount}
+              onClickDecrease={decreaseItemCount}
+              style=""
+            />
+          ))}
+        </>
+      )}
+    </> 
+  );
+}
 
 export default App;

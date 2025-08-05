@@ -44,14 +44,28 @@ const Container = ({ text, subgroups, style, count, onClickIncrease, onClickDecr
             </p>
           </div>
 
-          {/* Subgroups info - faded on the right */}
-          {subgroups && (
-            <div className="hidden sm:flex items-center mr-4 flex-shrink-0">
-              <span className="text-slate-400/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
-                {subgroups}
-              </span>
+            <div className="mr-4">
+
+                {/* Subgroups info - faded on the right */}
+                {subgroups ? (
+                  <div className="hidden sm:flex items-center  flex-shrink-0">
+                    <span className="text-slate-400/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
+                      {subgroups}
+                    </span>
+                  </div>
+                ): 
+                (
+                <div className="hidden sm:flex items-center  flex-shrink-0">
+                    <span className="text-slate-400/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
+                      None
+                    </span>
+                  </div>
+                  )}
+
+                <span className="m-2 text-slate-400/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
+                      {count}
+                  </span>
             </div>
-          )}
 
           {/* Right side: Buttons */}
           <div className="flex items-center space-x-2 sm:space-x-3 flex-shrink-0">

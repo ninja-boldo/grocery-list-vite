@@ -1,4 +1,8 @@
 # server.py
+import os
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
+
+
 import datetime
 import shutil
 from typing import Optional
@@ -20,6 +24,9 @@ import food_classifier.main as food_classifier
 from prometheus_fastapi_instrumentator import Instrumentator
 
 import time
+
+
+
 
 #   https://swedish-desire-derek-consistency.trycloudflare.com/scanner
 
@@ -86,12 +93,28 @@ async def protect_metrics(request: Request, call_next):
 
 
 
-@app.get("/fetch_items")
-async def get_items(request: Request):
+@app.get("/fetch_subgroups")
+async def get_subgroups(request: Request):
     print(f"invoked at {datetime.datetime.now()}")
 
     con = request.app.state.con
-    items = con.execute("select * from main.item_list").fetchall()
+    
+    subgroups = con.execute("select distinct subgroups from main.item_list where subgroups != '' ").fetchall()
+    print(f"this are subgroups being fetched: {subgroups}")
+    
+    return {"subgroups": subgroups}
+
+ 
+@app.get("/fetch_items")
+async def fetch_items(request: Request, subgroups: Optional[str] = Query(None)):
+    print(f"invoked at {datetime.datetime.now()}")
+
+    con = request.app.state.con
+    
+    if subgroups: 
+        items = con.execute(f"select * from main.item_list where subgroups = '{subgroups}'").fetchall()
+    else:
+        items = con.execute("select * from main.item_list").fetchall()
 
     return {"item_list": items}
 
@@ -113,8 +136,9 @@ async def add_ean(
     if not subgroups:
         subgroups = ""
     if ean and not item_name:        
-        ean = con.execute(f"select item_name from main.item_list where ean = '{ean}'")
-        
+        item_name = con.execute(f"select item_name from main.item_list where ean = '{ean}'").fetchone()[0]
+    if item_name and not ean:
+        ean = con.execute(f"select ean from main.item_list where item_name = '{item_name}' ").fetchone()[0]
     class_name = ""
     
 
@@ -130,10 +154,13 @@ async def add_ean(
         subgroups = ""
 
     print(f"subgroups: {subgroups}")
+    print(f"item_name: '{item_name}'")
 
     done = False
 
     print(f"we have gotten a request for this ean: {ean}")
+    
+    print(f"about to query this: SELECT product_name FROM main.food where code = '{ean}'")
 
     product_name = con.execute(f"""
         SELECT product_name FROM main.food where code = '{ean}'
@@ -141,12 +168,20 @@ async def add_ean(
     print(f"product_name: {product_name}")
 
     subgroups_string = ""
-
-    con.execute(
-        "INSERT INTO main.item_list (ean, item_name, subgroups, class, count) VALUES (?, ?, ?)",
-        (ean, product_name, subgroups_string, class_name, count),
-    )
-
+    
+    same_items = con.execute(f"select item_name from main.item_list where item_name = '{item_name}' ").fetchall()
+    if len(same_items) == 0:
+        con.execute(
+            "INSERT INTO main.item_list (ean, item_name, subgroups, class, count) VALUES (?, ?, ?)",
+            (ean, product_name, subgroups_string, class_name, count),
+        )
+    else:
+        con.execute(f"""UPDATE main.item_list 
+                    SET count = count + {count} 
+                    WHERE item_name = '{item_name}'; """)
+        
+        con.execute("delete from main.item_list where count < 1")
+        
     done = True
 
     return {"ean": ean, "product_name": product_name, "done": done, "subgroups": ""}
