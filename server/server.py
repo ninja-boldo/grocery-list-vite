@@ -1,8 +1,10 @@
 # server.py
 import datetime
+import shutil
 import duckdb
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, Request, UploadFile
+import torch
 import uvicorn
 
 from fastapi.responses import PlainTextResponse
@@ -12,7 +14,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 #from classification import classifier as cl
 
-from food_classifier.main import run_inference
+import food_classifier.main as food_classifier
 
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -30,20 +32,31 @@ api_key = "one-rgs iodesftheontisissihdebeten thncstthinciree wholeswedissh-ek-"
 scheduler = AsyncIOScheduler()
 
 
+device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.con = duckdb.connect(DB_PATH)
     print("DuckDB connection opened")
 
-    scheduler.add_job(food_classifier, CronTrigger(hour="*/2", minute=0))
+    net = food_classifier.create_net(num_classes=206)
+    
+    model_folder = food_classifier.get_relative_path()
+    model_path = model_folder + "/" + "food_classifier_resnet50.pth"
+    
+    net.load_state_dict(torch.load(model_path, weights_only=True))
+    net = net.to(device)
+    app.state.net = net 
+
+    scheduler.add_job(food_name_classifier, CronTrigger(hour="*/2", minute=0))
     scheduler.start()
 
     yield
 
     scheduler.shutdown()
-
     app.state.con.close()
     print("DuckDB connection closed")
+
 
 
 app = FastAPI(lifespan=lifespan)
@@ -142,7 +155,7 @@ async def remove_item(
     
 
 
-async def food_classifier(sleep_intervall=60*60):
+async def food_name_classifier(sleep_intervall=60*60):
     con = duckdb.connect(DB_PATH)
     print("[Background task] Connection opened")
 
@@ -175,17 +188,18 @@ async def create_upload_file(image: UploadFile | None = None):
     else:
         print(f"we have gotten the image with this name {image.filename}")
         
-        # with open("image.jpg", "wb") as buffer:
-        #     shutil.copyfileobj(image.file, buffer)
+        with open("image.jpg", "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
             
-        # print("Image saved to: image.jpg")
+        print("Image saved to: image.jpg")
             
-            
-        prediciton = run_inference(image)
-        return {"predicition": prediciton}
+        image = "/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/image.jpg"
+        probablity, prediciton = food_classifier.run_inference(image, app.state.net)
+        return {"predicition": prediciton, "probablity": probablity}
     
     
 if __name__ == "__main__":
+    
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
