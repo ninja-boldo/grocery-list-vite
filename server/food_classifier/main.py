@@ -15,16 +15,18 @@ import random
 from pathlib import Path
 from PIL import Image
 
+from rembg import remove
 
 
-from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
+
+from torchvision.models import resnet50, ResNet50_Weights
+
 
 def create_net(num_classes=10):
-    # Load pretrained MobileNetV3‑Large (approx. 75% top‑1 ImageNet)
-    net = mobilenet_v3_small(weights=MobileNet_V3_Small_Weights.IMAGENET1K_V1)
-    # Replace final classifier layer (was 1000 → 1280 in_features)
-    net.classifier[-1] = nn.Linear(net.classifier[-1].in_features, num_classes)
+    net = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+    net.fc = nn.Linear(net.fc.in_features, num_classes)
     return net
+
 
 
 
@@ -119,7 +121,52 @@ def preprocess_image_for_inference(image: Image.Image, device):
     image_tensor = transform(image).unsqueeze(0)  # Add batch dimension
     return image_tensor.to(device)
 
-def run_inference(image_input, model_path='food_classifier/fruit_mobilenet_small.pth', num_classes=206):
+
+
+def load_image(path: str) -> Image.Image:
+    return Image.open(path).convert("RGBA")
+
+
+def get_relative_path() -> Path:
+    return str(Path(__file__).resolve().parent)
+    
+
+def add_white_background(img: str) -> Image.Image:
+    img_str = img
+    img = load_image(img)
+    print("the add white background thing got invoked")
+    white_bg = Image.new("RGB", img.size, (255, 255, 255))
+    white_bg.paste(img, mask=img.split()[3])  # use alpha channel as mask
+    
+    image_path = get_relative_path() + "image.jpg"
+    
+    save_image(white_bg, image_path)  # Save the modified image, not the original
+    remove_background(img, img_str)
+    return white_bg
+
+
+def remove_background(input_image: Image.Image, output_path: str):
+    # input_image is already an Image, no need to open
+    output_image = remove(input_image)  # background removed, transparent BG
+    
+    white_bg = Image.new("RGB", output_image.size, (255, 255, 255))
+    white_bg.paste(output_image, mask=output_image.split()[3])
+    
+    
+    white_bg.save(output_path)
+
+
+
+def save_image(img: Image.Image, path: str) -> None:
+    print("saved the image file")
+    # Convert to RGB before saving as JPEG to remove alpha channel
+    if path.lower().endswith((".jpg", ".jpeg")) and img.mode == "RGBA":
+        img = img.convert("RGB")
+    img.save(path)
+
+
+
+def run_inference(image_input, model, verbose=True, num_classes=206):
     """
     Run inference on an image input
     
@@ -154,11 +201,13 @@ def run_inference(image_input, model_path='food_classifier/fruit_mobilenet_small
     
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
     
+    '''
     # Load model
     model = create_net(num_classes)
     model.load_state_dict(torch.load(model_path, weights_only=True))
     model = model.to(device)
     model.eval()  # Set to evaluation mode
+    '''
     
     # Process different input types - check for UploadFile by attribute rather than isinstance
     if hasattr(image_input, 'file') and hasattr(image_input, 'filename'):
@@ -173,10 +222,15 @@ def run_inference(image_input, model_path='food_classifier/fruit_mobilenet_small
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         ])
         
-        image = Image.open(image_input).convert('RGB')
+        image_input = add_white_background(image_input)
+
+        #image = Image.open(image_input).convert('RGB')
+        image = image_input.convert('RGB')
+
         image_tensor = transform(image).unsqueeze(0).to(device)
     elif isinstance(image_input, Image.Image):
         # Handle PIL Image
+
         image_tensor = preprocess_image_for_inference(image_input, device)
     elif hasattr(image_input, 'to') and hasattr(image_input, 'dim'):
         # Handle PyTorch tensor
@@ -186,16 +240,42 @@ def run_inference(image_input, model_path='food_classifier/fruit_mobilenet_small
     else:
         raise ValueError(f"Unsupported image input type: {type(image_input)}. Expected UploadFile, file path, PIL Image, or PyTorch tensor.")
     
-    # Run inference
     with torch.no_grad():
         output = model(image_tensor)
-        _, predicted = torch.max(output, 1)
+        probs = torch.softmax(output, dim=1)
+
+        probability, predicted = torch.max(probs, 1)
         predicted_class = predicted.item()
-    
+        probability = probability.item()
+
     predicted_name = classnames[predicted_class]
-    print(f"Predicted class: {predicted_name}")
     
-    return predicted_name
+    matched_names = []
+    for classname in classnames:
+        if classname.lower().startswith("apple"):
+            matched_names.append([classname.lower(), classnames.index(classname), 0])
+            
+        elif classname.lower().startswith("cherry"):
+            matched_names.append([classname.lower(), classnames.index(classname), 1])
+            
+        elif classname.lower().startswith("tomato"):
+            matched_names.append([classname.lower(), classnames.index(classname), 2])  
+        
+        elif classname.lower().startswith("cucumber"):
+            matched_names.append([classname.lower(), classnames.index(classname), 3])   
+    
+             
+    print(f"classnames: {len(matched_names)} \n")
+    if verbose:
+        arr = []
+        for i in range(len(probs[0])):
+            prob = probs[0][i]
+            arr.append([classnames[i], prob.item()])
+        print(f"this is softmaxed output: {arr}")
+        print(f"Predicted class: {predicted_name} with probability: {probability:.4f}")
+
+    
+    return probability, predicted_name
 
 
 
