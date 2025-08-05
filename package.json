@@ -17,6 +17,7 @@
     "onnxruntime-web": "^1.22.0",
     "pica": "^9.0.1",
     "react": "^19.1.0",
+    "react-bootstrap": "^2.10.10",
     "react-dom": "^19.1.0",
     "react-html5-camera-photo": "^1.5.11",
     "react-router-dom": "^7.7.1",

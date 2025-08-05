@@ -9,7 +9,9 @@ interface Props {
   text: string | null;
   subgroups: string | null;
   style?: string;
-  onClick: (clickedNode: Props) => void;
+  count: number;
+  onClickIncrease: (clickedNode: Props) => void; 
+  onClickDecrease: (clickedNode: Props) => void; 
 }
 
 function App() {
@@ -19,6 +21,26 @@ function App() {
     const subgroups = clickedNode.subgroups || "";
     usenav(`/scanner?text=${subgroups}`);
   }, [usenav]);
+  
+  const increaseItemCount = (clickedNode: Props) => {
+    if(clickedNode.text){
+      fetch(`/api/add_ean_to_list/?ean=${encodeURIComponent(clickedNode.text)}&count=+1`)
+    }
+    else{
+      console.error("the clicked node in the increase item count function seems to be weitd as it doesnt have a real text or in other words: that is its texts clickedNode.text = '" + clickedNode.text + "'")
+    }
+  }
+
+  const decreaseItemCount = (clickedNode: Props) => {
+    if(clickedNode.text){
+      fetch(`/api/add_ean_to_list/?ean=${encodeURIComponent(clickedNode.text)}&count=-1`)
+    }
+    else{
+      console.error(`The clicked node in the increase item count function seems to be weird as it 
+                    doesn't have real text, or in other words: this is its text: clickedNode.text = '${clickedNode.text}'`);
+
+    }
+  }
 
   // const reloadWindow = useCallback(() => {
   //   window.location.reload();
@@ -30,7 +52,9 @@ function App() {
       text: "none",
       subgroups: "fridge",
       style: "", 
-      onClick: (clickedNode: Props) => {navigateScanner(clickedNode)}
+      count: 1,
+      onClickIncrease: (clickedNode: Props) => {increaseItemCount(clickedNode)},
+      onClickDecrease: (clickedNode: Props) => {decreaseItemCount(clickedNode)}
     }
   ])
 
@@ -58,12 +82,16 @@ useEffect(() => {
         //const ean = row[0]
         const item_name = row[1]
         const subgroups = row[2]
+        //const class_ = row[3]
+        const count = row[4]
 
         temp_data.push({
           text: item_name,
           subgroups: subgroups,
           style: "",
-          onClick: (clickedNode: Props) => navigateScanner(clickedNode)
+          count: count,
+          onClickIncrease: (clickedNode: Props) => {increaseItemCount(clickedNode)},
+          onClickDecrease: (clickedNode: Props) => {decreaseItemCount(clickedNode)}
         })
       }
       setData(temp_data)
@@ -88,7 +116,9 @@ return (
           key={idx}
           text={element.text}
           subgroups={element.subgroups}
-          onClick={navigateScanner}
+          count={element.count}
+          onClickIncrease={increaseItemCount}
+          onClickDecrease={decreaseItemCount}
           style=""
         />
       ))

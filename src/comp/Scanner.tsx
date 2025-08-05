@@ -103,7 +103,7 @@ export default function FullScreenCameraScanner() {
         subgroups = ""
       }
       console.log("the parentsList read by use params are like this: " + subgroups)
-      fetch( `/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=${subgroups}` )
+      fetch( `/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=${subgroups}&count=0` )
     }
 
   useEffect(() => {

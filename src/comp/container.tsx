@@ -5,15 +5,14 @@ interface Props {
   text: string | null;
   subgroups: string | null;
   style?: string;
-  onClick: (clickedNode: Props) => void; 
+  count: number;
+  onClickIncrease: (clickedNode: Props) => void; 
+  onClickDecrease: (clickedNode: Props) => void; 
 }
 
-const Container = ({ text, subgroups, style, onClick }: Props) => {
+const Container = ({ text, subgroups, style, count, onClickIncrease, onClickDecrease }: Props) => {
   const [open, setOpen] = useState(false);
 
-  const reloadWindow = () => {
-    window.location.reload();
-  }
 
   return (
     <>
@@ -59,7 +58,7 @@ const Container = ({ text, subgroups, style, onClick }: Props) => {
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                onClick({ text, subgroups, style, onClick });
+                onClickIncrease({ text, subgroups, style, count, onClickIncrease, onClickDecrease });
               }}
               className="
                 relative overflow-hidden
@@ -82,47 +81,8 @@ const Container = ({ text, subgroups, style, onClick }: Props) => {
             
             <button 
               onClick={(e) => {
-                e.stopPropagation(); 
-                if (text && subgroups) {
-                  const url = `/api/remove_item/?text=${encodeURIComponent(text)}`;
-                  console.log("Making request to:", url);
-                  console.log("Text:", text, "Parent:", parent);
-                  
-                  fetch(url)
-                    .then(async response => {
-                      setTimeout(() => {
-                    
-                       }, 500);
-                      console.log("Response status:", response.status);
-                      console.log("Response headers:", Object.fromEntries(response.headers.entries()));
-                      
-                      if (!response.ok) {
-                        const errorText = await response.text();
-                        console.log("Error response body:", errorText);
-                        throw new Error(`HTTP error! Status: ${response.status}, Response: ${errorText}`);
-                      }
-                      
-                      // check that response is of type JSON
-                      const contentType = response.headers.get('content-type');
-                      if (contentType && contentType.includes('application/json')) {
-                        return response.json();
-                      } else {
-                        const text = await response.text();
-                        console.log("Non-JSON response:", text);
-                        return { success: true, message: text };
-                      }
-                    })
-                    .then(data => {
-                      console.log("Item removed successfully:", data);
-                      reloadWindow()
-                    })
-                    .catch(error => {
-                      console.error("Error removing item:", error);
-                      
-                      //implement error message with error container
-                    });
-                    
-                }
+                e.stopPropagation();
+                onClickDecrease({ text, subgroups, style, count, onClickIncrease, onClickDecrease });
               }}
               className="
                 relative overflow-hidden
