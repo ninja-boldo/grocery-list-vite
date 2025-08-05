@@ -1,6 +1,7 @@
 # server.py
 import datetime
 import shutil
+from typing import Optional
 import duckdb
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, Request, UploadFile
@@ -98,11 +99,25 @@ async def get_items(request: Request):
 @app.get("/add_ean_to_list/")
 async def add_ean(
     request: Request,
-    ean: str = Query(..., min_length=8, max_length=14),
-    subgroups: str = Query(
-        ...,
-    ),
+    ean: Optional[str] = Query(None, min_length=8, max_length=14),
+    subgroups: Optional[str] = Query(None),
+    count: Optional[str] = Query(None),
+    item_name: Optional[str] = Query(None)
 ):
+    con = request.app.state.con
+    
+    if not ean and not item_name:
+        raise Exception ("you have to supply the ean or the item_name and you havent supplied both")
+    if not count:
+        count = 1
+    if not subgroups:
+        subgroups = ""
+    if ean and not item_name:        
+        ean = con.execute(f"select item_name from main.item_list where ean = '{ean}'")
+        
+    class_name = ""
+    
+
     print(f"invoked at {datetime.datetime.now()}")
 
     # the sent subs will be split by comma in the url
@@ -120,7 +135,6 @@ async def add_ean(
 
     print(f"we have gotten a request for this ean: {ean}")
 
-    con = request.app.state.con
     product_name = con.execute(f"""
         SELECT product_name FROM main.food where code = '{ean}'
     """).fetchall()
@@ -129,8 +143,8 @@ async def add_ean(
     subgroups_string = ""
 
     con.execute(
-        "INSERT INTO main.item_list (ean, item_name, subgroups) VALUES (?, ?, ?)",
-        (ean, product_name, subgroups_string),
+        "INSERT INTO main.item_list (ean, item_name, subgroups, class, count) VALUES (?, ?, ?)",
+        (ean, product_name, subgroups_string, class_name, count),
     )
 
     done = True
