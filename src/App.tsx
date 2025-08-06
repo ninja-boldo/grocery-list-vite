@@ -196,7 +196,7 @@ function App() {
   }, []); // Remove fetchItems from dependency array to prevent infinite loops
 
   if (isLoading && data.length === 0) {
-    return <div className="flex justify-center items-center min-h-screen">Loading...</div>;
+    return <div className="flex justify-center items-center min-h-screen"></div>;
   }
 
   return (
@@ -229,7 +229,7 @@ function App() {
             <div>
               <StyledButton text='scan' onClick={navigateScanner} />
             </div>
-            {isLoading && <div className="text-sm text-gray-500">Loading...</div>}
+            {isLoading && <div className="text-sm text-gray-500"></div>}
           </div>
 
           {containerComponents}
