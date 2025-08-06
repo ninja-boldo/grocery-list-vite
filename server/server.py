@@ -74,6 +74,7 @@ Instrumentator().instrument(app).expose(app)
 
 @app.middleware("http")
 async def protect_metrics(request: Request, call_next):
+    print(f"invoked protect_metrics at {datetime.datetime.now()}")
     if request.url.path == "/metrics":
         print(f"received metrics request at this time: {datetime.datetime.now()}")
 
@@ -94,8 +95,8 @@ async def protect_metrics(request: Request, call_next):
 
 
 @app.get("/fetch_subgroups")
-async def get_subgroups(request: Request):
-    print(f"invoked at {datetime.datetime.now()}")
+async def fetch_subgroups(request: Request):
+    print(f"invoked fetch_subgroups at {datetime.datetime.now()}")
 
     con = request.app.state.con
     
@@ -104,15 +105,39 @@ async def get_subgroups(request: Request):
     
     return {"subgroups": subgroups}
 
+
+@app.get("/fetch_classnames")
+async def fetch_classnames(request: Request):
+    print(f"invoked fetch_classnames at {datetime.datetime.now()}")
+
+    con = request.app.state.con
+    
+    classnames = con.execute("select distinct class from main.item_list where class != '' ").fetchall()
+    print(f"this are classnames being fetched: {classnames}")
+    
+    return {"classnames": classnames}
+ 
  
 @app.get("/fetch_items")
-async def fetch_items(request: Request, subgroups: Optional[str] = Query(None)):
-    print(f"invoked at {datetime.datetime.now()}")
+async def fetch_items(request: Request, subgroups: Optional[str] = Query(None), classnames: Optional[str] = Query(None)):
+    
+    '''currently this api endpoint only supports one subgroup and one classname at best,
+    but in future it shall be able to use them by using an array that is used by string splitting for a comma
+    and string manipulation for the query'''
+    
+    print(f"invoked fetch_items at {datetime.datetime.now()}")
 
     con = request.app.state.con
     
     if subgroups: 
-        items = con.execute(f"select * from main.item_list where subgroups = '{subgroups}'").fetchall()
+        items = con.execute(f"select * from main.item_list where subgroups = '{subgroups}'").fetchall()    
+        
+    elif classnames:
+        items = con.execute(f"select * from main.item_list where class = '{classnames}' ").fetchall()
+        
+    elif classnames and subgroups:
+        items = con.execute(f"select * from main.item_list where subgroups = '{subgroups} and class = '{classnames}' ").fetchall()
+        
     else:
         items = con.execute("select * from main.item_list").fetchall()
 
@@ -127,6 +152,9 @@ async def add_ean(
     count: Optional[str] = Query(None),
     item_name: Optional[str] = Query(None)
 ):
+    print(f"invoked add_ean at {datetime.datetime.now()}")
+
+
     con = request.app.state.con
     
     if not ean and not item_name:
@@ -142,7 +170,6 @@ async def add_ean(
     class_name = ""
     
 
-    print(f"invoked at {datetime.datetime.now()}")
 
     # the sent subs will be split by comma in the url
     # if subgroups:
@@ -185,23 +212,6 @@ async def add_ean(
     done = True
 
     return {"ean": ean, "product_name": product_name, "done": done, "subgroups": ""}
-
-
-@app.get("/remove_item/")
-async def remove_item(
-    request: Request,
-    text: str = Query(
-        ...,
-    ),
-    parent: str = Query(
-        ...,
-    ),
-):
-    #con = request.app.state.con
-
-    print(f"Attempting to delete item with text: '{text}' and parent: '{parent}'")
-
-    
 
 
 async def food_name_classifier(sleep_intervall=60*60):

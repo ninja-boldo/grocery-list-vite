@@ -6,11 +6,12 @@ interface Props {
   subgroups: string | null;
   style?: string;
   count: number;
+  classname: string | null;
   onClickIncrease: (clickedNode: Props) => void; 
   onClickDecrease: (clickedNode: Props) => void; 
 }
 
-const Container = ({ text, subgroups, style, count, onClickIncrease, onClickDecrease }: Props) => {
+const Container = ({ text, subgroups, style, count, classname, onClickIncrease, onClickDecrease }: Props) => {
   const [open, setOpen] = useState(false);
 
 
@@ -44,27 +45,45 @@ const Container = ({ text, subgroups, style, count, onClickIncrease, onClickDecr
             </p>
           </div>
 
+            {/*display the count of the item*/}
+            <span className="m-2 text-slate-200/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
+                  {count}x
+              </span>
+
             <div className="mr-4">
 
                 {/* Subgroups info - faded on the right */}
                 {subgroups ? (
                   <div className="hidden sm:flex items-center  flex-shrink-0">
-                    <span className="text-slate-400/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
+                    <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
                       {subgroups}
                     </span>
                   </div>
                 ): 
                 (
                 <div className="hidden sm:flex items-center  flex-shrink-0">
-                    <span className="text-slate-400/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
+                    <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
+                      None
+                    </span>
+                  </div>
+                  )}
+                
+                {/* classname info - faded on the right */}
+                {classname ? (
+                  <div className="hidden sm:flex items-center  flex-shrink-0 mt-2">
+                    <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
+                      {classname}
+                    </span>
+                  </div>
+                ): 
+                (
+                <div className="hidden sm:flex items-center  flex-shrink-0 mt-2">
+                    <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
                       None
                     </span>
                   </div>
                   )}
 
-                <span className="m-2 text-slate-400/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
-                      {count}
-                  </span>
             </div>
 
           {/* Right side: Buttons */}
@@ -72,7 +91,7 @@ const Container = ({ text, subgroups, style, count, onClickIncrease, onClickDecr
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                onClickIncrease({ text, subgroups, style, count, onClickIncrease, onClickDecrease });
+                onClickIncrease({ text, subgroups, style, count, classname, onClickIncrease, onClickDecrease });
               }}
               className="
                 relative overflow-hidden
@@ -96,7 +115,7 @@ const Container = ({ text, subgroups, style, count, onClickIncrease, onClickDecr
             <button 
               onClick={(e) => {
                 e.stopPropagation();
-                onClickDecrease({ text, subgroups, style, count, onClickIncrease, onClickDecrease });
+                onClickDecrease({ text, subgroups, style, count, classname, onClickIncrease, onClickDecrease });
               }}
               className="
                 relative overflow-hidden
