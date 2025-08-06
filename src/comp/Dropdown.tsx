@@ -1,13 +1,15 @@
 
-import React, { useState, useRef, useEffect, memo } from 'react';
+import { useState, useRef, useEffect, memo } from 'react';
 
 interface Props {
+  task: string;
   elements: string[];
-  onClickElement: (element: string) => void;
-  onClickReset: (triggeringNull: null) => void;
+  style: string | null;
+  onClickElement: (subgroups: string | null,  classnames: string | null) => void;
+  onClickReset: (subgroups: null, classnames: null) => void;
 }
 
-const DropdownComp = ({ elements, onClickElement, onClickReset }: Props) => {
+const DropdownComp = ({ task, elements, style, onClickElement, onClickReset }: Props) => {
 
     console.log("the received elements: '" + elements + "'")
   const [isOpen, setIsOpen] = useState(false);
@@ -25,7 +27,12 @@ const DropdownComp = ({ elements, onClickElement, onClickReset }: Props) => {
   }, []);
 
   const handleElementClick = (element: string) => {
-    onClickElement(element);
+    if(task === "subgroups"){
+      onClickElement(element, null);
+    }
+    else if(task === "classnames"){
+      onClickElement(null, element);
+    }
     setIsOpen(false);
   };
 
@@ -47,11 +54,13 @@ const DropdownComp = ({ elements, onClickElement, onClickReset }: Props) => {
         textAlign: 'left',
         verticalAlign: 'baseline'
       }}
+
+      className={`${style}`}
     >
       <div style={{ display: 'flex' }}>
         {/* Main Button */}
         <button
-          onClick={() => onClickReset(null)}
+          onClick={() => onClickReset(null, null)}
           onMouseEnter={() => setMainHover(true)}
           onMouseLeave={() => setMainHover(false)}
           style={{

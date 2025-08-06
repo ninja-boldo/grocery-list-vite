@@ -258,7 +258,7 @@ export default function FullScreenCameraScanner() {
         padding: '0 20px',
       }}>
 
-      <button onClick={navigateMlScanner}> use ml without bar code</button>
+      <button onClick={navigateMlScanner}> use ml</button>
         {ean ? `Barcode: ${ean}` : 'Point your camera at a barcode'}
       </div>
     </div>
