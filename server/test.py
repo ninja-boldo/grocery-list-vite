@@ -4,21 +4,35 @@ DB_PATH = "data/openfoodfacts.db"
 
 con = duckdb.connect(DB_PATH)
 
-# # Create schema if needed
-# con.execute("CREATE SCHEMA IF NOT EXISTS main")
+# The table you're modifying
+table_name = "food"
 
+# Columns you want to keep
+keep_columns = {
+    "product_name", "code", "quantity", "packaging",
+    "brands_en", "categories", "ingredients_text", "energy-kcal_100g"
+}
 
-# con.execute("DROP TABLE IF EXISTS main.item_list")
+# Get all columns in the table
+columns = con.execute(f"""
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_name = '{table_name}'
+    ORDER BY ordinal_position;
+    """).fetchall()
 
+all_columns = [row[0] for row in columns]
+drop_columns = [col for col in all_columns if col not in keep_columns]
 
-# con.execute("""
-# CREATE TABLE IF NOT EXISTS item_list (
-#     ean string,
-#     item_name string,
-#     subgroups string,
-# )
-# """)
+if not drop_columns:
+    print("-- No columns to drop.")
+else:
+    for col in drop_columns:
+        # Enclose column names with hyphens in double quotes
+        if "-" in col:
+            col = f'"{col}"'
+        # Execute the ALTER TABLE command for each column
+        con.execute(f'ALTER TABLE {table_name} DROP COLUMN {col};')
+        print(f'Dropped column: {col}')
 
-
-print(con.execute("select * from main.item_list").df())
 con.close()

@@ -1,0 +1,12 @@
+node_modules
+.npm
+npm-debug.log*
+dist
+build
+__pycache__
+*.pyc
+.git
+.gitignore
+README.md
+.env
+.env.local
