@@ -63,7 +63,7 @@ function App() {
       setIsLoading(true);
       try {
         await fetch(`/api/add_ean_to_list/?item_name=${encodeURIComponent(clickedNode.text)}&count=-1`);
-        // Instead of reloading, update state locally for better UX
+
         setData(prevData => 
           prevData.map(item => 
             item.text === clickedNode.text 
@@ -146,11 +146,11 @@ function App() {
     }
   }, []);
 
-  // Memoize the Container components to prevent unnecessary re-renders
+
   const containerComponents = useMemo(() => {
     return data.map((element, idx) => (
       <Container
-        key={`${element.text}-${idx}`} // Better key using text + index
+        key={`${element.text}-${idx}`} 
         text={element.text}
         subgroups={element.subgroups}
         count={element.count}
@@ -162,11 +162,11 @@ function App() {
     ));
   }, [data, increaseItemCount, decreaseItemCount]);
 
-  // Load initial data and dropdown options
+
   useEffect(() => {
     const loadInitialData = async () => {
       try {
-        // Run all initial fetches in parallel
+        // run all initial fetches in parallel
         const [, subgroupsResult, classnamesResult] = await Promise.allSettled([
           fetchItems(null, null),
           fetchSubgroups(),
@@ -193,7 +193,7 @@ function App() {
     };
 
     loadInitialData();
-  }, []); // Remove fetchItems from dependency array to prevent infinite loops
+  }, []); 
 
   if (isLoading && data.length === 0) {
     return <div className="flex justify-center items-center min-h-screen"></div>;
