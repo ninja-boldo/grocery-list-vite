@@ -32,24 +32,38 @@ RUN npm install
 # Copy the project files
 COPY grocery-list2/ .
 
+#install yarn
+RUN npm install --global yarn
+
+
 # Clear cache and reinstall to fix rollup issue
 RUN rm -rf node_modules package-lock.json && \
-    npm cache clean --force && \
-    npm install && \
-    npm run build
+    yarn cache clean --force && \
+    yarn install && \
+    yarn run build
+
+
+RUN pip install uv
+
 
 # Install Python dependencies with automatic version fixing
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt --no-cache-dir || \
+    uv pip install --system -r requirements.txt --no-cache-dir || \
     (echo "Auto-fixing incompatible versions..." && \
      sed -e 's/contourpy==1\.3\.3/contourpy==1.3.2/g' \
          -e 's/networkx==3\.5/networkx>=3.4,<3.5/g' \
+         -e '/pyobjc-core/d' \
+         -e '/pyobjc-framework/d' \
+         -e '/PyGetWindow/d' \
+         -e '/PyAutoGUI/d' \
+         -e '/MouseInfo/d' \
+         -e '/PyMsgBox/d' \
          requirements.txt > requirements_fixed.txt && \
      echo "Fixed requirements.txt -> requirements_fixed.txt" && \
-     pip install -r requirements_fixed.txt --no-cache-dir)
+     uv pip install --system -r requirements_fixed.txt --no-cache-dir)
 
 # Expose ports
 EXPOSE 4040 5000
 
 # Start both services (MOVED FROM RUN TO CMD)
-CMD ["bash", "-c", "python server/server.py & npm run preview -- --port 4040 --host 0.0.0.0"]
+CMD ["bash", "-c", "python server/server.py & yarn run preview -- --port 4040 --host 0.0.0.0"]
