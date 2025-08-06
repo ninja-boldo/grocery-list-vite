@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 
 interface Props {
@@ -14,80 +13,67 @@ interface Props {
 const Container = ({ text, subgroups, style, count, classname, onClickIncrease, onClickDecrease }: Props) => {
   const [open, setOpen] = useState(false);
 
-
   return (
-    <>
-      <div className={`mb-4`}>
-        <div
-          onClick={() => setOpen(!open)}
-          className={`
-            group relative
-            flex items-center justify-between cursor-pointer
-            bg-gradient-to-r from-slate-900/90 to-slate-800/90
-            border border-cyan-500/30
-            rounded-2xl shadow-lg shadow-cyan-500/10
-            px-4 sm:px-6 py-3 sm:py-4 transition-all duration-300
-            hover:shadow-xl hover:shadow-cyan-400/20
-            hover:border-cyan-400/50
-            hover:from-slate-800/95 hover:to-slate-700/95
-            min-w-0 w-full
-            backdrop-blur-md
-            ${style || ""}
-          `}
-        >
-          {/* Neon accent glow */}
-          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 sm:h-8 bg-gradient-to-b from-cyan-400 via-cyan-500 to-blue-500 rounded-r-full shadow-lg shadow-cyan-500/50 group-hover:shadow-cyan-400/70 transition-all duration-300"></div>
-          
-          <div className="flex items-center min-w-0 flex-1 mr-3">            
-            {/* Text label */}
-            <p className="ml-3 sm:ml-4 text-cyan-100 font-medium text-sm sm:text-base truncate group-hover:text-cyan-50 transition-colors pr-2">
+    <div className="mb-4 px-4">
+      <div
+        onClick={() => setOpen(!open)}
+        className={`
+          group relative
+          flex items-center cursor-pointer
+          bg-gradient-to-r from-slate-900/90 to-slate-800/90
+          border border-cyan-500/30
+          rounded-2xl shadow-lg shadow-cyan-500/10
+          p-4 transition-all duration-300
+          hover:shadow-xl hover:shadow-cyan-400/20
+          hover:border-cyan-400/50
+          hover:from-slate-800/95 hover:to-slate-700/95
+          w-full
+          backdrop-blur-md
+          ${style || ""}
+        `}
+      >
+        {/* Neon accent glow */}
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-gradient-to-b from-cyan-400 via-cyan-500 to-blue-500 rounded-r-full shadow-lg shadow-cyan-500/50 group-hover:shadow-cyan-400/70 transition-all duration-300"></div>
+        
+        {/* Main content area */}
+        <div className="flex items-center justify-between w-full ml-4">
+          {/* Left side - Item name */}
+          <div className="flex-1 min-w-0 mr-4">
+            <p className="text-cyan-100 font-medium text-base truncate group-hover:text-cyan-50 transition-colors">
               {text}
             </p>
           </div>
 
-            {/*display the count of the item*/}
-            <span className="m-2 text-slate-200/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
-                  {count}x
+          {/* Middle section - Count, Subgroups, Classnames */}
+          <div className="flex items-center gap-3">
+            {/* Count */}
+            <span className="text-slate-200/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30 whitespace-nowrap">
+              {count}x
+            </span>
+
+            {/* Subgroups and classnames container */}
+            <div className="hidden sm:flex flex-col gap-1">
+              <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30 whitespace-nowrap">
+                {subgroups || "None"}
               </span>
-
-            <div className="mr-4">
-
-                {/* Subgroups info - faded on the right */}
-                {subgroups ? (
-                  <div className="hidden sm:flex items-center  flex-shrink-0">
-                    <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
-                      {subgroups}
-                    </span>
-                  </div>
-                ): 
-                (
-                <div className="hidden sm:flex items-center  flex-shrink-0">
-                    <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
-                      None
-                    </span>
-                  </div>
-                  )}
-                
-                {/* classname info - faded on the right */}
-                {classname ? (
-                  <div className="hidden sm:flex items-center  flex-shrink-0 mt-2">
-                    <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
-                      {classname}
-                    </span>
-                  </div>
-                ): 
-                (
-                <div className="hidden sm:flex items-center  flex-shrink-0 mt-2">
-                    <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30">
-                      None
-                    </span>
-                  </div>
-                  )}
-
+              <span className="text-slate-300/60 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/40 border border-slate-600/30 whitespace-nowrap">
+                {classname || "None"}
+              </span>
             </div>
 
-          {/* Right side: Buttons */}
-          <div className="flex items-center space-x-2 sm:space-x-3 flex-shrink-0">
+            {/* Mobile - show subgroups and classnames inline */}
+            <div className="flex sm:hidden flex-col gap-1">
+              <span className="text-slate-300/60 text-xs font-mono px-1 py-1 rounded-md bg-slate-800/40 border border-slate-600/30 max-w-16 truncate">
+                {subgroups || "None"}
+              </span>
+              <span className="text-slate-300/60 text-xs font-mono px-1 py-1 rounded-md bg-slate-800/40 border border-slate-600/30 max-w-16 truncate">
+                {classname || "None"}
+              </span>
+            </div>
+          </div>
+
+          {/* Right side - Buttons */}
+          <div className="flex items-center gap-2 ml-4">
             <button 
               onClick={(e) => {
                 e.stopPropagation();
@@ -95,9 +81,9 @@ const Container = ({ text, subgroups, style, count, classname, onClickIncrease, 
               }}
               className="
                 relative overflow-hidden
-                w-8 h-8 sm:w-10 sm:h-10
+                w-10 h-10
                 bg-gradient-to-br from-emerald-500/90 to-emerald-600/90
-                text-white font-bold text-sm sm:text-lg
+                text-white font-bold text-lg
                 rounded-xl shadow-lg shadow-emerald-500/25
                 hover:from-emerald-400/95 hover:to-emerald-500/95
                 hover:shadow-xl hover:shadow-emerald-400/40 
@@ -108,6 +94,7 @@ const Container = ({ text, subgroups, style, count, classname, onClickIncrease, 
                 border border-emerald-400/40
                 before:absolute before:inset-0 before:bg-white/10 before:translate-x-[-100%] 
                 hover:before:translate-x-[100%] before:transition-transform before:duration-500
+                flex-shrink-0
               ">
               +
             </button>
@@ -119,9 +106,9 @@ const Container = ({ text, subgroups, style, count, classname, onClickIncrease, 
               }}
               className="
                 relative overflow-hidden
-                w-8 h-8 sm:w-10 sm:h-10
+                w-10 h-10
                 bg-gradient-to-br from-rose-500/90 to-pink-600/90
-                text-white font-bold text-sm sm:text-lg
+                text-white font-bold text-lg
                 rounded-xl shadow-lg shadow-rose-500/25
                 hover:from-rose-400/95 hover:to-pink-500/95
                 hover:shadow-xl hover:shadow-rose-400/40 
@@ -132,22 +119,14 @@ const Container = ({ text, subgroups, style, count, classname, onClickIncrease, 
                 border border-rose-400/40
                 before:absolute before:inset-0 before:bg-white/10 before:translate-x-[-100%] 
                 hover:before:translate-x-[100%] before:transition-transform before:duration-500
+                flex-shrink-0
               ">
               −
             </button>
           </div>
         </div>
-
-        {/* Mobile subgroups display */}
-        {subgroups && (
-          <div className="sm:hidden mt-2 ml-4">
-            <span className="text-slate-400/50 text-xs font-mono px-2 py-1 rounded-md bg-slate-800/20 border border-slate-700/30">
-              {subgroups}
-            </span>
-          </div>
-        )}
       </div>
-    </>
+    </div>
   );
 };
 

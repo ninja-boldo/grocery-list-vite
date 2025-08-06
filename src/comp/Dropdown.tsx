@@ -3,13 +3,14 @@ import { useState, useRef, useEffect, memo } from 'react';
 
 interface Props {
   task: string;
+  text: string;
   elements: string[];
   style: string | null;
   onClickElement: (subgroups: string | null,  classnames: string | null) => void;
   onClickReset: (subgroups: null, classnames: null) => void;
 }
 
-const DropdownComp = ({ task, elements, style, onClickElement, onClickReset }: Props) => {
+const DropdownComp = ({ task, text, elements, style, onClickElement, onClickReset }: Props) => {
 
     console.log("the received elements: '" + elements + "'")
   const [isOpen, setIsOpen] = useState(false);
@@ -90,7 +91,8 @@ const DropdownComp = ({ task, elements, style, onClickElement, onClickReset }: P
             boxShadow: mainHover ? '0 2px 4px rgba(0, 0, 0, 0.1)' : 'none'
           }}
         >
-          reset
+          {isOpen ? "reset" + "\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0" : text}
+
         </button>
         
         {/* Dropdown Toggle */}
