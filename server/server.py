@@ -25,6 +25,8 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 import time
 
+import logging
+from logging_loki import LokiHandler
 
 
 
@@ -45,7 +47,7 @@ device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.con = duckdb.connect(DB_PATH)
-    print("DuckDB connection opened")
+    logger.info("DuckDB connection opened")
 
     net = food_classifier.create_net(num_classes=206)
     
@@ -63,7 +65,7 @@ async def lifespan(app: FastAPI):
 
     scheduler.shutdown()
     app.state.con.close()
-    print("DuckDB connection closed")
+    logger.info("DuckDB connection closed")
 
 
 
@@ -71,12 +73,22 @@ app = FastAPI(lifespan=lifespan)
 
 Instrumentator().instrument(app).expose(app)
 
+handler = LokiHandler(
+    url="http://192.168.1.13:3100/loki/api/v1/push",
+    tags={"application": "fastapi-backend-grocery-list"},
+    auth=None,
+    version="1"
+)
+logger = logging.getLogger("fastapi-logger")
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+
 
 @app.middleware("http")
 async def protect_metrics(request: Request, call_next):
-    print(f"invoked protect_metrics at {datetime.datetime.now()}")
+    logger.info(f"invoked protect_metrics at {datetime.datetime.now()}")
     if request.url.path == "/metrics":
-        print(f"received metrics request at this time: {datetime.datetime.now()}")
+        logger.info(f"received metrics request at this time: {datetime.datetime.now()}")
 
         auth_header = request.headers.get("Authorization")
 
@@ -87,7 +99,7 @@ async def protect_metrics(request: Request, call_next):
         token = auth_header.removeprefix("Bearer ").strip()
 
         if token != api_key:
-            print(f"Provided token: '{token}', expected: '{api_key}'")
+            logger.info(f"Provided token: '{token}', expected: '{api_key}'")
             return PlainTextResponse("Unauthorized", status_code=401)
 
     return await call_next(request)
@@ -96,24 +108,24 @@ async def protect_metrics(request: Request, call_next):
 
 @app.get("/fetch_subgroups")
 async def fetch_subgroups(request: Request):
-    print(f"invoked fetch_subgroups at {datetime.datetime.now()}")
+    logger.info(f"invoked fetch_subgroups at {datetime.datetime.now()}")
 
     con = request.app.state.con
     
     subgroups = con.execute("select distinct subgroups from main.item_list where subgroups != '' ").fetchall()
-    print(f"this are subgroups being fetched: {subgroups}")
+    logger.info(f"this are subgroups being fetched: {subgroups}")
     
     return {"subgroups": subgroups}
 
 
 @app.get("/fetch_classnames")
 async def fetch_classnames(request: Request):
-    print(f"invoked fetch_classnames at {datetime.datetime.now()}")
+    logger.info(f"invoked fetch_classnames at {datetime.datetime.now()}")
 
     con = request.app.state.con
     
     classnames = con.execute("select distinct class from main.item_list where class != '' ").fetchall()
-    print(f"this are classnames being fetched: {classnames}")
+    logger.info(f"this are classnames being fetched: {classnames}")
     
     return {"classnames": classnames}
  
@@ -125,7 +137,7 @@ async def fetch_items(request: Request, subgroups: Optional[str] = Query(None), 
     but in future it shall be able to use them by using an array that is used by string splitting for a comma
     and string manipulation for the query'''
     
-    print(f"invoked fetch_items at {datetime.datetime.now()}")
+    logger.info(f"invoked fetch_items at {datetime.datetime.now()}")
 
     con = request.app.state.con
     
@@ -152,7 +164,7 @@ async def add_ean(
     count: Optional[str] = Query(None),
     item_name: Optional[str] = Query(None)
 ):
-    print(f"invoked add_ean at {datetime.datetime.now()}")
+    logger.info(f"invoked add_ean at {datetime.datetime.now()}")
 
 
     con = request.app.state.con
@@ -180,19 +192,19 @@ async def add_ean(
     else:
         subgroups = ""
 
-    print(f"subgroups: {subgroups}")
-    print(f"item_name: '{item_name}'")
+    logger.info(f"subgroups: {subgroups}")
+    logger.info(f"item_name: '{item_name}'")
 
     done = False
 
-    print(f"we have gotten a request for this ean: {ean}")
+    logger.info(f"we have gotten a request for this ean: {ean}")
     
-    print(f"about to query this: SELECT product_name FROM main.food where code = '{ean}'")
+    logger.info(f"about to query this: SELECT product_name FROM main.food where code = '{ean}'")
 
     product_name = con.execute(f"""
         SELECT product_name FROM main.food where code = '{ean}'
     """).fetchall()
-    print(f"product_name: {product_name}")
+    logger.info(f"product_name: {product_name}")
 
     subgroups_string = ""
     
@@ -216,12 +228,12 @@ async def add_ean(
 
 async def food_name_classifier(sleep_intervall=60*60):
     con = duckdb.connect(DB_PATH)
-    print("[Background task] Connection opened")
+    logger.info("[Background task] Connection opened")
 
     try:
         while True:
             try:
-                print(f"[{datetime.datetime.now()}] food_classifier task running...")
+                logger.info(f"[{datetime.datetime.now()}] food_classifier task running...")
                 '''
                 item_names = con.execute("SELECT item_name FROM main.item_list where class is NULL").fetchall()
                 
@@ -232,25 +244,25 @@ async def food_name_classifier(sleep_intervall=60*60):
                     
                 time.sleep(sleep_intervall)
             except Exception as e:
-                print(f"[food_classifier task error]: {e}")
+                logger.info(f"[food_classifier task error]: {e}")
 
     finally:
         con.close()
-        print("food_classifier Connection closed")
+        logger.info("food_classifier Connection closed")
 
 
 @app.post("/send_inference_image")
 async def create_upload_file(image: UploadFile | None = None):
     if not image:
-        print("we havent received any image at all")
+        logger.info("we havent received any image at all")
         return {"message": "No upload file sent"}
     else:
-        print(f"we have gotten the image with this name {image.filename}")
+        logger.info(f"we have gotten the image with this name {image.filename}")
         
         with open("image.jpg", "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
             
-        print("Image saved to: image.jpg")
+        logger.info("Image saved to: image.jpg")
             
         image = "/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/image.jpg"
         probablity, prediciton = food_classifier.run_inference(image, app.state.net)
