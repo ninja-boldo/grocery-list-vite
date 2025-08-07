@@ -1,6 +1,5 @@
 # gotta be invoked for build from one layer above to be able to access the whole grocery list 2 folder
-
-FROM ubuntu:22.04 AS base
+FROM python:3.11-slim-bullseye AS base
 
 # updating and installing python
 ENV DEBIAN_FRONTEND=noninteractive
@@ -17,8 +16,12 @@ ENV LC_ALL=en_US.UTF-8
 RUN curl https://install.duckdb.org | sh
 
 # Install Node.js
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs
+
+
+RUN node --version && npm --version && which npm
+
 
 # Set working directory (CRUCIAL CHANGE)
 WORKDIR /app
