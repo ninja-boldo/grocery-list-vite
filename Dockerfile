@@ -93,5 +93,4 @@ RUN pip install --upgrade pip && \
 EXPOSE 3030 4040 5000
 
 
-
 CMD ["bash", "-c", "python server/server.py & yarn run preview -- --port 4040 --host 0.0.0.0"]

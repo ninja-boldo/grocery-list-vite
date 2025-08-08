@@ -23,5 +23,16 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    preview: {
+      host: true,
+      port: 4040,
+      proxy: {
+        '/api': {
+          target: 'http://localhost:3030', // In Docker, this will be the same container
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+      },
+    },
   };
 });
