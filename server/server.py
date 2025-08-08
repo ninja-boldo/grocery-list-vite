@@ -35,7 +35,7 @@ from logging_loki import LokiHandler
 
 #      https://requires-ny-force-lift.trycloudflare.com/scanner
 
-DB_PATH = "data/openfoodfacts.db"
+DB_PATH = "server/data/openfoodfacts.db"
 
 api_key = "one-rgs iodesftheontisissihdebeten thncstthinciree wholeswedissh-ek-"
 
