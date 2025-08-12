@@ -91,7 +91,7 @@ const DropdownComp = ({ task, text, elements, style, onClickElement, onClickRese
             boxShadow: mainHover ? '0 2px 4px rgba(0, 0, 0, 0.1)' : 'none'
           }}
         >
-          {isOpen ? "reset" + "\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0" : text}
+          {isOpen ? "reset" : text}
 
         </button>
         

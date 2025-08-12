@@ -6,8 +6,7 @@ FROM python:3.11-slim-bullseye AS base
 # updating and installing python
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
-    curl git build-essential python3 python3-pip python3-venv sudo file locales ruby-full
-
+    curl git build-essential python3 python3-pip python3-venv sudo file locales
 
 
 # Set locale
@@ -88,9 +87,8 @@ RUN pip install --upgrade pip && \
      uv pip install --system -r requirements_fixed.txt --no-cache-dir)
 
 
-
 # Expose ports
 EXPOSE 3030 4040 5000
 
 
-CMD ["bash", "-c", "python server/server.py & yarn run preview -- --port 4040 --host 0.0.0.0"]
+CMD ["bash", "-c", "python server/server.py & sleep 2 && yarn run preview --port 4040 --host 0.0.0.0 & wait"]
