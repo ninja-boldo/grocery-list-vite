@@ -1,17 +1,18 @@
 # server.py
 import os
+import traceback
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 import datetime
 import shutil
-from typing import Optional
+from typing import Optional, Union
 import duckdb
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, Request, UploadFile, HTTPException
 import torch
 import uvicorn
 
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -36,6 +37,9 @@ device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 def init_database(con):
     """Initialize database schema if it doesn't exist"""
     try:
+        
+        logging.getLogger("fastapi-logger").info(f"these are the table schemas available: {con.execute('SHOW TABLES;').fetchall()}")
+        print(f"these are the table schemas available: {con.execute('SHOW TABLES;').fetchall()}")
         # Create item_list table
         con.execute("""
             CREATE TABLE IF NOT EXISTS main.item_list (
@@ -48,20 +52,8 @@ def init_database(con):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        # Create food table if it doesn't exist
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS main.food (
-                code TEXT PRIMARY KEY,
-                product_name TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Create indexes for better performance
-        con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_ean ON main.item_list(ean)")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_name ON main.item_list(item_name)")
-        con.execute("CREATE INDEX IF NOT EXISTS idx_food_code ON main.food(code)")
+
+
         
         logging.getLogger("fastapi-logger").info("Database schema initialized successfully")
     except Exception as e:
@@ -146,9 +138,10 @@ async def lifespan(app: FastAPI):
     app.state.con.close()
     logger.info("DuckDB connection closed")
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, debug=True)
 
 Instrumentator().instrument(app).expose(app)
+
 
 handler = LokiHandler(
     url="http://192.168.1.13:3100/loki/api/v1/push",
@@ -156,9 +149,18 @@ handler = LokiHandler(
     auth=None,
     version="1"
 )
+
+# Add file handler
+file_handler = logging.FileHandler('server.log')
+file_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
 logger = logging.getLogger("fastapi-logger")
-logger.addHandler(handler)
+logger.addHandler(handler)      # Loki
+logger.addHandler(file_handler) # File
 logger.setLevel(logging.INFO)
+
 
 @app.middleware("http")
 async def protect_metrics(request: Request, call_next):
@@ -177,7 +179,25 @@ async def protect_metrics(request: Request, call_next):
             logger.info(f"Provided token: '{token}', expected: '{api_key}'")
             return PlainTextResponse("Unauthorized", status_code=401)
 
-    return await call_next(request)
+    # Wrap the call_next in try-catch to capture all exceptions
+    try:
+        return await call_next(request)
+    except Exception as e:
+        # Log the full traceback
+        logger.error(f"Unhandled exception on {request.method} {request.url.path}: {str(e)}")
+        logger.error(f"Query params: {dict(request.query_params)}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        
+        # Return detailed error response (you can make this less verbose in production)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": f"Internal server error: {str(e)}",
+                "path": str(request.url.path),
+                "method": request.method,
+                "query_params": dict(request.query_params)
+            }
+        )
 
 @app.get("/fetch_subgroups")
 async def fetch_subgroups(request: Request):
@@ -278,7 +298,7 @@ async def add_ean(
         product_name = product_name_result[0] if product_name_result else item_name
 
         # Check if item already exists
-        existing_item = con.execute("SELECT id, count FROM main.item_list WHERE item_name = ?", (item_name,)).fetchone()
+        existing_item = con.execute("SELECT ean, count FROM main.item_list WHERE item_name = ?", (item_name,)).fetchone()
         
         if not existing_item:
             # Insert new item
@@ -305,6 +325,112 @@ async def add_ean(
         logger.error(f"Error adding EAN: {e}")
         raise HTTPException(status_code=500, detail="Failed to add item")
 
+
+
+@app.get("/add_ean_to_list_manual/")
+async def add_ean_manual(
+    request: Request,
+    ean: Optional[str] = Query(None, min_length=8, max_length=14),
+    subgroups: Optional[str] = Query(None),
+    count: Optional[Union[int, str]] = Query(1),
+    item_name: Optional[str] = Query(None)
+):
+    logger.info(f"invoked add_ean at {datetime.datetime.now()}")
+
+    con = request.app.state.con
+    
+    try:
+        if not ean and not item_name:
+            raise HTTPException(status_code=400, detail="You must supply either ean or item_name")
+        
+        if count is None:
+            count = 1
+            
+        if not subgroups:
+            subgroups = ""
+        
+        if not ean:
+            ean = 0
+        
+        try:
+            logger.info(f"line 356 ean: {ean} item_name: {item_name}")
+            
+            # Get item_name from ean if not provided
+            if ean and not item_name:        
+                result = con.execute("SELECT item_name FROM main.item_list WHERE ean = ?", (ean,)).fetchone()
+                if result:
+                    item_name = result[0]
+                else:
+                    # Try to get from food table
+                    result = con.execute("SELECT product_name FROM main.food WHERE code = ?", (ean,)).fetchone()
+                    if result:
+                        item_name = result[0]
+                    else:
+                        raise HTTPException(status_code=404, detail="Item not found for given EAN")
+
+            # Get ean from item_name if not provided
+            elif item_name and not ean:
+                result = con.execute("SELECT ean FROM main.item_list WHERE item_name = ?", (item_name,)).fetchone()
+                if result:
+                    ean = result[0]
+            
+            #add to the food db if it hasnt been there before
+            elif item_name and ean:
+                result = con.execute("SELECT item_name FROM main.item_list WHERE ean = ?", (ean,)).fetchone()
+                if result:
+                    item_name = result[0]
+                else:
+                    con.execute(
+                        "INSERT INTO main.item_list (ean, item_name, subgroups, class, count) VALUES (?, ?, ?, ?, ?)",
+                (ean, item_name, subgroups, "", count)
+                )
+            
+            
+        except:
+            logger.info(f"""failed to get ean or item name with the other out of the db =>
+                        not listed in the main db by now \nfor ean: {ean} and item name: {item_name}""")
+    
+    
+    
+        class_name = ""
+
+        logger.info(f"Processing: ean={ean}, item_name={item_name}, count={count}")
+
+        # Get product name from food table
+        
+        #product_name_result = con.execute("SELECT product_name FROM main.food WHERE code = ?", (ean,)).fetchone()
+        #product_name = product_name_result[0] if product_name_result else item_name
+        product_name = item_name
+        
+        # Check if item already exists
+        existing_item = con.execute("SELECT ean, count FROM main.item_list WHERE item_name = ?", (item_name,)).fetchone()
+        
+        if not existing_item:
+            # Insert new item
+            con.execute(
+                "INSERT INTO main.item_list (ean, item_name, subgroups, class, count) VALUES (?, ?, ?, ?, ?)",
+                (ean, item_name, subgroups, class_name, count)
+            )
+            logger.info(f"Added new item: {item_name}")
+        else:
+            # Update existing item count
+            new_count = existing_item[1] + count
+            if new_count <= 0:
+                con.execute("DELETE FROM main.item_list WHERE item_name = ?", (item_name,))
+                logger.info(f"Removed item: {item_name}")
+            else:
+                con.execute("UPDATE main.item_list SET count = ? WHERE item_name = ?", (new_count, item_name))
+                logger.info(f"Updated item count: {item_name} = {new_count}")
+
+        return {"ean": ean, "product_name": product_name, "done": True, "subgroups": subgroups}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding EAN: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add item")
+    
+    
 async def food_name_classifier(sleep_intervall=60*60):
     con = duckdb.connect(DB_PATH)
     logger.info("[Background task] Connection opened")
@@ -322,6 +448,7 @@ async def food_name_classifier(sleep_intervall=60*60):
     finally:
         con.close()
         logger.info("food_classifier Connection closed")
+
 
 @app.post("/send_inference_image")
 async def create_upload_file(request: Request, image: UploadFile | None = None):
@@ -356,8 +483,8 @@ async def create_upload_file(request: Request, image: UploadFile | None = None):
         logger.error(f"Error processing image: {e}")
         raise HTTPException(status_code=500, detail="Failed to process image")
     
+# At the bottom of your server.py file, modify the uvicorn.run call:
 if __name__ == "__main__":
-    # Try to find database file
     found_db = find_openfoodfacts_db()
     if found_db:
         DB_PATH = found_db

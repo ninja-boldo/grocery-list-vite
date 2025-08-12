@@ -34,6 +34,10 @@ export default function FullScreenCameraScanner() {
     navHook("/scanner/ml")
   }
 
+  const navigateManualAdd = () => {
+    navHook("/scanner/manual")
+  }
+
   // Get available cameras on component mount
   useEffect(() => {
     const getCameras = async () => {
@@ -97,14 +101,21 @@ export default function FullScreenCameraScanner() {
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
   let subgroups = queryParams.get('subgroups');
+  let count = queryParams.get('count');
+
 
   const sendEan = (ean: string) => {
       if(!subgroups){
         subgroups = ""
       }
-      console.log("the parentsList read by use params are like this: " + subgroups)
-      fetch( `/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=${subgroups}&count=0` )
+      if(!count){
+        count = '1'
+      }
+
+      console.log("the parentsList read by use params are like this: " + subgroups + "\ncount read out: " + count)
+      fetch( `/api/add_ean_to_list/?ean=${encodeURIComponent(ean)}&subgroups=${subgroups}&count=${count}` )
     }
+
 
   useEffect(() => {
 
@@ -259,6 +270,7 @@ export default function FullScreenCameraScanner() {
       }}>
 
       <button onClick={navigateMlScanner}> use ml</button>
+      <button onClick={navigateManualAdd} >add manually</button>
         {ean ? `Barcode: ${ean}` : 'Point your camera at a barcode'}
       </div>
     </div>

@@ -25,12 +25,16 @@ function App() {
   const [classnames, setClassnames] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  const navigateScanner = useCallback((clickedNode: Props | null) => {
+  const navigateScanner = useCallback((clickedNode: Props | null, count: number | null) => {
+
+    if(!count){
+      count = 1
+    }
     if(clickedNode?.subgroups){
       const subgroups = clickedNode.subgroups || "";
-      usenav(`/scanner?text=${encodeURIComponent(subgroups)}`);
+      usenav(`/scanner?subgroups=${encodeURIComponent(subgroups)}&count=${encodeURIComponent(count)}`);
     } else {
-      usenav(`/scanner?text=`);
+      usenav(`/scanner?text=&count=${encodeURIComponent(count)}`);
     }
   }, [usenav]);
 
@@ -59,28 +63,45 @@ function App() {
   }, []);
 
   const decreaseItemCount = useCallback(async (clickedNode: Props) => {
-    if(clickedNode.text){
-      setIsLoading(true);
-      try {
-        await fetch(`/api/add_ean_to_list/?item_name=${encodeURIComponent(clickedNode.text)}&count=-1`);
+  if (!clickedNode.text) {
+    console.error("Decrease: clickedNode.text is invalid:", clickedNode.text);
+    return;
+  }
 
-        setData(prevData => 
-          prevData.map(item => 
-            item.text === clickedNode.text 
-              ? { ...item, count: Math.max(0, item.count - 1) }
-              : item
-          )
-        );
-      } catch (error) {
-        console.error("Failed to decrease count:", error);
-        setError("Failed to update item count");
-      } finally {
-        setIsLoading(false);
-      }
-    } else {
-      console.error("Decrease: clickedNode.text is invalid:", clickedNode.text);
+  setIsLoading(true);
+  try {
+    await fetch(
+      `/api/add_ean_to_list/?item_name=${encodeURIComponent(
+        clickedNode.text
+      )}&count=-1`
+    );
+
+    let shouldReload = false;
+    setData(prevData =>
+      prevData.map(item => {
+        if (item.text !== clickedNode.text) {
+          return item;
+        }
+        const newCount = Math.max(0, item.count - 1);
+        if (newCount < 1) {
+          shouldReload = true;
+        }
+        return { ...item, count: newCount };
+      })
+    );
+
+    if (shouldReload) {
+      location.reload();
     }
-  }, []);
+  } catch (err) {
+    console.error("Failed to decrease count:", err);
+    setError("Failed to update item count");
+  } finally {
+    setIsLoading(false);
+  }
+}, []);
+
+
 
   const fetchItems = useCallback(async (subgroups: string | null, classnames: string | null) => {
     setIsLoading(true);
@@ -96,10 +117,24 @@ function App() {
         response = await fetch(`/api/fetch_items`);
       }
       
-      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-      const responseData = await response.json();
 
-      const temp_data: Props[] = responseData.item_list.map((row: any[]) => ({
+      interface ApiResponse {
+        item_list: [string, string, string, string, number][];  // or whatever the actual structure is
+      }
+
+      interface RawItem {
+        0: string;  // assuming first element
+        1: string;  // text
+        2: string; // subgroups
+        3: string;  // classname
+        4: number;  // count
+      }
+
+      // Then use them:
+      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+      const responseData: ApiResponse = await response.json();
+
+      const temp_data: Props[] = responseData.item_list.map((row: RawItem) => ({
         text: row[1],
         subgroups: row[2],
         style: "",
@@ -110,12 +145,14 @@ function App() {
       }));
 
       setData(temp_data);
-    } catch (error: any) {
-      setError(error.message || String(error));
+    } 
+    catch (error: unknown) {
+      setError(error instanceof Error ? error.message : String(error));
       console.error("Fetch failed:", error);
     } finally {
       setIsLoading(false);
     }
+
   }, [increaseItemCount, decreaseItemCount]);
 
   const fetchSubgroups = useCallback(async (): Promise<string[]> => {
@@ -209,7 +246,7 @@ function App() {
             <div>
               <DropdownComp 
                 task="subgroups" 
-                text="subgroups" 
+                text="subs" 
                 elements={subgroups} 
                 onClickElement={fetchItems} 
                 onClickReset={fetchItems} 
@@ -219,7 +256,7 @@ function App() {
             <div>
               <DropdownComp 
                 task="classnames" 
-                text="classnames" 
+                text="class" 
                 elements={classnames} 
                 onClickElement={fetchItems} 
                 onClickReset={fetchItems} 
@@ -227,7 +264,8 @@ function App() {
               />
             </div>
             <div>
-              <StyledButton text='scan' onClick={navigateScanner} />
+              <StyledButton text='+' onClick={() => navigateScanner(null, 1)} className='mx-2' />
+              <StyledButton text='-' onClick={() => navigateScanner(null, -1)} className='mx-2' />
             </div>
             {isLoading && <div className="text-sm text-gray-500"></div>}
           </div>
