@@ -1,7 +1,6 @@
 # gotta be invoked for build from one layer above to be able to access the whole grocery list 2 folder
 
-FROM anishitani/docker-postgresql AS base
-
+FROM python:3.11-slim-bookworm AS base
 
 
 # updating and installing python
