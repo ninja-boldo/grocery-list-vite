@@ -39,7 +39,6 @@ def init_database(con):
     try:
         
         logging.getLogger("fastapi-logger").info(f"these are the table schemas available: {con.execute('SHOW TABLES;').fetchall()}")
-        print(f"these are the table schemas available: {con.execute('SHOW TABLES;').fetchall()}")
         # Create item_list table
         con.execute("""
             CREATE TABLE IF NOT EXISTS main.item_list (
@@ -107,6 +106,8 @@ async def lifespan(app: FastAPI):
     
     # Initialize database schema
     init_database(app.state.con)
+    fix_table_schema(app.state.con)
+
     
     logger.info(f"DuckDB connection opened: {DB_PATH}")
 
@@ -129,12 +130,13 @@ async def lifespan(app: FastAPI):
         app.state.net = None
 
     # Start background scheduler
-    scheduler.add_job(food_name_classifier, CronTrigger(hour="*/2", minute=0))
-    scheduler.start()
+    
+    #scheduler.add_job(food_name_classifier, CronTrigger(hour="*/2", minute=0))
+    #scheduler.start()
 
     yield
 
-    scheduler.shutdown()
+    #scheduler.shutdown()
     app.state.con.close()
     logger.info("DuckDB connection closed")
 
@@ -235,13 +237,13 @@ async def fetch_items(request: Request, subgroups: Optional[str] = Query(None), 
     
     try:
         if subgroups and classnames:
-            items = con.execute("SELECT * FROM main.item_list WHERE subgroups = ? AND class = ?", (subgroups, classnames)).fetchall()
+            items = con.execute("SELECT ean, item_name, subgroups, class, count FROM main.item_list WHERE subgroups = ? AND class = ?", (subgroups, classnames)).fetchall()
         elif subgroups: 
-            items = con.execute("SELECT * FROM main.item_list WHERE subgroups = ?", (subgroups,)).fetchall()
+            items = con.execute("SELECT ean, item_name, subgroups, class, count FROM main.item_list WHERE subgroups = ?", (subgroups,)).fetchall()
         elif classnames:
-            items = con.execute("SELECT * FROM main.item_list WHERE class = ?", (classnames,)).fetchall()
+            items = con.execute("SELECT ean, item_name, subgroups, class, count FROM main.item_list WHERE class = ?", (classnames,)).fetchall()
         else:
-            items = con.execute("SELECT * FROM main.item_list").fetchall()
+            items = con.execute("SELECT ean, item_name, subgroups, class, count FROM main.item_list").fetchall()
 
         return {"item_list": items}
     except Exception as e:
@@ -259,6 +261,10 @@ async def add_ean(
     logger.info(f"invoked add_ean at {datetime.datetime.now()}")
 
     con = request.app.state.con
+    
+    logger.info(f"DESCRIBE item_list;: { con.execute('DESCRIBE item_list;').fetchall() }")
+    res = con.execute("SELECT sql FROM duckdb_tables() WHERE table_name = 'item_list';").fetchall()
+    logger.info(f"SELECT sql FROM duckdb_tables() WHERE table_name = 'item_list';: { res }")
     
     try:
         if not ean and not item_name:
@@ -288,6 +294,8 @@ async def add_ean(
             result = con.execute("SELECT ean FROM main.item_list WHERE item_name = ?", (item_name,)).fetchone()
             if result:
                 ean = result[0]
+            else:
+                ean = -1
 
         class_name = ""
 
@@ -340,6 +348,9 @@ async def add_ean_manual(
     con = request.app.state.con
     
     try:
+        count = int(count) #make sure it is the correct type
+        
+        
         if not ean and not item_name:
             raise HTTPException(status_code=400, detail="You must supply either ean or item_name")
         
@@ -353,7 +364,7 @@ async def add_ean_manual(
             ean = 0
         
         try:
-            logger.info(f"line 356 ean: {ean} item_name: {item_name}")
+            logger.info(f"line 361 ean: {ean} item_name: {item_name}")
             
             # Get item_name from ean if not provided
             if ean and not item_name:        
@@ -393,6 +404,8 @@ async def add_ean_manual(
     
     
         class_name = ""
+               
+        ean, item_name, count = str(ean), str(item_name), int(count)
 
         logger.info(f"Processing: ean={ean}, item_name={item_name}, count={count}")
 
@@ -483,8 +496,41 @@ async def create_upload_file(request: Request, image: UploadFile | None = None):
         logger.error(f"Error processing image: {e}")
         raise HTTPException(status_code=500, detail="Failed to process image")
     
-# At the bottom of your server.py file, modify the uvicorn.run call:
+    
+def fix_table_schema(con):
+    """Recreate table from scratch - use if backup fails"""
+    try:
+        logger.info("Recreating table fresh (no backup)...")
+        
+        # Drop and recreate table
+        con.execute("DROP TABLE IF EXISTS main.item_list")
+        
+        # Create new table with proper schema
+        con.execute("""
+            CREATE TABLE main.item_list (
+                id INTEGER PRIMARY KEY,
+                ean TEXT,
+                item_name TEXT,
+                subgroups TEXT,
+                class TEXT,
+                count INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        logger.info("Table recreated successfully (fresh start)")
+        
+    except Exception as e:
+        raise
+
+    
+    
+
 if __name__ == "__main__":
+    
+    
+    
+    
     found_db = find_openfoodfacts_db()
     if found_db:
         DB_PATH = found_db
