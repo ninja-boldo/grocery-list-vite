@@ -35,7 +35,7 @@ const ManualAdd = () => {
         setInputValue3(e.target.value);
         setCount(e.target.value); 
     };
-    
+
     const handleInputChangeSubgroups = (e: React.ChangeEvent<HTMLInputElement>) => {
         
         setInputValue4(e.target.value);
@@ -90,7 +90,10 @@ const ManualAdd = () => {
 
             fetch(`/api/add_ean_to_list_manual/?item_name=${encodeURIComponent(currentItemName)}&subgroups=${currentSubgroups}&count=${encodeURIComponent(currentCount)}`)
 
-            navhook("/")
+            setTimeout(() => {
+                navhook("/")
+            }, 300);
+            
         }
     }
 
