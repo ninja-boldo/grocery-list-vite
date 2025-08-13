@@ -1,4 +1,3 @@
-# server.py
 import os
 import traceback
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
@@ -6,7 +5,6 @@ os.environ['KMP_DUPLICATE_LIB_OK']='True'
 import datetime
 import shutil
 from typing import Optional, Union
-import duckdb
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, Request, UploadFile, HTTPException
 import torch
@@ -15,7 +13,7 @@ import uvicorn
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.cron import CronTrigger  # noqa: F401
 
 import food_classifier.main as food_classifier
 
@@ -25,8 +23,18 @@ import time
 import logging
 from logging_loki import LokiHandler
 
-# Use environment variable for database path with fallback
-DB_PATH = os.getenv("DB_PATH", "data/openfoodfacts.db")
+import psycopg2
+
+
+
+
+if os.getenv('RUNNING_IN_CONTAINER'):
+    DATABASE_URL = "postgresql://postgres:postgres@postgres-db:5432/maindb"
+    CSV_FILE = "/app/openfoodfacts.csv"
+else:
+    DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/maindb"
+    CSV_FILE = "/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/openfoodfacts.csv"
+
 
 api_key = "one-rgs iodesftheontisissihdebeten thncstthinciree wholeswedissh-ek-"
 
@@ -37,113 +45,104 @@ device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 def init_database(con):
     """Initialize database schema if it doesn't exist"""
     try:
-        
-        logging.getLogger("fastapi-logger").info(f"these are the table schemas available: {con.execute('SHOW TABLES;').fetchall()}")
-        # Create item_list table
-        con.execute("""
-            CREATE TABLE IF NOT EXISTS main.item_list (
-                id INTEGER PRIMARY KEY,
-                ean TEXT,
-                item_name TEXT,
-                subgroups TEXT,
-                class TEXT,
-                count INTEGER DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        with con.cursor() as cur:
+            # Create food table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS food (
+                    code TEXT,
+                    product_name TEXT,
+                    quantity text,
+                    packaging TEXT,
+                    brands_en TEXT,
+                    categories TEXT,
+                    ingredients_text TEXT,
+                    energy_kcal_100g text
+                );
+            """)
+            
+            
+            # Create item_list table (PostgreSQL syntax)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS item_list (
+                    id SERIAL PRIMARY KEY,
+                    ean TEXT,
+                    item_name TEXT,
+                    subgroups TEXT,
+                    class TEXT,
+                    count INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            
 
+            cur.execute("SELECT COUNT(*) FROM food;")
+            count = cur.fetchone()[0]
+            
+            if count == 0 and os.path.exists(CSV_FILE):
+                cur.execute(f"""
+                    COPY food (code, product_name, quantity, packaging, brands_en, categories, ingredients_text, energy_kcal_100g)
+                    FROM '{CSV_FILE}'
+                    DELIMITER ','
+                    CSV HEADER;
+                """)
+                logging.getLogger("fastapi-logger").info(f"Loaded data from {CSV_FILE}")
+            
+            con.commit()  # Commit all change
+            
+            cur.execute("SELECT COUNT(*) FROM food;")
+            count = cur.fetchone()[0]
+            
+            print(f"now the food table has {count} entries")
+            # List tables
+            cur.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
+            tables = cur.fetchall()
+            logging.getLogger("fastapi-logger").info(f"Available tables: {tables}")
 
         
         logging.getLogger("fastapi-logger").info("Database schema initialized successfully")
     except Exception as e:
         logging.getLogger("fastapi-logger").error(f"Failed to initialize database schema: {e}")
-        raise
-
-def find_openfoodfacts_db(start_path=None, max_depth=5):
-    """
-    Search for OpenFoodFacts.db in start_path up to max_depth,
-    excluding any node_modules folders.
-    Returns the relative path to the file if found, else None.
-    """
-    if start_path is None or start_path == '.':
-        start_path = os.path.dirname(os.path.abspath(__file__))
-
-    def _search(current_path, current_depth):
-        if current_depth > max_depth:
-            return None
-        
-        try:
-            with os.scandir(current_path) as it:
-                for entry in it:
-                    if entry.is_dir(follow_symlinks=False):
-                        if entry.name == 'node_modules':
-                            continue
-                        found = _search(entry.path, current_depth + 1)
-                        if found:
-                            return found
-                    elif entry.is_file(follow_symlinks=False) and entry.name.lower() in ["openfoodfacts.db", "openfoodfacts.djkhb"]:
-                        return os.path.relpath(entry.path, start_path)
-        except PermissionError:
-            pass
-        return None
-
-    return _search(start_path, 0)
+        # Don't raise - continue without CSV data if needed
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global DB_PATH
+    global DATABASE_URL
     
-    # Ensure directory exists
-    db_dir = os.path.dirname(DB_PATH)
-    if db_dir and not os.path.exists(db_dir):
-        os.makedirs(db_dir, exist_ok=True)
-    
-    # Check if database file exists
-    if not os.path.exists(DB_PATH):
-        logger.warning(f"Database file does not exist, will be created: {DB_PATH}")
-    
-    app.state.con = duckdb.connect(DB_PATH)
-    
-    # Initialize database schema
-    init_database(app.state.con)
-    fix_table_schema(app.state.con)
-
-    
-    logger.info(f"DuckDB connection opened: {DB_PATH}")
-
-    # Load ML model
     try:
-        net = food_classifier.create_net(num_classes=206)
-        model_folder = food_classifier.get_relative_path()
-        model_path = os.path.join(model_folder, "food_classifier_resnet50.pth")
+        app.state.con = psycopg2.connect(DATABASE_URL)
+        app.state.con.autocommit = True  # Enable autocommit for PostgreSQL
         
-        if os.path.exists(model_path):
-            net.load_state_dict(torch.load(model_path, weights_only=True))
-            net = net.to(device)
-            app.state.net = net 
-            logger.info("ML model loaded successfully")
-        else:
-            logger.warning(f"Model file not found: {model_path}")
+        # Initialize database schema
+        init_database(app.state.con)
+
+        # Load ML model
+        try:
+            net = food_classifier.create_net(num_classes=206)
+            model_folder = food_classifier.get_relative_path()
+            model_path = os.path.join(model_folder, "food_classifier_resnet50.pth")
+            
+            if os.path.exists(model_path):
+                net.load_state_dict(torch.load(model_path, weights_only=True))
+                net = net.to(device)
+                app.state.net = net 
+                logger.info("ML model loaded successfully")
+            else:
+                logger.warning(f"Model file not found: {model_path}")
+                app.state.net = None
+        except Exception as e:
+            logger.error(f"Failed to load ML model: {e}")
             app.state.net = None
-    except Exception as e:
-        logger.error(f"Failed to load ML model: {e}")
-        app.state.net = None
 
-    # Start background scheduler
-    
-    #scheduler.add_job(food_name_classifier, CronTrigger(hour="*/2", minute=0))
-    #scheduler.start()
+        yield
 
-    yield
-
-    #scheduler.shutdown()
-    app.state.con.close()
-    logger.info("DuckDB connection closed")
+    finally:
+        if hasattr(app.state, 'con'):
+            app.state.con.close()
+            logger.info("postgres connection closed")
 
 app = FastAPI(lifespan=lifespan, debug=True)
 
 Instrumentator().instrument(app).expose(app)
-
 
 handler = LokiHandler(
     url="http://192.168.1.13:3100/loki/api/v1/push",
@@ -162,7 +161,6 @@ logger = logging.getLogger("fastapi-logger")
 logger.addHandler(handler)      # Loki
 logger.addHandler(file_handler) # File
 logger.setLevel(logging.INFO)
-
 
 @app.middleware("http")
 async def protect_metrics(request: Request, call_next):
@@ -190,7 +188,7 @@ async def protect_metrics(request: Request, call_next):
         logger.error(f"Query params: {dict(request.query_params)}")
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
         
-        # Return detailed error response (you can make this less verbose in production)
+        # Return detailed error response
         return JSONResponse(
             status_code=500,
             content={
@@ -205,10 +203,11 @@ async def protect_metrics(request: Request, call_next):
 async def fetch_subgroups(request: Request):
     logger.info(f"invoked fetch_subgroups at {datetime.datetime.now()}")
 
-    con = request.app.state.con
-    
     try:
-        subgroups = con.execute("SELECT DISTINCT subgroups FROM main.item_list WHERE subgroups != '' AND subgroups IS NOT NULL").fetchall()
+        with request.app.state.con.cursor() as cur:
+            cur.execute("SELECT DISTINCT subgroups FROM item_list WHERE subgroups != '' AND subgroups IS NOT NULL")
+            subgroups = cur.fetchall()
+        
         logger.info(f"subgroups being fetched: {len(subgroups)} items")
         return {"subgroups": [sg[0] for sg in subgroups]}
     except Exception as e:
@@ -219,10 +218,11 @@ async def fetch_subgroups(request: Request):
 async def fetch_classnames(request: Request):
     logger.info(f"invoked fetch_classnames at {datetime.datetime.now()}")
 
-    con = request.app.state.con
-    
     try:
-        classnames = con.execute("SELECT DISTINCT class FROM main.item_list WHERE class != '' AND class IS NOT NULL").fetchall()
+        with request.app.state.con.cursor() as cur:
+            cur.execute("SELECT DISTINCT class FROM item_list WHERE class != '' AND class IS NOT NULL")
+            classnames = cur.fetchall()
+        
         logger.info(f"classnames being fetched: {len(classnames)} items")
         return {"classnames": [cn[0] for cn in classnames]}
     except Exception as e:
@@ -233,19 +233,20 @@ async def fetch_classnames(request: Request):
 async def fetch_items(request: Request, subgroups: Optional[str] = Query(None), classnames: Optional[str] = Query(None)):
     logger.info(f"invoked fetch_items at {datetime.datetime.now()}")
 
-    con = request.app.state.con
-    
     try:
-        if subgroups and classnames:
-            items = con.execute("SELECT ean, item_name, subgroups, class, count FROM main.item_list WHERE subgroups = ? AND class = ?", (subgroups, classnames)).fetchall()
-        elif subgroups: 
-            items = con.execute("SELECT ean, item_name, subgroups, class, count FROM main.item_list WHERE subgroups = ?", (subgroups,)).fetchall()
-        elif classnames:
-            items = con.execute("SELECT ean, item_name, subgroups, class, count FROM main.item_list WHERE class = ?", (classnames,)).fetchall()
-        else:
-            items = con.execute("SELECT ean, item_name, subgroups, class, count FROM main.item_list").fetchall()
+        with request.app.state.con.cursor() as cur:
+            if subgroups and classnames:
+                cur.execute("SELECT ean, item_name, subgroups, class, count FROM item_list WHERE subgroups = %s AND class = %s",
+                                    (subgroups, classnames))
+            elif subgroups: 
+                cur.execute("SELECT ean, item_name, subgroups, class, count FROM item_list WHERE subgroups = %s", (subgroups,))
+            elif classnames:
+                cur.execute("SELECT ean, item_name, subgroups, class, count FROM item_list WHERE class = %s", (classnames,))
+            else:
+                cur.execute("SELECT ean, item_name, subgroups, class, count FROM item_list")
 
-        return {"item_list": items}
+            items = cur.fetchall()
+            return {"item_list": items}
     except Exception as e:
         logger.error(f"Error fetching items: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch items")
@@ -260,12 +261,6 @@ async def add_ean(
 ):
     logger.info(f"invoked add_ean at {datetime.datetime.now()}")
 
-    con = request.app.state.con
-    
-    logger.info(f"DESCRIBE item_list;: { con.execute('DESCRIBE item_list;').fetchall() }")
-    res = con.execute("SELECT sql FROM duckdb_tables() WHERE table_name = 'item_list';").fetchall()
-    logger.info(f"SELECT sql FROM duckdb_tables() WHERE table_name = 'item_list';: { res }")
-    
     try:
         if not ean and not item_name:
             raise HTTPException(status_code=400, detail="You must supply either ean or item_name")
@@ -276,54 +271,60 @@ async def add_ean(
         if not subgroups:
             subgroups = ""
 
-        # Get item_name from ean if not provided
-        if ean and not item_name:        
-            result = con.execute("SELECT item_name FROM main.item_list WHERE ean = ?", (ean,)).fetchone()
-            if result:
-                item_name = result[0]
-            else:
-                # Try to get from food table
-                result = con.execute("SELECT product_name FROM main.food WHERE code = ?", (ean,)).fetchone()
+        with request.app.state.con.cursor() as cur:
+            # Get item_name from ean if not provided
+            if ean and not item_name:        
+                cur.execute("SELECT item_name FROM item_list WHERE ean = %s", (ean,))
+                result = cur.fetchone()
                 if result:
                     item_name = result[0]
                 else:
-                    raise HTTPException(status_code=404, detail="Item not found for given EAN")
+                    # Try to get from food table
+                    cur.execute("SELECT product_name FROM food WHERE code = %s", (ean,))
+                    result = cur.fetchone()
+                    if result:
+                        item_name = result[0]
+                    else:
+                        raise HTTPException(status_code=404, detail="Item not found for given EAN")
 
-        # Get ean from item_name if not provided
-        if item_name and not ean:
-            result = con.execute("SELECT ean FROM main.item_list WHERE item_name = ?", (item_name,)).fetchone()
-            if result:
-                ean = result[0]
+            # Get ean from item_name if not provided
+            if item_name and not ean:
+                cur.execute("SELECT ean FROM item_list WHERE item_name = %s", (item_name,))
+                result = cur.fetchone()
+                if result:
+                    ean = result[0]
+                else:
+                    ean = -1
+
+            class_name = ""
+
+            logger.info(f"Processing: ean={ean}, item_name={item_name}, count={count}")
+
+            # Get product name from food table
+            cur.execute("SELECT product_name FROM food WHERE code = %s", (ean,))
+            product_name_result = cur.fetchone()
+            product_name = product_name_result[0] if product_name_result else item_name
+
+            # Check if item already exists
+            cur.execute("SELECT ean, count FROM item_list WHERE item_name = %s", (item_name,))
+            existing_item = cur.fetchone()
+            
+            if not existing_item:
+                # Insert new item
+                cur.execute(
+                    "INSERT INTO item_list (ean, item_name, subgroups, class, count) VALUES (%s, %s, %s, %s, %s)",
+                    (ean, item_name, subgroups, class_name, count)
+                )
+                logger.info(f"Added new item: {item_name}")
             else:
-                ean = -1
-
-        class_name = ""
-
-        logger.info(f"Processing: ean={ean}, item_name={item_name}, count={count}")
-
-        # Get product name from food table
-        product_name_result = con.execute("SELECT product_name FROM main.food WHERE code = ?", (ean,)).fetchone()
-        product_name = product_name_result[0] if product_name_result else item_name
-
-        # Check if item already exists
-        existing_item = con.execute("SELECT ean, count FROM main.item_list WHERE item_name = ?", (item_name,)).fetchone()
-        
-        if not existing_item:
-            # Insert new item
-            con.execute(
-                "INSERT INTO main.item_list (ean, item_name, subgroups, class, count) VALUES (?, ?, ?, ?, ?)",
-                (ean, item_name, subgroups, class_name, count)
-            )
-            logger.info(f"Added new item: {item_name}")
-        else:
-            # Update existing item count
-            new_count = existing_item[1] + count
-            if new_count <= 0:
-                con.execute("DELETE FROM main.item_list WHERE item_name = ?", (item_name,))
-                logger.info(f"Removed item: {item_name}")
-            else:
-                con.execute("UPDATE main.item_list SET count = ? WHERE item_name = ?", (new_count, item_name))
-                logger.info(f"Updated item count: {item_name} = {new_count}")
+                # Update existing item count
+                new_count = existing_item[1] + count
+                if new_count <= 0:
+                    cur.execute("DELETE FROM item_list WHERE item_name = %s", (item_name,))
+                    logger.info(f"Removed item: {item_name}")
+                else:
+                    cur.execute("UPDATE item_list SET count = %s WHERE item_name = %s", (new_count, item_name))
+                    logger.info(f"Updated item count: {item_name} = {new_count}")
 
         return {"ean": ean, "product_name": product_name, "done": True, "subgroups": subgroups}
         
@@ -333,8 +334,6 @@ async def add_ean(
         logger.error(f"Error adding EAN: {e}")
         raise HTTPException(status_code=500, detail="Failed to add item")
 
-
-
 @app.get("/add_ean_to_list_manual/")
 async def add_ean_manual(
     request: Request,
@@ -343,13 +342,10 @@ async def add_ean_manual(
     count: Optional[Union[int, str]] = Query(1),
     item_name: Optional[str] = Query(None)
 ):
-    logger.info(f"invoked add_ean at {datetime.datetime.now()}")
+    logger.info(f"invoked add_ean_manual at {datetime.datetime.now()}")
 
-    con = request.app.state.con
-    
     try:
-        count = int(count) #make sure it is the correct type
-        
+        count = int(count)  # make sure it is the correct type
         
         if not ean and not item_name:
             raise HTTPException(status_code=400, detail="You must supply either ean or item_name")
@@ -361,47 +357,50 @@ async def add_ean_manual(
             subgroups = ""
         
         if not ean:
-            ean = 0
+            ean = "0"
         
         try:
             logger.info(f"line 361 ean: {ean} item_name: {item_name}")
             
-            # Get item_name from ean if not provided
-            if ean and not item_name:        
-                result = con.execute("SELECT item_name FROM main.item_list WHERE ean = ?", (ean,)).fetchone()
-                if result:
-                    item_name = result[0]
-                else:
-                    # Try to get from food table
-                    result = con.execute("SELECT product_name FROM main.food WHERE code = ?", (ean,)).fetchone()
+            with request.app.state.con.cursor() as cur:
+                # Get item_name from ean if not provided
+                if ean and ean != "0" and not item_name:        
+                    cur.execute("SELECT item_name FROM item_list WHERE ean = %s", (ean,))
+                    result = cur.fetchone()
                     if result:
                         item_name = result[0]
                     else:
-                        raise HTTPException(status_code=404, detail="Item not found for given EAN")
+                        # Try to get from food table
+                        cur.execute("SELECT product_name FROM food WHERE code = %s", (ean,))
+                        result = cur.fetchone()
+                        if result:
+                            item_name = result[0]
+                        else:
+                            raise HTTPException(status_code=404, detail="Item not found for given EAN")
 
-            # Get ean from item_name if not provided
-            elif item_name and not ean:
-                result = con.execute("SELECT ean FROM main.item_list WHERE item_name = ?", (item_name,)).fetchone()
-                if result:
-                    ean = result[0]
+                # Get ean from item_name if not provided
+                elif item_name and (not ean or ean == "0"):
+                    cur.execute("SELECT ean FROM item_list WHERE item_name = %s", (item_name,))
+                    result = cur.fetchone()
+                    if result:
+                        ean = result[0]
+                
+                # Add to the food db if it hasn't been there before
+                elif item_name and ean and ean != "0":
+                    cur.execute("SELECT item_name FROM item_list WHERE ean = %s", (ean,))
+                    result = cur.fetchone()
+                    if not result:
+                        cur.execute(
+                            "INSERT INTO item_list (ean, item_name, subgroups, class, count) VALUES (%s, %s, %s, %s, %s)",
+                            (ean, item_name, subgroups, "", count)
+                        )
+                        logger.info(f"Added new item to item_list: {item_name}")
+                        return {"ean": ean, "product_name": item_name, "done": True, "subgroups": subgroups}
             
-            #add to the food db if it hasnt been there before
-            elif item_name and ean:
-                result = con.execute("SELECT item_name FROM main.item_list WHERE ean = ?", (ean,)).fetchone()
-                if result:
-                    item_name = result[0]
-                else:
-                    con.execute(
-                        "INSERT INTO main.item_list (ean, item_name, subgroups, class, count) VALUES (?, ?, ?, ?, ?)",
-                (ean, item_name, subgroups, "", count)
-                )
-            
-            
-        except:
+        except Exception as e:
             logger.info(f"""failed to get ean or item name with the other out of the db =>
-                        not listed in the main db by now \nfor ean: {ean} and item name: {item_name}""")
-    
-    
+                        not listed in the main db by now \nfor ean: {ean} and item name: {item_name}
+                        Error: {e}""")
     
         class_name = ""
                
@@ -409,43 +408,41 @@ async def add_ean_manual(
 
         logger.info(f"Processing: ean={ean}, item_name={item_name}, count={count}")
 
-        # Get product name from food table
-        
-        #product_name_result = con.execute("SELECT product_name FROM main.food WHERE code = ?", (ean,)).fetchone()
-        #product_name = product_name_result[0] if product_name_result else item_name
+        # Use item_name as product_name for manual entries
         product_name = item_name
         
-        # Check if item already exists
-        existing_item = con.execute("SELECT ean, count FROM main.item_list WHERE item_name = ?", (item_name,)).fetchone()
-        
-        if not existing_item:
-            # Insert new item
-            con.execute(
-                "INSERT INTO main.item_list (ean, item_name, subgroups, class, count) VALUES (?, ?, ?, ?, ?)",
-                (ean, item_name, subgroups, class_name, count)
-            )
-            logger.info(f"Added new item: {item_name}")
-        else:
-            # Update existing item count
-            new_count = existing_item[1] + count
-            if new_count <= 0:
-                con.execute("DELETE FROM main.item_list WHERE item_name = ?", (item_name,))
-                logger.info(f"Removed item: {item_name}")
+        with request.app.state.con.cursor() as cur:
+            # Check if item already exists
+            cur.execute("SELECT ean, count FROM item_list WHERE item_name = %s", (item_name,))
+            existing_item = cur.fetchone()
+            
+            if not existing_item:
+                # Insert new item
+                cur.execute(
+                    "INSERT INTO item_list (ean, item_name, subgroups, class, count) VALUES (%s, %s, %s, %s, %s)",
+                    (ean, item_name, subgroups, class_name, count)
+                )
+                logger.info(f"Added new item: {item_name}")
             else:
-                con.execute("UPDATE main.item_list SET count = ? WHERE item_name = ?", (new_count, item_name))
-                logger.info(f"Updated item count: {item_name} = {new_count}")
+                # Update existing item count
+                new_count = existing_item[1] + count
+                if new_count <= 0:
+                    cur.execute("DELETE FROM item_list WHERE item_name = %s", (item_name,))
+                    logger.info(f"Removed item: {item_name}")
+                else:
+                    cur.execute("UPDATE item_list SET count = %s WHERE item_name = %s", (new_count, item_name))
+                    logger.info(f"Updated item count: {item_name} = {new_count}")
 
         return {"ean": ean, "product_name": product_name, "done": True, "subgroups": subgroups}
     
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error adding EAN: {e}")
+        logger.error(f"Error adding EAN manually: {e}")
         raise HTTPException(status_code=500, detail="Failed to add item")
     
-    
+
 async def food_name_classifier(sleep_intervall=60*60):
-    con = duckdb.connect(DB_PATH)
     logger.info("[Background task] Connection opened")
 
     try:
@@ -459,7 +456,6 @@ async def food_name_classifier(sleep_intervall=60*60):
                 time.sleep(60)  # Wait before retrying
 
     finally:
-        con.close()
         logger.info("food_classifier Connection closed")
 
 
@@ -496,19 +492,19 @@ async def create_upload_file(request: Request, image: UploadFile | None = None):
         logger.error(f"Error processing image: {e}")
         raise HTTPException(status_code=500, detail="Failed to process image")
     
-    
-def fix_table_schema(con):
+
+def fix_table_schema(cur):
     """Recreate table from scratch - use if backup fails"""
     try:
         logger.info("Recreating table fresh (no backup)...")
         
         # Drop and recreate table
-        con.execute("DROP TABLE IF EXISTS main.item_list")
+        cur.execute("DROP TABLE IF EXISTS item_list")
         
-        # Create new table with proper schema
-        con.execute("""
-            CREATE TABLE main.item_list (
-                id INTEGER PRIMARY KEY,
+        # Create new table with proper PostgreSQL schema
+        cur.execute("""
+            CREATE TABLE item_list (
+                id SERIAL PRIMARY KEY,
                 ean TEXT,
                 item_name TEXT,
                 subgroups TEXT,
@@ -521,23 +517,11 @@ def fix_table_schema(con):
         logger.info("Table recreated successfully (fresh start)")
         
     except Exception as e:
+        logger.error(f"Error recreating table: {e}")
         raise
 
-    
-    
 
 if __name__ == "__main__":
-    
-    
-    
-    
-    found_db = find_openfoodfacts_db()
-    if found_db:
-        DB_PATH = found_db
-        logger.info(f"Found database at: {DB_PATH}")
-    else:
-        logger.info(f"Using default database path: {DB_PATH}")
-    
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
