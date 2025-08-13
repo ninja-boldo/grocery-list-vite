@@ -1,5 +1,6 @@
 # gotta be invoked for build from one layer above to be able to access the whole grocery list 2 folder
-FROM python:3.11-slim-bullseye AS base
+
+FROM anishitani/docker-postgresql AS base
 
 
 
@@ -19,8 +20,6 @@ ENV LC_ALL=en_US.UTF-8
 
 # do the duckdb install
 RUN curl https://install.duckdb.org | sh
-
-
 
 # Install Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
@@ -91,4 +90,4 @@ RUN pip install --upgrade pip && \
 EXPOSE 3030 4040 5000
 
 
-CMD ["bash", "-c", "python server/server.py & sleep 2 && yarn run preview --port 4040 --host 0.0.0.0 & wait"]
+CMD ["bash", "-c", "python server/server.py & sleep 2 && yarn run preview --port 4040 --host 0.0.0.0 & && sudo systemctl start postgresql & wait"]

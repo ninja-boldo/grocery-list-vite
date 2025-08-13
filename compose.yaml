@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: torvalds
+      POSTGRES_DB: maindb
+    networks:
+      - network-grocery
+    ports:
+      - "5050:5432"  # Exposing PostgreSQL on port 3030
+
+  fastapi:
+    image: grocery-list  # Use your pre-built FastAPI image
+    container_name: grocery-list
+    networks:
+      - network-grocery
+    ports:
+      - "4040:4040"  
+    depends_on:
+      - postgres
+
+networks:
+  my_network:
