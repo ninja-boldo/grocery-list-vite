@@ -16,10 +16,6 @@ ENV LANGUAGE=en_US:en
 ENV LC_ALL=en_US.UTF-8
 
 
-
-# do the duckdb install
-RUN curl https://install.duckdb.org | sh
-
 # Install Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
@@ -31,12 +27,12 @@ RUN node --version && npm --version && which npm
 
 
 
-# Set working directory (CRUCIAL CHANGE)
+
 WORKDIR /app
 
 
 
-# Copy package files first (for better caching)
+
 COPY grocery-list2/package*.json ./
 
 
@@ -88,5 +84,6 @@ RUN pip install --upgrade pip && \
 # Expose ports
 EXPOSE 3030 4040 5000
 
-
-CMD ["bash", "-c", "python server/server.py & sleep 2 && yarn run preview --port 4040 --host 0.0.0.0 & && sudo systemctl start postgresql & wait"]
+CMD ["bash", "-c", "python server/server.py & \
+                    sleep 2 && yarn run preview --port 4040 --host 0.0.0.0 & \
+                    wait"]
