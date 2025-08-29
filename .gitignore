@@ -44,3 +44,4 @@ tmp_pack_IDLDbl
 tmp_pack_QoeAVX
 8be5cd8549e4dd7c92fbb5ea40d9a5782bbd0fe4
 *.csv
+*.parquet
