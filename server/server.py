@@ -205,7 +205,7 @@ async def optimized_middleware(request: Request, call_next):
         token = auth_header.removeprefix("Bearer ").strip()
 
         if token != api_key:
-            logger.warning(f"Unauthorized metrics access attempt")
+            logger.warning("Unauthorized metrics access attempt")
             return PlainTextResponse("Unauthorized", status_code=401)
 
     # Handle exceptions

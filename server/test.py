@@ -1,27 +1,9 @@
-import duckdb
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-DB_PATH = "data/openfoodfacts.db"
+df = pd.read_csv("/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/openfoodfacts.csv", dtype=str)
 
-con = duckdb.connect(DB_PATH)
+table = pa.Table.from_pandas(df)
 
-
-# Get all columns in the table
-columns = con.execute("""
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_name = 'food'
-    ORDER BY ordinal_position;
-    """).fetchall()
-
-print(columns)
-
-columns = con.execute("""
-    SELECT *
-    FROM food
-    limit 10
-    """).fetchall()
-
-print(columns)
-
-con.execute("COPY (SELECT * FROM food) TO 'openfoodfacts.csv' (HEADER, DELIMITER ',');")
-con.close()
+pq.write_table(table, "/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/openfoodfacts.parquet")
