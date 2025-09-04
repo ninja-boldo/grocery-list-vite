@@ -1,11 +1,15 @@
 
 import { useState } from "react";
 import ErrorContainer from "./ErrorContainer";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 const ManualAdd = () => {
 
     const navhook = useNavigate()
+
+    const location = useLocation();
+    const queryParams = new URLSearchParams(location.search);
+    const isWishList = queryParams.get('wishlist');
 
     const [inputValue1, setInputValue1] = useState('');
     const [inputValue2, setInputValue2] = useState('');
@@ -86,9 +90,9 @@ const ManualAdd = () => {
         
         if(currentItemName && currentCount && currentSubgroups && currentCount ? (parseInt(currentCount) > 0) : false) {
             console.log("now sending to this endpoint with this url: " + 
-            `/api/add_ean_to_list_manual/?item_name=${encodeURIComponent(currentItemName)}&subgroups=${currentSubgroups}&count=${encodeURIComponent(currentCount)}`)
+            `/api/add_ean_to_list_manual/?item_name=${encodeURIComponent(currentItemName)}&subgroups=${currentSubgroups}&count=${encodeURIComponent(currentCount)}&is_wish_list=${isWishList}`)
 
-            fetch(`/api/add_ean_to_list_manual/?item_name=${encodeURIComponent(currentItemName)}&subgroups=${currentSubgroups}&count=${encodeURIComponent(currentCount)}`)
+            fetch(`/api/add_ean_to_list_manual/?item_name=${encodeURIComponent(currentItemName)}&subgroups=${currentSubgroups}&count=${encodeURIComponent(currentCount)}&is_wish_list=${isWishList}`)
 
             setTimeout(() => {
                 navhook("/")
