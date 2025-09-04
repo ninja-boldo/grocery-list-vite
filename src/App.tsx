@@ -1,298 +1,303 @@
-import { useNavigate } from 'react-router-dom';
 import './App.css';
 import Container from './comp/Container';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useMemo } from 'react';
+import ErrorContainer from './comp/ErrorContainer';
+import DropdownComp from './comp/Dropdown';
+import { useNavigate } from 'react-router-dom';
+import StyledButton from './comp/StyledButton';
+
+import { Bars3Icon } from '@heroicons/react/24/outline'
+import SidebarComp from "./comp/Sidebar"
 
 interface Props {
   text: string | null;
-  subgroups: Props[] | null;
-  level: number;
+  subgroups: string | null;
   style?: string;
-  onClick: (clickedNode: Props) => void;
-  parent: string | null;
+  count: number;
+  classname: string | null;
+  perish_dates: string | null;
+  onClickIncrease: (clickedNode: Props) => void; 
+  onClickDecrease: (clickedNode: Props) => void; 
 }
 
 function App() {
-  const usenav = useNavigate()
+  const usenav = useNavigate();
 
-  const [nestedData, setNestedData] = useState<Props[]>([{
-    text: "Drinks",
-    level: 0,
-    style: "",
-    onClick: (clickedNode: Props) => { navigateScanner(clickedNode) },
-    parent: null,
-    subgroups: [
-      { text: "Milk", level: 0, style: "", onClick: (clickedNode: Props) => { navigateScanner(clickedNode) }, subgroups: null, parent:"Drinks" },
-      {
-        text: "Water",
-        level: 0,
-        style: "",
-        parent: "Drinks",
-        onClick: (clickedNode: Props) => { navigateScanner(clickedNode) }, subgroups: [
-          { text: "Sparkling", level: 0, style: "", onClick: (clickedNode: Props) => { navigateScanner(clickedNode) }, parent: "Water", subgroups: null },
-          { text: "Still", level: 0, style: "", onClick: (clickedNode: Props) => { navigateScanner(clickedNode) }, parent: "Water", subgroups: null },
-        ],
-      },
-      { text: "Coffee", level: 0, style: "", onClick: (clickedNode: Props) => { navigateScanner(clickedNode) }, parent: "Drinks", subgroups: null },
-    ],
-  }]);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<Props[]>([]);
+  const [subgroups, setSubgroups] = useState<string[]>([]);
+  const [classnames, setClassnames] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [SidebarIsOpen, setSidebarIsOpen] = useState(false)
 
-  const getParentList = (
-    root: Props,
-    text: string,
-    arr: string[]
-  ): string[] | null => {
-    if (root.text === text) return arr;
+  const navigateScanner = useCallback((clickedNode: Props | null, count: number | null) => {
 
-    if (root.subgroups) {
-      for (const sub of root.subgroups) {
-        // copy previous path + this node's text
-        const nextPath = root.text ? [...arr, root.text] : [...arr];
-        const found = getParentList(sub, text, nextPath);
-        if (found) return found;
-      }
+    if(!count){
+      count = 1
     }
-    return null;
-  };
-
-  const navigateScanner = (clickedNode: Props) => {
-    console.log("navigate scanner function invoked")
-    if (clickedNode.text) {
-      let parents: string[] | null = null
-      for (const root of nestedData) {
-        if (getParentList(root, clickedNode.text, [])) {
-          parents = getParentList(root, clickedNode.text, [])
-        }
-      }
-
-      if (parents) {
-        let parents_string = ""
-        for (const parent of parents) {
-          parents_string += parent + ","
-        }
-        parents_string = parents_string.slice(0, -1)
-        console.log("the parents extracted in the navigate scanner function: " + parents_string)
-        usenav(`/scanner?subgroups=${parents_string}`)
-      } else {
-        console.error("No parents found for the clicked node")
-      }
+    if(clickedNode?.subgroups){
+      const subgroups = clickedNode.subgroups || "";
+      usenav(`/scanner?subgroups=${encodeURIComponent(subgroups)}&count=${encodeURIComponent(count)}`);
     } else {
-      console.error("the clicked node seemed to be a weird one with null as text and therefore the redirect wasnt succesful")
+      usenav(`/scanner?text=&count=${encodeURIComponent(count)}`);
     }
-  }
+  }, [usenav]);
+
+  const increaseItemCount = useCallback(async (clickedNode: Props) => {
+      if(clickedNode.text){
+        setIsLoading(true);
+        try {
+          await fetch(`/api/add_ean_to_list/?item_name=${encodeURIComponent(clickedNode.text)}&count=+1&wish_list=false`);
+          // Instead of reloading, update state locally for better UX
+          setData(prevData => 
+            prevData.map(item => 
+              item.text === clickedNode.text 
+                ? { ...item, count: item.count + 1 }
+                : item
+            )
+          );
+        } catch (error) {
+          console.error("Failed to increase count:", error);
+          setError("Failed to update item count");
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        console.error("Increase: clickedNode.text is invalid:", clickedNode.text);
+      }
+    }, []);
+
+  const decreaseItemCount = useCallback(async (clickedNode: Props) => {
+    if (!clickedNode.text) {
+      console.error("Decrease: clickedNode.text is invalid:", clickedNode.text);
+      return;
+    }
+  
+    setIsLoading(true);
+    try {
+      await fetch(
+        `/api/add_ean_to_list/?item_name=${encodeURIComponent(
+          clickedNode.text
+        )}&count=-1
+        &wish_list=true`
+      );
+  
+      let shouldReload = false;
+      setData(prevData =>
+        prevData.map(item => {
+          if (item.text !== clickedNode.text) {
+            return item;
+          }
+          const newCount = Math.max(0, item.count - 1);
+          if (newCount < 1) {
+            shouldReload = true;
+          }
+          return { ...item, count: newCount };
+        })
+      );
+  
+      if (shouldReload) {
+        location.reload();
+      }
+    } catch (err) {
+      console.error("Failed to decrease count:", err);
+      setError("Failed to update item count");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+
+
+  const fetchItems = useCallback(async (subgroups: string | null, classnames: string | null) => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      let response;
+      if(subgroups) {
+        response = await fetch(`/api/fetch_items?subgroups=${encodeURIComponent(subgroups)}&only_wish_list=false`);
+      } else if(classnames) {
+        response = await fetch(`/api/fetch_items?classnames=${encodeURIComponent(classnames)}&only_wish_list=false`);
+      } else {
+        response = await fetch(`/api/fetch_items?only_wish_list=false`);
+      }
+      
+
+      interface ApiResponse {
+        item_list: [string, string, string, string, number, string][];  // or whatever the actual structure is
+      }
+
+      interface RawItem {
+        0: string;  // assuming first element
+        1: string;  // text
+        2: string; // subgroups
+        3: string;  // classname
+        4: number;  // count
+        5: string; // timestamps
+      }
+
+      // Then use them:
+      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+      const responseData: ApiResponse = await response.json();
+
+      const temp_data: Props[] = responseData.item_list.map((row: RawItem) => ({
+        text: row[1],
+        subgroups: row[2],
+        style: "",
+        classname: row[3],
+        count: row[4],
+        perish_dates: row[5],
+        onClickIncrease: increaseItemCount,
+        onClickDecrease: decreaseItemCount
+      }));
+
+      setData(temp_data);
+    } 
+    catch (error: unknown) {
+      setError(error instanceof Error ? error.message : String(error));
+      console.error("Fetch failed:", error);
+    } finally {
+      setIsLoading(false);
+    }
+
+  }, [increaseItemCount, decreaseItemCount]);
+
+  const fetchSubgroups = useCallback(async (): Promise<string[]> => {
+    try {
+      const response = await fetch("/api/fetch_subgroups");
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+      const data = await response.json();
+      return data.subgroups;
+    } catch (error) {
+      console.error("Failed to fetch subgroups:", error);
+      throw error;
+    }
+  }, []);
+
+  const fetchClassnames = useCallback(async (): Promise<string[]> => {
+    try {
+      const response = await fetch("/api/fetch_classnames");
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+      const data = await response.json();
+      return data.classnames;
+    } catch (error) {
+      console.error("Failed to fetch classnames:", error);
+      throw error;
+    }
+  }, []);
+
+
+  const containerComponents = useMemo(() => {
+    return data.map((element, idx) => (
+      <Container
+        key={`${element.text}-${idx}`} 
+        text={element.text}
+        subgroups={element.subgroups}
+        count={element.count}
+        classname={element.classname}
+        perish_dates={element.perish_dates}
+        onClickIncrease={increaseItemCount}
+        onClickDecrease={decreaseItemCount}
+        style=""
+      />
+    ));
+  }, [data, increaseItemCount, decreaseItemCount]);
+
 
   useEffect(() => {
-    const findContainer = (root: Props[] | Props, text: string): Props | null => {
-      if (Array.isArray(root) ? (root.find((element: Props) => element.text === text)) : root.text === text) {
-        if (Array.isArray(root)) {
-          const idx = root.findIndex((element: Props) => element.text === text)
-          return root[idx]
-        }
-        else {
-          return root
-        }
-      }
-      if (Array.isArray(root)) {
-        for (const rootNode of root) {
-          if (rootNode.subgroups) {
-            for (const subgroup of rootNode.subgroups) {
-              const found = findContainer(subgroup, text);
-              if (found) {
-                return found;
-              }
-            }
-          }
-        }
-      }
-      else {
-        if (root.subgroups) {
-          for (const subgroup of root.subgroups) {
-            const found = findContainer(subgroup, text);
-            if (found) {
-              return found;
-            }
-          }
-        }
-      }
-      return null;
-    };
-
-    const addElementToData = (data: Props[], parentName: string, newElement: Props): Props[] => {
-      const newData = JSON.parse(JSON.stringify(data)); // Deep clone
-      
-      // Handle adding to root level
-
-      parentName = parentName.replace(new RegExp(" ", 'g'), '');
-      console.log("the parent name in line 122 is: ' " + parentName + "'")
-      if (parentName === " ") {
-        newData.push(newElement);
-        console.log(`Successfully added "${newElement.text}" to root level in line 123`);
-        return newData;
-      }
-      
-      const parent = findContainer(newData, parentName);
-      console.log("the parent found: " + (parent?.text || "none"))
-
-      if (parent) {
-        if (!parent.subgroups){
-          parent.subgroups = [];
-          parent.subgroups.push(newElement);
-          console.log(`Successfully added "${newElement.text}" to "${parentName}" in line 134`);
-        }
-        else{
-          parent.subgroups.push(newElement);
-          console.log(`Successfully added "${newElement.text}" to "${parentName}" in line 138`);
-          console.log("parent does seem seem to have a subgroup")
-        }
-
-      } else {
-        console.warn(`Parent "${parentName}" not found. Available nodes:`, getAllNodeNames(newData[0]));
-      }
-
-      return newData
-
-    };
-
-    // Helper function to clean text (remove nested array notation)
-    const cleanText = (text: string): string => {
-      // Remove outer brackets and quotes if they exist
-      let cleaned = text.trim();
-
-      // Handle nested array notation like "[['text']]"
-      if (cleaned.startsWith("[[") && cleaned.endsWith("]]")) {
-        // Extract content between [[ and ]]
-        cleaned = cleaned.slice(2, -2);
-
-        // Remove quotes if present
-        if ((cleaned.startsWith("'") && cleaned.endsWith("'")) ||
-          (cleaned.startsWith('"') && cleaned.endsWith('"'))) {
-          cleaned = cleaned.slice(1, -1);
-        }
-
-        // Handle escaped quotes
-        cleaned = cleaned.replace(/\\'/g, "'").replace(/\\"/g, '"');
-      }
-
-      return cleaned;
-    };
-
-    // Helper function to debug available nodes
-    const getAllNodeNames = (root: Props): string[] => {
-      const names = [root.text!];
-      if (root.subgroups) {
-        for (const sub of root.subgroups) {
-          names.push(...getAllNodeNames(sub));
-        }
-      }
-      return names;
-    };
-
-
-    const fetchItems = async () => {
+    const loadInitialData = async () => {
       try {
-        const req = await fetch("api/fetch_items");
+        // run all initial fetches in parallel
+        const [, subgroupsResult, classnamesResult] = await Promise.allSettled([
+          fetchItems(null, null),
+          fetchSubgroups(),
+          fetchClassnames()
+        ]);
 
-        if (!req.ok) {
-          throw new Error(`HTTP error! Status: ${req.status}`);
+        if (subgroupsResult.status === 'fulfilled') {
+          setSubgroups(subgroupsResult.value);
+        } else {
+          console.error("Failed to fetch subgroups:", subgroupsResult.reason);
         }
 
-        const data = await req.json();
-        console.log(data.item_list);
-
-        type ItemArray = [string, string, string];
-
-        const idx = data.item_list.findIndex((element: ItemArray) =>
-          Array.isArray(element) && element.length > 2 && element[2] === ""
-        );
-
-        if (idx !== -1) {
-          // Start with the root element
-          let newNestedData: Props[] = [{
-            text: cleanText(data.item_list[idx][1]),
-            level: 0,
-            style: "",
-            subgroups: [],
-            onClick: (clickedNode: Props) => { navigateScanner(clickedNode) },
-            parent: null
-          }]
-
-          // Remove the root element from the array
-          data.item_list.splice(idx, 1);
-
-          // Process and sort elements by path depth (parents first)
-          const processedElements = [];
-          console.log("data item_list: " + data.item_list)
-          for (const element of data.item_list) {
-            if (Array.isArray(element) && element.length > 2) {
-              if (typeof element[2] === 'string') {
-                element[2] = element[2].split(",");
-              } else {
-                console.error("element[2] is not a string:", element[2]);
-                continue;
-              }
-            } else {
-              console.error("element does not have enough elements:", element);
-              continue;
-            }
-
-            processedElements.push({
-              text: cleanText(element[1]),
-              path: element[2],
-              depth: element[2].length
-            });
-          }
-
-          // Sort by path depth (shorter paths = parents come first)
-          processedElements.sort((a, b) => a.depth - b.depth);
-
-          console.log("Processing elements in order:", processedElements);
-
-          // Now process elements in the correct order
-          for (const element of processedElements) {
-            console.log(`Processing element: ${element.text} with path:`, element.path);
-
-            // Determine parent name - if path is empty, use root text
-            let parentName: string;
-            if (element.path.length === 0) {
-              parentName = newNestedData[0].text!;
-            } else {
-              parentName = element.path[element.path.length - 1];
-            }
-
-            console.log(`Trying to add "${element.text}" to parent "${parentName}"`);
-
-            newNestedData = addElementToData(newNestedData, parentName, {
-              text: element.text,
-              level: 0,
-              subgroups: [],
-              onClick: (clickedNode: Props) => { navigateScanner(clickedNode) },
-              parent: null
-            });
-          }
-
-          // Set the final data structure in one go
-          setNestedData(newNestedData);
+        if (classnamesResult.status === 'fulfilled') {
+          setClassnames(classnamesResult.value);
+          console.warn("Fetched the following classnames:", classnamesResult.value);
+        } else {
+          console.error("Failed to fetch classnames:", classnamesResult.reason);
         }
 
       } catch (error) {
-        console.error("Error fetching items:", error);
+        setError("Failed to load initial data");
+        console.error("Initial data load failed:", error);
       }
     };
 
-    fetchItems();
-  }, []);
+    loadInitialData();
+  }, [fetchClassnames, fetchItems, fetchSubgroups]); 
+
+  if (isLoading && data.length === 0) {
+    return <div className="flex justify-center items-center min-h-screen"></div>;
+  }
 
   return (
-    <div className="w-full max-w-4xl h-screen">
-      {nestedData.map((node, idx) => <Container
-        key={idx}
-        text={node.text}
-        subgroups={node.subgroups}
-        level={node.level}
-        style={node.style}
-        onClick={(clickedNode: Props) => { navigateScanner(clickedNode) }}
-        parent={null}
-      />
+    <div className="flex flex-col justify-start min-h-screen">
+      {error ? (
+        <ErrorContainer text={error} />
+      ) : (
+        <>
+        
+        <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-indigo-950 min-w-10 min-h-10"
+             onClick={() => setSidebarIsOpen(!SidebarIsOpen)}>
+              {SidebarIsOpen ?(
+                <>
+                  <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-gray-700 min-w-10 min-h-10 z-50"
+                      onClick={() => setSidebarIsOpen(!SidebarIsOpen)}>
+                    <SidebarComp isOpen={SidebarIsOpen} onClose={() => setSidebarIsOpen(false)} />
+                    <Bars3Icon className="h-6 w-6 text-white" />
+                  </div>
+                </>
+              ): 
+              <Bars3Icon className="h-6 w-6 text-white" />
+              }
+        </div>
+
+
+          <div className="flex items-center gap-4 mb-4 ml-4">
+            <div>
+              <DropdownComp 
+                task="subgroups" 
+                text="subs" 
+                elements={subgroups} 
+                onClickElement={fetchItems} 
+                onClickReset={fetchItems} 
+                style="" 
+              />
+            </div>
+            <div>
+              <DropdownComp 
+                task="classnames" 
+                text="class" 
+                elements={classnames} 
+                onClickElement={fetchItems} 
+                onClickReset={fetchItems} 
+                style="" 
+              />
+            </div>
+            <div>
+              <StyledButton text='+' onClick={() => navigateScanner(null, 1)} className='mx-2' />
+              <StyledButton text='-' onClick={() => navigateScanner(null, -1)} className='mx-2' />
+            </div>
+            {isLoading && <div className="text-sm text-gray-500"></div>}
+          </div>
+
+          {containerComponents}
+        </>
       )}
     </div>
   );

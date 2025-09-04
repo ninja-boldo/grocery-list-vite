@@ -1,203 +1,836 @@
-# server.py
+import os
+import traceback
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
+
 import datetime
-import duckdb
+import json
+import shutil
+from typing import Optional, Union
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, File, Query, Request, UploadFile, HTTPException
+import torch
 import uvicorn
 
-#   https://swedish-desire-derek-consistency.trycloudflare.com/scanner
+from fastapi.responses import JSONResponse, PlainTextResponse
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger  # noqa: F401
+
+import food_classifier.main as food_classifier
+
+from prometheus_fastapi_instrumentator import Instrumentator
+
+import time
+import logging
+from logging_loki import LokiHandler
+
+# Use asyncpg instead of psycopg2 for better async performance
+import asyncpg
+from functools import lru_cache
+import asyncio
 
 
-#      https://requires-ny-force-lift.trycloudflare.com/scanner
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
+import queue
 
-DB_PATH = "data/openfoodfacts.db"
+from transcription.transcript import init_whisper, transcribe
+
+if os.getenv('RUNNING_IN_CONTAINER'):
+    DATABASE_URL = "postgresql://postgres:postgres@postgres-db:5432/maindb"
+    CSV_FILE = "/app/openfoodfacts.csv"
+else:
+    DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/maindb"
+    CSV_FILE = "/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/openfoodfacts.csv"
+
+api_key = "one-rgs iodesftheontisissihdebeten thncstthinciree wholeswedissh-ek-"
+
+scheduler = AsyncIOScheduler()
+
+device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+
+async def init_database(pool):
+    """Initialize database schema if it doesn't exist - async version"""
+    try:
+        async with pool.acquire() as con:
+            # Create food table
+            await con.execute("""
+                CREATE TABLE IF NOT EXISTS food (
+                    code TEXT,
+                    product_name TEXT,
+                    quantity TEXT,
+                    packaging TEXT,
+                    brands_en TEXT,
+                    categories TEXT,
+                    ingredients_text TEXT,
+                    energy_kcal_100g TEXT
+                );
+            """)
+            
+            # Create item_list table with proper columns
+            await con.execute("""
+                CREATE TABLE IF NOT EXISTS item_list (
+                    id SERIAL PRIMARY KEY,
+                    ean TEXT,
+                    item_name TEXT,
+                    subgroups TEXT,
+                    class TEXT,
+                    count INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    timestamps JSONB DEFAULT '[]'::jsonb
+                );
+            """)
+            
+            # Add timestamps column if it doesn't exist (for existing databases)
+            try:
+                await con.execute("ALTER TABLE item_list ADD COLUMN IF NOT EXISTS timestamps JSONB DEFAULT '[]'::jsonb;")
+            except Exception:
+                pass 
+            
+            # Add indexes for performance
+            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_subgroups ON item_list(subgroups);")
+            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_class ON item_list(class);")
+            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_ean ON item_list(ean);")
+            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_item_name ON item_list(item_name);")
+            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_subgroups_class ON item_list(subgroups, class);")
+            await con.execute("CREATE INDEX IF NOT EXISTS idx_food_code ON food(code);")
+            await con.execute("CREATE INDEX IF NOT EXISTS idx_food_product_name ON food(product_name);")
+
+            count = await con.fetchval("SELECT COUNT(*) FROM food;")
+            
+            if count == 0 and os.path.exists(CSV_FILE):
+                # Use COPY for bulk insert - more efficient than individual inserts
+                with open(CSV_FILE, 'r', encoding='utf-8') as f:
+                    await con.copy_from_table(
+                        'food', 
+                        source=f,
+                        columns=['code', 'product_name', 'quantity', 'packaging', 'brands_en', 
+                                'categories', 'ingredients_text', 'energy_kcal_100g'],
+                        format='csv',
+                        header=True,
+                        delimiter=','
+                    )
+                logging.getLogger("fastapi-logger").info(f"Loaded data from {CSV_FILE}")
+            
+            count = await con.fetchval("SELECT COUNT(*) FROM food;")
+            print(f"Food table has {count} entries")
+            
+            # List tables
+            tables = await con.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
+            logging.getLogger("fastapi-logger").info(f"Available tables: {[t['tablename'] for t in tables]}")
+
+        logging.getLogger("fastapi-logger").info("Database schema initialized successfully")
+    except Exception as e:
+        logging.getLogger("fastapi-logger").error(f"Failed to initialize database schema: {e}")
+        # Don't raise - continue without CSV data if needed
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        # Create async connection pool
+        app.state.pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=2,
+            max_size=10,
+            command_timeout=30,
+            server_settings={'jit': 'off'}  # Disable JIT for faster simple queries
+        )
+        
+        # Initialize database schema
+        await init_database(app.state.pool)
+        
+        #preload whisper model
+        try:
+            app.state.whisper = init_whisper()
+        except Exception as e:
+            raise Exception(f"the whisper model initilization doesnt seem to have been succesful with this error message: \n{e}")
 
-    app.state.con = duckdb.connect(DB_PATH)
-    print("DuckDB connection opened")
-    yield
 
-    app.state.con.close()
-    print("DuckDB connection closed")
+        # Load ML model
+        try:
+            net = food_classifier.create_net(num_classes=206)
+            model_folder = food_classifier.get_relative_path()
+            model_path = os.path.join(model_folder, "food_classifier_resnet50.pth")
+            
+            if os.path.exists(model_path):
+                net.load_state_dict(torch.load(model_path, weights_only=True))
+                net = net.to(device)
+                app.state.net = net 
+                logger.info("ML model loaded successfully")
+            else:
+                logger.warning(f"Model file not found: {model_path}")
+                app.state.net = None
+        except Exception as e:
+            logger.error(f"Failed to load ML model: {e}")
+            app.state.net = None
+
+        yield
+
+    finally:
+        if hasattr(app.state, 'pool'):
+            await app.state.pool.close()
+            logger.info("Database pool closed")
+
+app = FastAPI(lifespan=lifespan, debug=False)  # Set debug=False for production
+
+Instrumentator().instrument(app).expose(app)
+
+# Optimized logging setup
+
+# Create queue for async logging
+log_queue = queue.Queue()
+
+# Setup handlers
+loki_handler = LokiHandler(
+    url="http://192.168.1.13:3100/loki/api/v1/push",
+    tags={"application": "fastapi-backend-grocery-list"},
+    auth=None,
+    version="1"
+)
+
+file_handler = RotatingFileHandler(
+    'server.log', 
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
+file_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
+# Create queue listener
+queue_listener = QueueListener(log_queue, file_handler, loki_handler, respect_handler_level=True)
+
+# Setup logger with queue handler
+logger = logging.getLogger("fastapi-logger")
+queue_handler = QueueHandler(log_queue)
+logger.addHandler(queue_handler)
+logger.setLevel(logging.INFO)
+
+# Start queue listener
+queue_listener.start()
+
+@app.middleware("http")
+async def optimized_middleware(request: Request, call_next):
+    # Only log important events, not every request
+    if request.url.path == "/metrics":
+        auth_header = request.headers.get("Authorization")
+
+        if not auth_header or not auth_header.startswith("Bearer "):
+            return PlainTextResponse("Unauthorized", status_code=401)
+
+        token = auth_header.removeprefix("Bearer ").strip()
+
+        if token != api_key:
+            logger.warning("Unauthorized metrics access attempt")
+            return PlainTextResponse("Unauthorized", status_code=401)
+
+    # Handle exceptions
+    try:
+        start_time = time.time()
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        
+        # Log slow requests (>1 second) or errors
+        if process_time > 1.0 or (hasattr(response, 'status_code') and response.status_code >= 400):
+            logger.warning(f"Slow/Error request: {request.method} {request.url.path} - {process_time:.2f}s - Status: {getattr(response, 'status_code', 'unknown')}")
+        
+        return response
+    except Exception as e:
+        logger.error(f"Unhandled exception on {request.method} {request.url.path}: {str(e)}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": f"Internal server error: {str(e)}",
+                "path": str(request.url.path),
+                "method": request.method
+            }
+        )
+
+# Cache for frequently accessed queries
+@lru_cache(maxsize=50)
+def get_distinct_query(field: str) -> str:
+    return f"SELECT DISTINCT {field} FROM item_list WHERE {field} != '' AND {field} IS NOT NULL ORDER BY {field}"
+
+@app.get("/fetch_subgroups")
+async def fetch_subgroups(request: Request):
+    try:
+        async with request.app.state.pool.acquire() as con:
+            subgroups = await con.fetch(get_distinct_query("subgroups"))
+        
+        return {"subgroups": [sg['subgroups'] for sg in subgroups]}
+    except Exception as e:
+        logger.error(f"Error fetching subgroups: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch subgroups")
+
+@app.get("/fetch_classnames")
+async def fetch_classnames(request: Request):
+    try:
+        async with request.app.state.pool.acquire() as con:
+            classnames = await con.fetch(get_distinct_query("class"))
+        
+        return {"classnames": [cn['class'] for cn in classnames]}
+    except Exception as e:
+        logger.error(f"Error fetching classnames: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch classnames")
+
+# Batch endpoint to reduce round trips
+@app.get("/fetch_all_metadata")
+async def fetch_all_metadata(request: Request):
+    """Fetch subgroups and classnames in one request to reduce round trips"""
+    try:
+        async with request.app.state.pool.acquire() as con:
+            # Execute both queries concurrently
+            subgroups_task = con.fetch(get_distinct_query("subgroups"))
+            classnames_task = con.fetch(get_distinct_query("class"))
+            
+            subgroups_result, classnames_result = await asyncio.gather(
+                subgroups_task, classnames_task
+            )
+            
+            return {
+                "subgroups": [sg['subgroups'] for sg in subgroups_result],
+                "classnames": [cn['class'] for cn in classnames_result]
+            }
+            
+    except Exception as e:
+        logger.error(f"Error fetching metadata: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch metadata")
 
 
-app = FastAPI(lifespan=lifespan)
-
-
+def convert_to_dates(string: str, verbose: bool = False) -> str:
+    arr = json.loads(string)
+    new_arr = [d.date().isoformat() for d in (datetime.datetime.fromisoformat(t) for t in arr)]
+    if verbose:
+        print(f"this was the input: {string}")
+        print(f"this has been returned: {json.dumps(new_arr)}")
+    return json.dumps(new_arr)
 
 @app.get("/fetch_items")
-async def get_items(request: Request):
-    print(f"invoked at {datetime.datetime.now()}")
-
-    con = request.app.state.con
-    items = con.execute("select * from main.item_list").fetchall()
-    
-    return {"item_list": items}
-
-
-
-@app.get("/add_ean_to_list/")
-async def add_ean(request: Request, ean: str = Query(..., min_length=8, max_length=14), subgroups: str = Query(...,)):
-    
-    print(f"invoked at {datetime.datetime.now()}")
-    
-    #the sent subs will be split by comma in the url
-    # if subgroups:   
-    #     subgroups = subgroups[:-1]
-        
-    if not subgroups == " ": 
-        subgroups = subgroups.split(",")
-    else:
-        subgroups = ""
-    
-    
-    print(f"subgroups: {subgroups}")
-      
-    done = False
-    
-    print(f"we have gotten a request for this ean: {ean}")
-    
-    con = request.app.state.con
-    product_name = con.execute(f"""
-        SELECT product_name FROM main.food where code = '{ean}'
-    """).fetchall()
-    print(f"product_name: {product_name}")
-    
-    subgroups_string = ""
-    for group in subgroups:
-        if subgroups.index(group) != len(subgroups) - 1:
-            subgroups_string += group + ","
-        else:
-            subgroups_string += group
-                
-    print(f"subgroups_string: {subgroups_string}")
-    
-    con.execute("INSERT INTO main.item_list (ean, item_name, subgroups) VALUES (?, ?, ?)", (ean, product_name, subgroups_string))
-    
-    done = True
-    
-    return {"ean": ean, "product_name": product_name, "done": done, "subgroups": ""}
-
-
-
-@app.get("/remove_item/")
-async def remove_item(request: Request, text: str = Query(...,), parent: str = Query(...,)):
-    con = request.app.state.con
-    
-    print(f"Attempting to delete item with text: '{text}' and parent: '{parent}'")
+async def fetch_items(
+    request: Request, 
+    subgroups: Optional[str] = Query(None), 
+    classnames: Optional[str] = Query(None),
+    only_wish_list: Optional[str] = Query(None)
+):
+    logger.info(f"got fetch items request for these params: \n subgroups: {subgroups} classnames: {classnames} only_wish_list: {only_wish_list}")
     
     try:
-        # First, let's see what's actually in the database for debugging
-        debug_query = """
-            SELECT item_name, subgroups 
-            FROM main.item_list
-            WHERE subgroups LIKE ?
-        """
-        debug_results = con.execute(debug_query, (f'%{parent}%',)).fetchall()
-        print(f"All items with parent '{parent}':")
-        for item in debug_results:
-            print(f"  - '{item[0]}' in subgroups '{item[1]}'")
-        
-        # Try to match with both regular and escaped quotes, and with/without brackets
-        escaped_text = text.replace("'", "\\'")  # Pre-escape the text
-        text_variants = [
-            text,  # Original text
-            escaped_text,  # Escaped single quotes
-            text.replace("\\'", "'"),  # Unescaped single quotes
-            f"[[{text}]]",  # With double brackets
-            f"[[\'{text}\']]",  # With double brackets and single quotes
-            f"[[{escaped_text}]]",  # With double brackets and escaped quotes
-        ]
-        
-        items_before = 0
-        matching_text = None
-        
-        # Check each variant to find a match
-        for variant in text_variants:
-            check_query = """
-                SELECT COUNT(*) as count
-                FROM main.item_list
-                WHERE item_name = ? AND subgroups LIKE ?
-            """
-            existing_items = con.execute(check_query, (variant, f'%{parent}%')).fetchall()
-            count = existing_items[0][0] if existing_items else 0
-            print(f"Checking variant '{variant}': found {count} items")
+        async with request.app.state.pool.acquire() as con:
+            query, params = _build_fetch_query(subgroups, classnames, only_wish_list)
+            logger.info(f"executing this query: {query}")
             
-            if count > 0:
-                items_before = count
-                matching_text = variant
-                break
+            items = await con.fetch(query, *params)
+            logger.info(f"Query executed successfully, returned {len(items)} items")
+            
+            # Convert to list of tuples for compatibility with existing frontend
+            item_list = [( 
+                item['ean'], 
+                item['item_name'], 
+                item['subgroups'], 
+                item['class'], 
+                item['count'], 
+                convert_to_dates(item['timestamps']) 
+            ) for item in items]
+            
+            return {"item_list": item_list}
+            
+    except Exception as e:
+        logger.error(f"Error fetching items: {e}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="Failed to fetch items")
+
+
+def _build_fetch_query(subgroups: Optional[str], classnames: Optional[str], only_wish_list: Optional[str]) -> tuple[str, list]:
+    """Build SQL query and parameters based on filters."""
+    
+    # Base query
+    base_query = """
+        SELECT ean, item_name, subgroups, class, count, timestamps
+        FROM item_list
+    """
+    
+    conditions = []
+    params = []
+    
+    # Handle filters
+    if subgroups:
+        conditions.append("subgroups = ${}".format(len(params) + 1))
+        params.append(subgroups)
+    
+    if classnames:
+        conditions.append("class = ${}".format(len(params) + 1))
+        params.append(classnames)
+    
+    # Handle wish list filter
+    wish_list_condition = _get_wish_list_condition(only_wish_list, len(params))
+    if wish_list_condition:
+        conditions.append(wish_list_condition['condition'])
+        params.extend(wish_list_condition['params'])
+    
+    # Build final query
+    where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+    order_clause = " ORDER BY item_name"
+    limit_clause = " LIMIT 1000" if not any([subgroups, classnames, only_wish_list]) else ""
+    
+    query = base_query + where_clause + order_clause + limit_clause
+    
+    return query, params
+
+
+def _get_wish_list_condition(only_wish_list: Optional[str], param_offset: int) -> Optional[dict]:
+    """Generate wish list condition and parameters."""
+    
+    if not only_wish_list or only_wish_list not in ["true", "false"]:
+        return None
+    
+    if only_wish_list == "true":
+        # Show only wish list items
+        return {
+            'condition': f"iswished = ${param_offset + 1}",
+            'params': ["true"]
+        }
+    else:
+        # Show non-wish list items (maintains backwards compatibility with complex COALESCE logic)
+        return {
+            'condition': "COALESCE(lower(iswished::text), '') <> 'true'",
+            'params': []
+        }
+    
+    return None
+    
+@app.get("/add_ean_to_list/")
+async def add_ean_to_list(
+    request: Request,
+    ean: Optional[str] = Query(None, min_length=8, max_length=14),
+    subgroups: Optional[str] = Query(None),
+    count: Optional[int] = Query(1),
+    item_name: Optional[str] = Query(None),
+    wish_list: Optional[str] = Query(None)
+):
+    if not ean and not item_name:
+        raise HTTPException(status_code=400, detail="You must supply either ean or item_name")
+    
+    count = count or 1
+    subgroups = subgroups or ""
+    
+    wish_list = str(wish_list.lower())
+    if wish_list not in ["true", "false"] and wish_list:
+        raise Exception(f"wish list seems to be something else than true or false: {wish_list}")
+    elif not wish_list:
+        raise Exception(f"wish list seems to be none/null: {wish_list}")
+    
+    try:
+        async with request.app.state.pool.acquire() as con:
+            async with con.transaction():
+                # Single query to get or create item info
+                if ean and not item_name:
+                    # Try item_list first, then food table
+                    result = await con.fetchrow(
+                        "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
+                    )
+                    if result:
+                        item_name = result['item_name']
+                    else:
+                        result = await con.fetchrow(
+                            "SELECT product_name FROM food WHERE code = $1 and iswished = $2 LIMIT 1", ean, wish_list
+                        )
+                        if result:
+                            item_name = result['product_name']
+                        else:
+                            raise HTTPException(status_code=404, detail=f"Item not found for given EAN: {ean}")
+
+                elif item_name and not ean:
+                    result = await con.fetchrow(
+                        "SELECT ean FROM item_list WHERE item_name = $1 LIMIT 1", item_name
+                    )
+                    ean = result['ean'] if result else "-1"
+
+                # Use UPSERT (INSERT ... ON CONFLICT) for better performance
+                result = await con.fetchrow(
+                    "SELECT count, timestamps FROM item_list WHERE item_name = $1", item_name
+                )
+                
+                current_time = datetime.datetime.now().isoformat()
+                
+                if not result:
+                    # Create timestamps array for the new items
+                    timestamps = [current_time] * count if count > 0 else []
+                    await con.execute(
+                        """INSERT INTO item_list (ean, item_name, subgroups, class, count, timestamps, iswished) 
+                           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                        ean, item_name, subgroups, "", count, json.dumps(timestamps), wish_list
+                    )
+                else:
+                    existing_count = result['count']
+                    existing_timestamps = json.loads(result['timestamps'] or '[]')
+                    
+                    if count < 0:
+                        # Removing items - remove the oldest timestamps
+                        items_to_remove = min(abs(count), existing_count)
+                        remaining_timestamps = existing_timestamps[items_to_remove:]
+                        new_count = existing_count - items_to_remove
+                    else:
+                        # Adding items - add new timestamps
+                        new_timestamps = [current_time] * count
+                        remaining_timestamps = existing_timestamps + new_timestamps
+                        new_count = existing_count + count
+                    
+                    if new_count <= 0:
+                        # Delete item completely if count reaches 0 or below
+                        await con.execute(
+                            "DELETE FROM item_list WHERE item_name = $1", item_name
+                        )
+                    else:
+                        # Update the item
+                        await con.execute(
+                            "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
+                            new_count, json.dumps(remaining_timestamps), item_name
+                        )
+
+                # Get product name for response
+                product_result = await con.fetchrow(
+                    "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
+                )
+                product_name = product_result['product_name'] if product_result else item_name
+
+                return {
+                    "ean": ean,
+                    "product_name": product_name,
+                    "done": True,
+                    "subgroups": subgroups
+                }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adding EAN: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add item")
+
+@app.get("/add_ean_to_list_manual/")
+async def add_ean_manual(
+    request: Request,
+    ean: Optional[str] = Query(None, min_length=8, max_length=14),
+    subgroups: Optional[str] = Query(None),
+    count: Optional[Union[int, str]] = Query(1),
+    item_name: Optional[str] = Query(None),
+    is_wish_list: Optional[str] = Query(None)
+):
+    """
+    Enhanced manual EAN addition with better error handling, performance, and logging
+    """
+    start_time = time.time()
+    operation_id = f"{int(time.time() * 1000)}"  # Unique operation ID for tracking
+    
+    logger.info(f"[{operation_id}] Starting add_ean_manual with params: ean={ean}, item_name={item_name}, count={count}, subgroups={subgroups}, is_wish_list={is_wish_list}")
+    print(f"[{operation_id}] Starting add_ean_manual with params: ean={ean}, item_name={item_name}, count={count}, subgroups={subgroups}, is_wish_list={is_wish_list}")
+    
+    try:
+        # Input validation and sanitization
+        try:
+            count = int(count) if count is not None else 1
+        except (ValueError, TypeError) as e:
+            logger.error(f"[{operation_id}] Invalid count parameter: {count}, error: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid count parameter: {count}")
         
-        print(f"Found {items_before} matching items before deletion using text: '{matching_text}'")
+        # Validate required parameters
+        if not ean and not item_name:
+            logger.error(f"[{operation_id}] Missing required parameters: both ean and item_name are None")
+            raise HTTPException(status_code=400, detail="You must supply either ean or item_name")
         
-        if items_before == 0:
-            return {
-                "success": False, 
-                "message": f"No items found with text '{text}' and parent '{parent}'. Available items: {[item[0] for item in debug_results]}",
-                "items_deleted": 0,
-                "items_before": 0,
-                "items_after": 0
-            }
+        # Validate wish list parameter
         
-        # Perform the deletion using the matching text variant
-        delete_query = """
-            DELETE FROM main.item_list
-            WHERE item_name = ? AND subgroups LIKE ?                
-        """
-        con.execute(delete_query, (matching_text, f'%{parent}%'))
-        
-        # Verify deletion by counting remaining items
-        check_query = """
-            SELECT COUNT(*) as count
-            FROM main.item_list
-            WHERE item_name = ? AND subgroups LIKE ?
-        """
-        remaining_items = con.execute(check_query, (matching_text, f'%{parent}%')).fetchall()
-        items_after = remaining_items[0][0] if remaining_items else 0
-        
-        items_deleted = items_before - items_after
-        
-        print(f"Deletion complete: {items_deleted} items deleted")
-        print(f"Items before: {items_before}, Items after: {items_after}")
-        
-        if items_deleted > 0:
-            return {
-                "success": True, 
-                "message": f"Successfully deleted {items_deleted} item(s) with text '{matching_text}' and parent '{parent}'",
-                "items_deleted": items_deleted,
-                "items_before": items_before,
-                "items_after": items_after,
-                "matched_text": matching_text
-            }
+        if is_wish_list:
+            is_wish_list = str(is_wish_list).lower().strip()
+            if is_wish_list not in ["true", "false"]:
+                logger.error(f"[{operation_id}] Invalid is_wish_list parameter: {is_wish_list}")
+                raise HTTPException(status_code=400, detail="is_wish_list must be 'true' or 'false'")
         else:
-            return {
-                "success": False, 
-                "message": "No items were deleted. This might indicate a database issue.",
-                "items_deleted": 0,
-                "items_before": items_before,
-                "items_after": items_after
-            }
+            is_wish_list = "false"  # Default value
+        
+        # Sanitize inputs
+        subgroups = (subgroups or "").strip()
+        ean = (ean or "0").strip()
+        if item_name:
+            item_name = item_name.strip()
+        
+        logger.info(f"[{operation_id}] Sanitized params: ean={ean}, item_name={item_name}, count={count}, subgroups={subgroups}, is_wish_list={is_wish_list}")
+
+        # Database operations
+        try:
+            async with request.app.state.pool.acquire() as con:
+                logger.debug(f"[{operation_id}] Acquired database connection")
+                
+                async with con.transaction():
+                    logger.debug(f"[{operation_id}] Started database transaction")
+                    
+                    # Step 1: Resolve item_name from EAN if needed
+                    if ean and ean != "0" and not item_name:
+                        logger.debug(f"[{operation_id}] Resolving item_name from EAN: {ean}")
+                        
+                        # Try item_list first (more likely to have custom names)
+                        result = await con.fetchrow(
+                            "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
+                        )
+                        
+                        if result:
+                            item_name = result['item_name']
+                            logger.debug(f"[{operation_id}] Found item_name in item_list: {item_name}")
+                        else:
+                            # Fallback to food table
+                            result = await con.fetchrow(
+                                "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
+                            )
+                            if result:
+                                item_name = result['product_name']
+                                logger.debug(f"[{operation_id}] Found item_name in food table: {item_name}")
+                            else:
+                                logger.error(f"[{operation_id}] Item not found for EAN: {ean}")
+                                raise HTTPException(
+                                    status_code=404, 
+                                    detail=f"Item not found for EAN: {ean}"
+                                )
+
+                    # Step 2: Resolve EAN from item_name if needed
+                    elif item_name and (not ean or ean == "0"):
+                        logger.debug(f"[{operation_id}] Resolving EAN from item_name: {item_name}")
+                        
+                        result = await con.fetchrow(
+                            "SELECT ean FROM item_list WHERE item_name = $1 LIMIT 1", item_name
+                        )
+                        ean = result['ean'] if result else "0"
+                        logger.debug(f"[{operation_id}] Resolved EAN: {ean}")
+                    
+                    # Step 3: Check if this is a new EAN entry that should be added to food table
+                    if item_name and ean and ean != "0":
+                        logger.debug(f"[{operation_id}] Checking if EAN exists in item_list: {ean}")
+                        
+                        result = await con.fetchrow(
+                            "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
+                        )
+                        
+                        if not result:
+                            logger.info(f"[{operation_id}] New EAN detected, creating new entry: ean={ean}, item_name={item_name}")
+                            
+                            current_time = datetime.datetime.now().isoformat()
+                            timestamps = [current_time] * count if count > 0 else []
+                            
+                            try:
+                                await con.execute(
+                                    """INSERT INTO item_list 
+                                       (ean, item_name, subgroups, class, count, timestamps, iswished) 
+                                       VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                                    ean, item_name, subgroups, "", count, 
+                                    json.dumps(timestamps), is_wish_list
+                                )
+                                
+                                execution_time = time.time() - start_time
+                                logger.info(f"[{operation_id}] Successfully created new item in {execution_time:.2f}s: ean={ean}, item_name={item_name}")
+                                
+                                return {
+                                    "ean": ean, 
+                                    "product_name": item_name, 
+                                    "done": True, 
+                                    "subgroups": subgroups,
+                                    "operation": "created_new",
+                                    "execution_time": execution_time
+                                }
+                                
+                            except Exception as db_error:
+                                logger.error(f"[{operation_id}] Database error creating new item: {str(db_error)}")
+                                raise HTTPException(
+                                    status_code=500, 
+                                    detail=f"Database error creating new item: {str(db_error)}"
+                                )
+
+                    # Step 4: Process existing item update/creation
+                    logger.debug(f"[{operation_id}] Processing item update/creation for: {item_name}")
+                    
+                    existing_item = await con.fetchrow(
+                        "SELECT ean, count, timestamps FROM item_list WHERE item_name = $1", 
+                        item_name
+                    )
+                    
+                    current_time = datetime.datetime.now().isoformat()
+                    
+                    if not existing_item:
+                        logger.info(f"[{operation_id}] Creating new item: {item_name}")
+                        
+                        timestamps = [current_time] * count if count > 0 else []
+                        
+                        try:
+                            await con.execute(
+                                """INSERT INTO item_list 
+                                   (ean, item_name, subgroups, class, count, timestamps, iswished) 
+                                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                                ean, item_name, subgroups, "", count, 
+                                json.dumps(timestamps), is_wish_list
+                            )
+                            
+                            operation_type = "created"
+                            logger.info(f"[{operation_id}] Successfully created item: {item_name}")
+                            
+                        except Exception as db_error:
+                            logger.error(f"[{operation_id}] Database error creating item: {str(db_error)}")
+                            raise HTTPException(
+                                status_code=500, 
+                                detail=f"Database error creating item: {str(db_error)}"
+                            )
+                    else:
+                        logger.info(f"[{operation_id}] Updating existing item: {item_name}, current_count={existing_item['count']}, change={count}")
+                        
+                        existing_count = existing_item['count']
+                        existing_timestamps = json.loads(existing_item['timestamps'] or '[]')
+                        
+                        try:
+                            if count < 0:
+                                # Removing items
+                                items_to_remove = min(abs(count), existing_count)
+                                remaining_timestamps = existing_timestamps[items_to_remove:]
+                                new_count = existing_count - items_to_remove
+                                logger.debug(f"[{operation_id}] Removing {items_to_remove} items, new_count={new_count}")
+                            else:
+                                # Adding items
+                                new_timestamps = [current_time] * count
+                                remaining_timestamps = existing_timestamps + new_timestamps
+                                new_count = existing_count + count
+                                logger.debug(f"[{operation_id}] Adding {count} items, new_count={new_count}")
+                            
+                            if new_count <= 0:
+                                logger.info(f"[{operation_id}] Deleting item (count <= 0): {item_name}")
+                                await con.execute(
+                                    "DELETE FROM item_list WHERE item_name = $1", 
+                                    item_name
+                                )
+                                operation_type = "deleted"
+                            else:
+                                await con.execute(
+                                    """UPDATE item_list 
+                                       SET count = $1, timestamps = $2 
+                                       WHERE item_name = $3""", 
+                                    new_count, json.dumps(remaining_timestamps), item_name
+                                )
+                                operation_type = "updated"
+                                logger.info(f"[{operation_id}] Successfully updated item: {item_name}, new_count={new_count}")
+                        
+                        except Exception as db_error:
+                            logger.error(f"[{operation_id}] Database error updating item: {str(db_error)}")
+                            raise HTTPException(
+                                status_code=500, 
+                                detail=f"Database error updating item: {str(db_error)}"
+                            )
+                    
+                    # Transaction completed successfully
+                    execution_time = time.time() - start_time
+                    logger.info(f"[{operation_id}] Transaction completed successfully in {execution_time:.2f}s, operation={operation_type}")
+                    
+                    return {
+                        "ean": ean, 
+                        "product_name": item_name, 
+                        "done": True, 
+                        "subgroups": subgroups,
+                        "operation": operation_type,
+                        "execution_time": execution_time
+                    }
+        
+        except asyncpg.PostgresError as db_error:
+            execution_time = time.time() - start_time
+            logger.error(f"[{operation_id}] PostgreSQL error after {execution_time:.2f}s: {str(db_error)}")
+            logger.error(f"[{operation_id}] PostgreSQL error details: {db_error.__class__.__name__}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Database operation failed: {str(db_error)}"
+            )
+        
+        except Exception as db_error:
+            execution_time = time.time() - start_time
+            logger.error(f"[{operation_id}] Unexpected database error after {execution_time:.2f}s: {str(db_error)}")
+            logger.error(f"[{operation_id}] Full traceback:\n{traceback.format_exc()}")
+            raise HTTPException(
+                status_code=500, 
+                detail="Database operation failed due to unexpected error"
+            )
+    
+    except HTTPException:
+        execution_time = time.time() - start_time
+        logger.warning(f"[{operation_id}] HTTPException raised after {execution_time:.2f}s")
+        raise
+    
+    except Exception as e:
+        execution_time = time.time() - start_time
+        logger.error(f"[{operation_id}] Unexpected error after {execution_time:.2f}s: {str(e)}")
+        logger.error(f"[{operation_id}] Full traceback:\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to add item due to unexpected error"
+        )
+        
+        
+@app.post("/send_inference_image")
+async def create_upload_file(request: Request, image: UploadFile | None = None):
+    if not image:
+        return {"message": "No upload file sent"}
+    
+    if not request.app.state.net:
+        raise HTTPException(status_code=503, detail="ML model not available")
+    
+    try:
+        # Save image to temporary location
+        temp_image_path = f"/tmp/temp_image_{datetime.datetime.now().timestamp()}.jpg"
+        with open(temp_image_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+            
+        probability, prediction = food_classifier.run_inference(temp_image_path, request.app.state.net)
+        
+        # Clean up temporary file
+        try:
+            os.remove(temp_image_path)
+        except Exception:
+            pass
+            
+        return {"prediction": prediction, "probability": probability}
         
     except Exception as e:
-        print(f"Error deleting item: {e}")
-        return {
-            "success": False, 
-            "error": str(e),
-            "message": "Database error occurred while trying to delete item"
-        }
+        logger.error(f"Error processing image: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process image")
+    
+@app.post("/transcribe")
+async def transcribe_endpoint(file: UploadFile = File(...)):
 
+##    if not file.content_type.startswith("audio/"):
+##        return {"error": "Invalid audio file"}
 
+    contents = await file.read()
 
-if __name__ == "__main__":       
+    with open(f"uploads/{file.filename}", "wb") as f:
+        f.write(contents)
         
+    transcribed_text = transcribe(file_path=f"uploads/{file.filename}", model=app.state.whisper)
+    
+    return {"transcribed_text": transcribed_text, "size": len(contents)}
+    
+# Background task (if needed)
+async def food_name_classifier(sleep_interval=60*60):
+    """Background classification task"""
+    logger.info("[Background task] Started")
+    try:
+        while True:
+            await asyncio.sleep(sleep_interval)  # Use async sleep
+            logger.info(f"[{datetime.datetime.now()}] food_classifier task running...")
+    except Exception as e:
+        logger.error(f"[food_classifier task error]: {e}")
+    finally:
+        logger.info("food_classifier task stopped")
+
+if __name__ == "__main__":
     uvicorn.run(
         "server:app",
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=3030,
-        reload=False,            
+        reload=False,
+        log_level="info",  # Changed from debug
         workers=1,
-        loop="uvloop",            
-        http="httptools",        
+        loop="uvloop",
+        http="httptools",
+        access_log=False,  # Disable access logging for better performance
     )
