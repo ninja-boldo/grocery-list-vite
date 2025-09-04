@@ -12,7 +12,7 @@ interface Props {
 
 const DropdownComp = ({ task, text, elements, style, onClickElement, onClickReset }: Props) => {
 
-    console.log("the received elements: '" + elements + "'")
+    //console.log("the received elements: '" + elements + "'")
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 

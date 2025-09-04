@@ -3,10 +3,11 @@ import traceback
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 import datetime
+import json
 import shutil
 from typing import Optional, Union
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Query, Request, UploadFile, HTTPException
+from fastapi import FastAPI, File, Query, Request, UploadFile, HTTPException
 import torch
 import uvicorn
 
@@ -32,6 +33,7 @@ import asyncio
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 import queue
 
+from transcription.transcript import init_whisper, transcribe
 
 if os.getenv('RUNNING_IN_CONTAINER'):
     DATABASE_URL = "postgresql://postgres:postgres@postgres-db:5432/maindb"
@@ -64,7 +66,7 @@ async def init_database(pool):
                 );
             """)
             
-            # Create item_list table (PostgreSQL syntax)
+            # Create item_list table with proper columns
             await con.execute("""
                 CREATE TABLE IF NOT EXISTS item_list (
                     id SERIAL PRIMARY KEY,
@@ -73,9 +75,16 @@ async def init_database(pool):
                     subgroups TEXT,
                     class TEXT,
                     count INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    timestamps JSONB DEFAULT '[]'::jsonb
                 );
             """)
+            
+            # Add timestamps column if it doesn't exist (for existing databases)
+            try:
+                await con.execute("ALTER TABLE item_list ADD COLUMN IF NOT EXISTS timestamps JSONB DEFAULT '[]'::jsonb;")
+            except Exception:
+                pass 
             
             # Add indexes for performance
             await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_subgroups ON item_list(subgroups);")
@@ -128,6 +137,13 @@ async def lifespan(app: FastAPI):
         
         # Initialize database schema
         await init_database(app.state.pool)
+        
+        #preload whisper model
+        try:
+            app.state.whisper = init_whisper()
+        except Exception as e:
+            raise Exception(f"the whisper model initilization doesnt seem to have been succesful with this error message: \n{e}")
+
 
         # Load ML model
         try:
@@ -159,7 +175,6 @@ app = FastAPI(lifespan=lifespan, debug=False)  # Set debug=False for production
 Instrumentator().instrument(app).expose(app)
 
 # Optimized logging setup
-
 
 # Create queue for async logging
 log_queue = queue.Queue()
@@ -282,73 +297,129 @@ async def fetch_all_metadata(request: Request):
         logger.error(f"Error fetching metadata: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch metadata")
 
+
+def convert_to_dates(string: str, verbose: bool = False) -> str:
+    arr = json.loads(string)
+    new_arr = [d.date().isoformat() for d in (datetime.datetime.fromisoformat(t) for t in arr)]
+    if verbose:
+        print(f"this was the input: {string}")
+        print(f"this has been returned: {json.dumps(new_arr)}")
+    return json.dumps(new_arr)
+
 @app.get("/fetch_items")
 async def fetch_items(
     request: Request, 
     subgroups: Optional[str] = Query(None), 
-    classnames: Optional[str] = Query(None)
+    classnames: Optional[str] = Query(None),
+    only_wish_list: Optional[str] = Query(None)
 ):
+    logger.info(f"got fetch items request for these params: \n subgroups: {subgroups} classnames: {classnames} only_wish_list: {only_wish_list}")
+    
     try:
         async with request.app.state.pool.acquire() as con:
-            # Use parameterized queries for better performance and security
-            if subgroups and classnames:
-                query = """
-                    SELECT ean, item_name, subgroups, class, count 
-                    FROM item_list 
-                    WHERE subgroups = $1 AND class = $2
-                    ORDER BY item_name
-                """
-                items = await con.fetch(query, subgroups, classnames)
-            elif subgroups:
-                query = """
-                    SELECT ean, item_name, subgroups, class, count 
-                    FROM item_list 
-                    WHERE subgroups = $1
-                    ORDER BY item_name
-                """
-                items = await con.fetch(query, subgroups)
-            elif classnames:
-                query = """
-                    SELECT ean, item_name, subgroups, class, count 
-                    FROM item_list 
-                    WHERE class = $1
-                    ORDER BY item_name
-                """
-                items = await con.fetch(query, classnames)
-            else:
-                # Add pagination for large datasets
-                query = """
-                    SELECT ean, item_name, subgroups, class, count 
-                    FROM item_list 
-                    ORDER BY item_name
-                    LIMIT 1000
-                """
-                items = await con.fetch(query)
-
+            query, params = _build_fetch_query(subgroups, classnames, only_wish_list)
+            logger.info(f"executing this query: {query}")
+            
+            items = await con.fetch(query, *params)
+            logger.info(f"Query executed successfully, returned {len(items)} items")
+            
             # Convert to list of tuples for compatibility with existing frontend
-            item_list = [(item['ean'], item['item_name'], item['subgroups'], 
-                         item['class'], item['count']) for item in items]
+            item_list = [( 
+                item['ean'], 
+                item['item_name'], 
+                item['subgroups'], 
+                item['class'], 
+                item['count'], 
+                convert_to_dates(item['timestamps']) 
+            ) for item in items]
             
             return {"item_list": item_list}
             
     except Exception as e:
         logger.error(f"Error fetching items: {e}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Failed to fetch items")
 
+
+def _build_fetch_query(subgroups: Optional[str], classnames: Optional[str], only_wish_list: Optional[str]) -> tuple[str, list]:
+    """Build SQL query and parameters based on filters."""
+    
+    # Base query
+    base_query = """
+        SELECT ean, item_name, subgroups, class, count, timestamps
+        FROM item_list
+    """
+    
+    conditions = []
+    params = []
+    
+    # Handle filters
+    if subgroups:
+        conditions.append("subgroups = ${}".format(len(params) + 1))
+        params.append(subgroups)
+    
+    if classnames:
+        conditions.append("class = ${}".format(len(params) + 1))
+        params.append(classnames)
+    
+    # Handle wish list filter
+    wish_list_condition = _get_wish_list_condition(only_wish_list, len(params))
+    if wish_list_condition:
+        conditions.append(wish_list_condition['condition'])
+        params.extend(wish_list_condition['params'])
+    
+    # Build final query
+    where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+    order_clause = " ORDER BY item_name"
+    limit_clause = " LIMIT 1000" if not any([subgroups, classnames, only_wish_list]) else ""
+    
+    query = base_query + where_clause + order_clause + limit_clause
+    
+    return query, params
+
+
+def _get_wish_list_condition(only_wish_list: Optional[str], param_offset: int) -> Optional[dict]:
+    """Generate wish list condition and parameters."""
+    
+    if not only_wish_list or only_wish_list not in ["true", "false"]:
+        return None
+    
+    if only_wish_list == "true":
+        # Show only wish list items
+        return {
+            'condition': f"iswished = ${param_offset + 1}",
+            'params': ["true"]
+        }
+    else:
+        # Show non-wish list items (maintains backwards compatibility with complex COALESCE logic)
+        return {
+            'condition': "COALESCE(lower(iswished::text), '') <> 'true'",
+            'params': []
+        }
+    
+    return None
+    
 @app.get("/add_ean_to_list/")
 async def add_ean_to_list(
     request: Request,
     ean: Optional[str] = Query(None, min_length=8, max_length=14),
     subgroups: Optional[str] = Query(None),
     count: Optional[int] = Query(1),
-    item_name: Optional[str] = Query(None)
+    item_name: Optional[str] = Query(None),
+    wish_list: Optional[str] = Query(None)
 ):
     if not ean and not item_name:
         raise HTTPException(status_code=400, detail="You must supply either ean or item_name")
     
     count = count or 1
     subgroups = subgroups or ""
-
+    
+    wish_list = str(wish_list.lower())
+    if wish_list not in ["true", "false"] and wish_list:
+        raise Exception(f"wish list seems to be something else than true or false: {wish_list}")
+    elif not wish_list:
+        raise Exception(f"wish list seems to be none/null: {wish_list}")
+    
     try:
         async with request.app.state.pool.acquire() as con:
             async with con.transaction():
@@ -362,7 +433,7 @@ async def add_ean_to_list(
                         item_name = result['item_name']
                     else:
                         result = await con.fetchrow(
-                            "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
+                            "SELECT product_name FROM food WHERE code = $1 and iswished = $2 LIMIT 1", ean, wish_list
                         )
                         if result:
                             item_name = result['product_name']
@@ -377,25 +448,44 @@ async def add_ean_to_list(
 
                 # Use UPSERT (INSERT ... ON CONFLICT) for better performance
                 result = await con.fetchrow(
-                    "SELECT count FROM item_list WHERE item_name = $1", item_name
+                    "SELECT count, timestamps FROM item_list WHERE item_name = $1", item_name
                 )
                 
+                current_time = datetime.datetime.now().isoformat()
+                
                 if not result:
+                    # Create timestamps array for the new items
+                    timestamps = [current_time] * count if count > 0 else []
                     await con.execute(
-                        """INSERT INTO item_list (ean, item_name, subgroups, class, count) 
-                           VALUES ($1, $2, $3, $4, $5)""",
-                        ean, item_name, subgroups, "", count
+                        """INSERT INTO item_list (ean, item_name, subgroups, class, count, timestamps, iswished) 
+                           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                        ean, item_name, subgroups, "", count, json.dumps(timestamps), wish_list
                     )
                 else:
-                    new_count = result['count'] + count
+                    existing_count = result['count']
+                    existing_timestamps = json.loads(result['timestamps'] or '[]')
+                    
+                    if count < 0:
+                        # Removing items - remove the oldest timestamps
+                        items_to_remove = min(abs(count), existing_count)
+                        remaining_timestamps = existing_timestamps[items_to_remove:]
+                        new_count = existing_count - items_to_remove
+                    else:
+                        # Adding items - add new timestamps
+                        new_timestamps = [current_time] * count
+                        remaining_timestamps = existing_timestamps + new_timestamps
+                        new_count = existing_count + count
+                    
                     if new_count <= 0:
+                        # Delete item completely if count reaches 0 or below
                         await con.execute(
                             "DELETE FROM item_list WHERE item_name = $1", item_name
                         )
                     else:
+                        # Update the item
                         await con.execute(
-                            "UPDATE item_list SET count = $1 WHERE item_name = $2",
-                            new_count, item_name
+                            "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
+                            new_count, json.dumps(remaining_timestamps), item_name
                         )
 
                 # Get product name for response
@@ -423,70 +513,259 @@ async def add_ean_manual(
     ean: Optional[str] = Query(None, min_length=8, max_length=14),
     subgroups: Optional[str] = Query(None),
     count: Optional[Union[int, str]] = Query(1),
-    item_name: Optional[str] = Query(None)
+    item_name: Optional[str] = Query(None),
+    is_wish_list: Optional[str] = Query(None)
 ):
+    """
+    Enhanced manual EAN addition with better error handling, performance, and logging
+    """
+    start_time = time.time()
+    operation_id = f"{int(time.time() * 1000)}"  # Unique operation ID for tracking
+    
+    logger.info(f"[{operation_id}] Starting add_ean_manual with params: ean={ean}, item_name={item_name}, count={count}, subgroups={subgroups}, is_wish_list={is_wish_list}")
+    print(f"[{operation_id}] Starting add_ean_manual with params: ean={ean}, item_name={item_name}, count={count}, subgroups={subgroups}, is_wish_list={is_wish_list}")
+    
     try:
-        count = int(count)
+        # Input validation and sanitization
+        try:
+            count = int(count) if count is not None else 1
+        except (ValueError, TypeError) as e:
+            logger.error(f"[{operation_id}] Invalid count parameter: {count}, error: {e}")
+            raise HTTPException(status_code=400, detail=f"Invalid count parameter: {count}")
         
+        # Validate required parameters
         if not ean and not item_name:
+            logger.error(f"[{operation_id}] Missing required parameters: both ean and item_name are None")
             raise HTTPException(status_code=400, detail="You must supply either ean or item_name")
         
-        count = count or 1
-        subgroups = subgroups or ""
-        ean = ean or "0"
+        # Validate wish list parameter
+        
+        if is_wish_list:
+            is_wish_list = str(is_wish_list).lower().strip()
+            if is_wish_list not in ["true", "false"]:
+                logger.error(f"[{operation_id}] Invalid is_wish_list parameter: {is_wish_list}")
+                raise HTTPException(status_code=400, detail="is_wish_list must be 'true' or 'false'")
+        else:
+            is_wish_list = "false"  # Default value
+        
+        # Sanitize inputs
+        subgroups = (subgroups or "").strip()
+        ean = (ean or "0").strip()
+        if item_name:
+            item_name = item_name.strip()
+        
+        logger.info(f"[{operation_id}] Sanitized params: ean={ean}, item_name={item_name}, count={count}, subgroups={subgroups}, is_wish_list={is_wish_list}")
 
-        async with request.app.state.pool.acquire() as con:
-            async with con.transaction():
-                # Get item_name from ean if not provided
-                if ean and ean != "0" and not item_name:        
-                    result = await con.fetchrow("SELECT item_name FROM item_list WHERE ean = $1", ean)
-                    if result:
-                        item_name = result['item_name']
-                    else:
-                        result = await con.fetchrow("SELECT product_name FROM food WHERE code = $1", ean)
-                        if result:
-                            item_name = result['product_name']
-                        else:
-                            raise HTTPException(status_code=404, detail="Item not found for given EAN")
-
-                # Get ean from item_name if not provided
-                elif item_name and (not ean or ean == "0"):
-                    result = await con.fetchrow("SELECT ean FROM item_list WHERE item_name = $1", item_name)
-                    ean = result['ean'] if result else "0"
+        # Database operations
+        try:
+            async with request.app.state.pool.acquire() as con:
+                logger.debug(f"[{operation_id}] Acquired database connection")
                 
-                # Add to the food db if it hasn't been there before
-                elif item_name and ean and ean != "0":
-                    result = await con.fetchrow("SELECT item_name FROM item_list WHERE ean = $1", ean)
-                    if not result:
-                        await con.execute(
-                            "INSERT INTO item_list (ean, item_name, subgroups, class, count) VALUES ($1, $2, $3, $4, $5)",
-                            ean, item_name, subgroups, "", count
+                async with con.transaction():
+                    logger.debug(f"[{operation_id}] Started database transaction")
+                    
+                    # Step 1: Resolve item_name from EAN if needed
+                    if ean and ean != "0" and not item_name:
+                        logger.debug(f"[{operation_id}] Resolving item_name from EAN: {ean}")
+                        
+                        # Try item_list first (more likely to have custom names)
+                        result = await con.fetchrow(
+                            "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
                         )
-                        return {"ean": ean, "product_name": item_name, "done": True, "subgroups": subgroups}
+                        
+                        if result:
+                            item_name = result['item_name']
+                            logger.debug(f"[{operation_id}] Found item_name in item_list: {item_name}")
+                        else:
+                            # Fallback to food table
+                            result = await con.fetchrow(
+                                "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
+                            )
+                            if result:
+                                item_name = result['product_name']
+                                logger.debug(f"[{operation_id}] Found item_name in food table: {item_name}")
+                            else:
+                                logger.error(f"[{operation_id}] Item not found for EAN: {ean}")
+                                raise HTTPException(
+                                    status_code=404, 
+                                    detail=f"Item not found for EAN: {ean}"
+                                )
 
-                # Process item addition/update
-                existing_item = await con.fetchrow("SELECT ean, count FROM item_list WHERE item_name = $1", item_name)
-                
-                if not existing_item:
-                    await con.execute(
-                        "INSERT INTO item_list (ean, item_name, subgroups, class, count) VALUES ($1, $2, $3, $4, $5)",
-                        ean, item_name, subgroups, "", count
+                    # Step 2: Resolve EAN from item_name if needed
+                    elif item_name and (not ean or ean == "0"):
+                        logger.debug(f"[{operation_id}] Resolving EAN from item_name: {item_name}")
+                        
+                        result = await con.fetchrow(
+                            "SELECT ean FROM item_list WHERE item_name = $1 LIMIT 1", item_name
+                        )
+                        ean = result['ean'] if result else "0"
+                        logger.debug(f"[{operation_id}] Resolved EAN: {ean}")
+                    
+                    # Step 3: Check if this is a new EAN entry that should be added to food table
+                    if item_name and ean and ean != "0":
+                        logger.debug(f"[{operation_id}] Checking if EAN exists in item_list: {ean}")
+                        
+                        result = await con.fetchrow(
+                            "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
+                        )
+                        
+                        if not result:
+                            logger.info(f"[{operation_id}] New EAN detected, creating new entry: ean={ean}, item_name={item_name}")
+                            
+                            current_time = datetime.datetime.now().isoformat()
+                            timestamps = [current_time] * count if count > 0 else []
+                            
+                            try:
+                                await con.execute(
+                                    """INSERT INTO item_list 
+                                       (ean, item_name, subgroups, class, count, timestamps, iswished) 
+                                       VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                                    ean, item_name, subgroups, "", count, 
+                                    json.dumps(timestamps), is_wish_list
+                                )
+                                
+                                execution_time = time.time() - start_time
+                                logger.info(f"[{operation_id}] Successfully created new item in {execution_time:.2f}s: ean={ean}, item_name={item_name}")
+                                
+                                return {
+                                    "ean": ean, 
+                                    "product_name": item_name, 
+                                    "done": True, 
+                                    "subgroups": subgroups,
+                                    "operation": "created_new",
+                                    "execution_time": execution_time
+                                }
+                                
+                            except Exception as db_error:
+                                logger.error(f"[{operation_id}] Database error creating new item: {str(db_error)}")
+                                raise HTTPException(
+                                    status_code=500, 
+                                    detail=f"Database error creating new item: {str(db_error)}"
+                                )
+
+                    # Step 4: Process existing item update/creation
+                    logger.debug(f"[{operation_id}] Processing item update/creation for: {item_name}")
+                    
+                    existing_item = await con.fetchrow(
+                        "SELECT ean, count, timestamps FROM item_list WHERE item_name = $1", 
+                        item_name
                     )
-                else:
-                    new_count = existing_item['count'] + count
-                    if new_count <= 0:
-                        await con.execute("DELETE FROM item_list WHERE item_name = $1", item_name)
+                    
+                    current_time = datetime.datetime.now().isoformat()
+                    
+                    if not existing_item:
+                        logger.info(f"[{operation_id}] Creating new item: {item_name}")
+                        
+                        timestamps = [current_time] * count if count > 0 else []
+                        
+                        try:
+                            await con.execute(
+                                """INSERT INTO item_list 
+                                   (ean, item_name, subgroups, class, count, timestamps, iswished) 
+                                   VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                                ean, item_name, subgroups, "", count, 
+                                json.dumps(timestamps), is_wish_list
+                            )
+                            
+                            operation_type = "created"
+                            logger.info(f"[{operation_id}] Successfully created item: {item_name}")
+                            
+                        except Exception as db_error:
+                            logger.error(f"[{operation_id}] Database error creating item: {str(db_error)}")
+                            raise HTTPException(
+                                status_code=500, 
+                                detail=f"Database error creating item: {str(db_error)}"
+                            )
                     else:
-                        await con.execute("UPDATE item_list SET count = $1 WHERE item_name = $2", new_count, item_name)
-
-                return {"ean": ean, "product_name": item_name, "done": True, "subgroups": subgroups}
+                        logger.info(f"[{operation_id}] Updating existing item: {item_name}, current_count={existing_item['count']}, change={count}")
+                        
+                        existing_count = existing_item['count']
+                        existing_timestamps = json.loads(existing_item['timestamps'] or '[]')
+                        
+                        try:
+                            if count < 0:
+                                # Removing items
+                                items_to_remove = min(abs(count), existing_count)
+                                remaining_timestamps = existing_timestamps[items_to_remove:]
+                                new_count = existing_count - items_to_remove
+                                logger.debug(f"[{operation_id}] Removing {items_to_remove} items, new_count={new_count}")
+                            else:
+                                # Adding items
+                                new_timestamps = [current_time] * count
+                                remaining_timestamps = existing_timestamps + new_timestamps
+                                new_count = existing_count + count
+                                logger.debug(f"[{operation_id}] Adding {count} items, new_count={new_count}")
+                            
+                            if new_count <= 0:
+                                logger.info(f"[{operation_id}] Deleting item (count <= 0): {item_name}")
+                                await con.execute(
+                                    "DELETE FROM item_list WHERE item_name = $1", 
+                                    item_name
+                                )
+                                operation_type = "deleted"
+                            else:
+                                await con.execute(
+                                    """UPDATE item_list 
+                                       SET count = $1, timestamps = $2 
+                                       WHERE item_name = $3""", 
+                                    new_count, json.dumps(remaining_timestamps), item_name
+                                )
+                                operation_type = "updated"
+                                logger.info(f"[{operation_id}] Successfully updated item: {item_name}, new_count={new_count}")
+                        
+                        except Exception as db_error:
+                            logger.error(f"[{operation_id}] Database error updating item: {str(db_error)}")
+                            raise HTTPException(
+                                status_code=500, 
+                                detail=f"Database error updating item: {str(db_error)}"
+                            )
+                    
+                    # Transaction completed successfully
+                    execution_time = time.time() - start_time
+                    logger.info(f"[{operation_id}] Transaction completed successfully in {execution_time:.2f}s, operation={operation_type}")
+                    
+                    return {
+                        "ean": ean, 
+                        "product_name": item_name, 
+                        "done": True, 
+                        "subgroups": subgroups,
+                        "operation": operation_type,
+                        "execution_time": execution_time
+                    }
+        
+        except asyncpg.PostgresError as db_error:
+            execution_time = time.time() - start_time
+            logger.error(f"[{operation_id}] PostgreSQL error after {execution_time:.2f}s: {str(db_error)}")
+            logger.error(f"[{operation_id}] PostgreSQL error details: {db_error.__class__.__name__}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Database operation failed: {str(db_error)}"
+            )
+        
+        except Exception as db_error:
+            execution_time = time.time() - start_time
+            logger.error(f"[{operation_id}] Unexpected database error after {execution_time:.2f}s: {str(db_error)}")
+            logger.error(f"[{operation_id}] Full traceback:\n{traceback.format_exc()}")
+            raise HTTPException(
+                status_code=500, 
+                detail="Database operation failed due to unexpected error"
+            )
     
     except HTTPException:
+        execution_time = time.time() - start_time
+        logger.warning(f"[{operation_id}] HTTPException raised after {execution_time:.2f}s")
         raise
+    
     except Exception as e:
-        logger.error(f"Error adding EAN manually: {e}")
-        raise HTTPException(status_code=500, detail="Failed to add item")
-
+        execution_time = time.time() - start_time
+        logger.error(f"[{operation_id}] Unexpected error after {execution_time:.2f}s: {str(e)}")
+        logger.error(f"[{operation_id}] Full traceback:\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Failed to add item due to unexpected error"
+        )
+        
+        
 @app.post("/send_inference_image")
 async def create_upload_file(request: Request, image: UploadFile | None = None):
     if not image:
@@ -506,7 +785,7 @@ async def create_upload_file(request: Request, image: UploadFile | None = None):
         # Clean up temporary file
         try:
             os.remove(temp_image_path)
-        except:
+        except Exception:
             pass
             
         return {"prediction": prediction, "probability": probability}
@@ -514,7 +793,22 @@ async def create_upload_file(request: Request, image: UploadFile | None = None):
     except Exception as e:
         logger.error(f"Error processing image: {e}")
         raise HTTPException(status_code=500, detail="Failed to process image")
+    
+@app.post("/transcribe")
+async def transcribe_endpoint(file: UploadFile = File(...)):
 
+##    if not file.content_type.startswith("audio/"):
+##        return {"error": "Invalid audio file"}
+
+    contents = await file.read()
+
+    with open(f"uploads/{file.filename}", "wb") as f:
+        f.write(contents)
+        
+    transcribed_text = transcribe(file_path=f"uploads/{file.filename}", model=app.state.whisper)
+    
+    return {"transcribed_text": transcribed_text, "size": len(contents)}
+    
 # Background task (if needed)
 async def food_name_classifier(sleep_interval=60*60):
     """Background classification task"""

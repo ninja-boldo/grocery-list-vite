@@ -6,12 +6,16 @@ import DropdownComp from './comp/Dropdown';
 import { useNavigate } from 'react-router-dom';
 import StyledButton from './comp/StyledButton';
 
+import { Bars3Icon } from '@heroicons/react/24/outline'
+import SidebarComp from "./comp/Sidebar"
+
 interface Props {
   text: string | null;
   subgroups: string | null;
   style?: string;
   count: number;
   classname: string | null;
+  perish_dates: string | null;
   onClickIncrease: (clickedNode: Props) => void; 
   onClickDecrease: (clickedNode: Props) => void; 
 }
@@ -24,6 +28,7 @@ function App() {
   const [subgroups, setSubgroups] = useState<string[]>([]);
   const [classnames, setClassnames] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [SidebarIsOpen, setSidebarIsOpen] = useState(false)
 
   const navigateScanner = useCallback((clickedNode: Props | null, count: number | null) => {
 
@@ -39,67 +44,68 @@ function App() {
   }, [usenav]);
 
   const increaseItemCount = useCallback(async (clickedNode: Props) => {
-    if(clickedNode.text){
-      setIsLoading(true);
-      try {
-        await fetch(`/api/add_ean_to_list/?item_name=${encodeURIComponent(clickedNode.text)}&count=+1`);
-        // Instead of reloading, update state locally for better UX
-        setData(prevData => 
-          prevData.map(item => 
-            item.text === clickedNode.text 
-              ? { ...item, count: item.count + 1 }
-              : item
-          )
-        );
-      } catch (error) {
-        console.error("Failed to increase count:", error);
-        setError("Failed to update item count");
-      } finally {
-        setIsLoading(false);
+      if(clickedNode.text){
+        setIsLoading(true);
+        try {
+          await fetch(`/api/add_ean_to_list/?item_name=${encodeURIComponent(clickedNode.text)}&count=+1&wish_list=false`);
+          // Instead of reloading, update state locally for better UX
+          setData(prevData => 
+            prevData.map(item => 
+              item.text === clickedNode.text 
+                ? { ...item, count: item.count + 1 }
+                : item
+            )
+          );
+        } catch (error) {
+          console.error("Failed to increase count:", error);
+          setError("Failed to update item count");
+        } finally {
+          setIsLoading(false);
+        }
+      } else {
+        console.error("Increase: clickedNode.text is invalid:", clickedNode.text);
       }
-    } else {
-      console.error("Increase: clickedNode.text is invalid:", clickedNode.text);
-    }
-  }, []);
+    }, []);
 
   const decreaseItemCount = useCallback(async (clickedNode: Props) => {
-  if (!clickedNode.text) {
-    console.error("Decrease: clickedNode.text is invalid:", clickedNode.text);
-    return;
-  }
-
-  setIsLoading(true);
-  try {
-    await fetch(
-      `/api/add_ean_to_list/?item_name=${encodeURIComponent(
-        clickedNode.text
-      )}&count=-1`
-    );
-
-    let shouldReload = false;
-    setData(prevData =>
-      prevData.map(item => {
-        if (item.text !== clickedNode.text) {
-          return item;
-        }
-        const newCount = Math.max(0, item.count - 1);
-        if (newCount < 1) {
-          shouldReload = true;
-        }
-        return { ...item, count: newCount };
-      })
-    );
-
-    if (shouldReload) {
-      location.reload();
+    if (!clickedNode.text) {
+      console.error("Decrease: clickedNode.text is invalid:", clickedNode.text);
+      return;
     }
-  } catch (err) {
-    console.error("Failed to decrease count:", err);
-    setError("Failed to update item count");
-  } finally {
-    setIsLoading(false);
-  }
-}, []);
+  
+    setIsLoading(true);
+    try {
+      await fetch(
+        `/api/add_ean_to_list/?item_name=${encodeURIComponent(
+          clickedNode.text
+        )}&count=-1
+        &wish_list=true`
+      );
+  
+      let shouldReload = false;
+      setData(prevData =>
+        prevData.map(item => {
+          if (item.text !== clickedNode.text) {
+            return item;
+          }
+          const newCount = Math.max(0, item.count - 1);
+          if (newCount < 1) {
+            shouldReload = true;
+          }
+          return { ...item, count: newCount };
+        })
+      );
+  
+      if (shouldReload) {
+        location.reload();
+      }
+    } catch (err) {
+      console.error("Failed to decrease count:", err);
+      setError("Failed to update item count");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
 
 
@@ -110,16 +116,16 @@ function App() {
     try {
       let response;
       if(subgroups) {
-        response = await fetch(`/api/fetch_items?subgroups=${encodeURIComponent(subgroups)}`);
+        response = await fetch(`/api/fetch_items?subgroups=${encodeURIComponent(subgroups)}&only_wish_list=false`);
       } else if(classnames) {
-        response = await fetch(`/api/fetch_items?classnames=${encodeURIComponent(classnames)}`);
+        response = await fetch(`/api/fetch_items?classnames=${encodeURIComponent(classnames)}&only_wish_list=false`);
       } else {
-        response = await fetch(`/api/fetch_items`);
+        response = await fetch(`/api/fetch_items?only_wish_list=false`);
       }
       
 
       interface ApiResponse {
-        item_list: [string, string, string, string, number][];  // or whatever the actual structure is
+        item_list: [string, string, string, string, number, string][];  // or whatever the actual structure is
       }
 
       interface RawItem {
@@ -128,6 +134,7 @@ function App() {
         2: string; // subgroups
         3: string;  // classname
         4: number;  // count
+        5: string; // timestamps
       }
 
       // Then use them:
@@ -140,6 +147,7 @@ function App() {
         style: "",
         classname: row[3],
         count: row[4],
+        perish_dates: row[5],
         onClickIncrease: increaseItemCount,
         onClickDecrease: decreaseItemCount
       }));
@@ -192,6 +200,7 @@ function App() {
         subgroups={element.subgroups}
         count={element.count}
         classname={element.classname}
+        perish_dates={element.perish_dates}
         onClickIncrease={increaseItemCount}
         onClickDecrease={decreaseItemCount}
         style=""
@@ -230,7 +239,7 @@ function App() {
     };
 
     loadInitialData();
-  }, []); 
+  }, [fetchClassnames, fetchItems, fetchSubgroups]); 
 
   if (isLoading && data.length === 0) {
     return <div className="flex justify-center items-center min-h-screen"></div>;
@@ -242,6 +251,23 @@ function App() {
         <ErrorContainer text={error} />
       ) : (
         <>
+        
+        <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-indigo-950 min-w-10 min-h-10"
+             onClick={() => setSidebarIsOpen(!SidebarIsOpen)}>
+              {SidebarIsOpen ?(
+                <>
+                  <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-gray-700 min-w-10 min-h-10 z-50"
+                      onClick={() => setSidebarIsOpen(!SidebarIsOpen)}>
+                    <SidebarComp isOpen={SidebarIsOpen} onClose={() => setSidebarIsOpen(false)} />
+                    <Bars3Icon className="h-6 w-6 text-white" />
+                  </div>
+                </>
+              ): 
+              <Bars3Icon className="h-6 w-6 text-white" />
+              }
+        </div>
+
+
           <div className="flex items-center gap-4 mb-4 ml-4">
             <div>
               <DropdownComp 

@@ -68,13 +68,16 @@ export default function FullScreenCameraScanner() {
         if (videoDevices.length > 0) {
           const rear = videoDevices.find(device => {
             const label = (device.label || '').toLowerCase();
+
             return (
               label.includes('back') ||
               label.includes('rear') ||
               label.includes('hinten') ||
-              label.includes('rück')
+              label.includes('rück') ||
+              label.includes('macbook')
             );
           });
+
           setSelectedCameraId(rear?.deviceId || videoDevices[0].deviceId);
         } else {
           setSelectedCameraId('fallback');
@@ -112,6 +115,8 @@ export default function FullScreenCameraScanner() {
   const queryParams = new URLSearchParams(location.search);
   let subgroups = queryParams.get('subgroups');
   let count = queryParams.get('count');
+  const isWishList = queryParams.get('wishlist');
+  console.log("this is the is wishlist value: " + isWishList)
 
   const sendEan = (eanToSend: string) => {
     // keep backward compatible param behavior
@@ -246,7 +251,15 @@ export default function FullScreenCameraScanner() {
   }, [navHook, selectedCameraId, initializing]);
 
   const navigateMlScanner = () => navHook('/scanner/ml');
-  const navigateManualAdd = () => navHook('/scanner/manual');
+  const navigateManualAdd = (isWishList: string | null) => {
+    if(isWishList){
+      navHook(`/scanner/manual?wishlist=${isWishList}`);
+    }
+    else{
+      console.error("the is wish list parameter doesnt seem to be supplied the right way therefore it will fallback to iswishlist = false")
+      navHook(`/scanner/manual?wishlist=false`);
+    }
+  }
 
   // concrete styles (no placeholder objects)
   const initStyle: React.CSSProperties = {
@@ -285,7 +298,7 @@ export default function FullScreenCameraScanner() {
         <div style={{ marginBottom: 20 }}>{error}</div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button onClick={navigateMlScanner} style={{ padding: '10px 20px', backgroundColor: '#007AFF', color: 'white', border: 'none', borderRadius: 5 }}>Use ML Scanner</button>
-          <button onClick={navigateManualAdd} style={{ padding: '10px 20px', backgroundColor: '#34C759', color: 'white', border: 'none', borderRadius: 5 }}>Add Manually</button>
+          <button onClick={() => navigateManualAdd(isWishList)} style={{ padding: '10px 20px', backgroundColor: '#34C759', color: 'white', border: 'none', borderRadius: 5 }}>Add Manually</button>
         </div>
       </div>
     );
@@ -320,7 +333,7 @@ export default function FullScreenCameraScanner() {
       <div style={controlsStyle}>
         <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginBottom: 10 }}>
           <button onClick={navigateMlScanner} style={{ padding: '8px 16px', backgroundColor: 'rgba(0,122,255,0.8)', color: 'white', border: 'none', borderRadius: 5 }}>Use ML</button>
-          <button onClick={navigateManualAdd} style={{ padding: '8px 16px', backgroundColor: 'rgba(52,199,89,0.8)', color: 'white', border: 'none', borderRadius: 5 }}>Add Manually</button>
+          <button onClick={() => navigateManualAdd(isWishList)} style={{ padding: '8px 16px', backgroundColor: 'rgba(52,199,89,0.8)', color: 'white', border: 'none', borderRadius: 5 }}>Add Manually</button>
         </div>
         <div>
           {ean ? `Barcode: ${ean}` : (scanning ? 'Scanning for barcodes...' : 'Point your camera at a barcode')}
