@@ -1,5 +1,7 @@
 import os
 import traceback
+
+import requests
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 import datetime
@@ -33,7 +35,13 @@ import asyncio
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 import queue
 
+import atexit
+
 from transcription.transcript import init_whisper, transcribe
+
+from transcription import classifier
+
+from fastapi.middleware.cors import CORSMiddleware
 
 if os.getenv('RUNNING_IN_CONTAINER'):
     DATABASE_URL = "postgresql://postgres:postgres@postgres-db:5432/maindb"
@@ -174,78 +182,149 @@ app = FastAPI(lifespan=lifespan, debug=False)  # Set debug=False for production
 
 Instrumentator().instrument(app).expose(app)
 
-# Optimized logging setup
 
-# Create queue for async logging
-log_queue = queue.Queue()
+class SafeLokiHandler(LokiHandler):
+    """A Loki handler that fails gracefully when the server is unavailable"""
+    
+    def __init__(self, *args, **kwargs):
+        self.fallback_handler = logging.StreamHandler()
+        self.fallback_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        self.fallback_handler.setFormatter(formatter)
+        super().__init__(*args, **kwargs)
+    
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except (requests.exceptions.ConnectionError, 
+                requests.exceptions.Timeout,
+                requests.RequestException,
+                Exception):
+            # Silently fall back to console logging without raising exceptions
+            self.fallback_handler.emit(record)
 
-# Setup handlers
-loki_handler = LokiHandler(
-    url="http://192.168.1.13:3100/loki/api/v1/push",
-    tags={"application": "fastapi-backend-grocery-list"},
-    auth=None,
-    version="1"
+def setup_logging():
+    """Setup robust logging with Loki fallback"""
+    
+    # Create log queue for async processing
+    log_queue = queue.Queue()
+    
+    # Setup file handler
+    file_handler = RotatingFileHandler(
+        'server.log', 
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    
+    # Setup console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    
+    # Start with basic handlers
+    handlers = [file_handler, console_handler]
+    handler_description = "File+Console only"
+    
+    # Test Loki connection and add handler if available
+    try:
+        test_response = requests.get("http://192.168.1.13:3100/ready", timeout=2)
+        if test_response.status_code == 200:
+            loki_handler = SafeLokiHandler(
+                url="http://192.168.1.13:3100/loki/api/v1/push",
+                tags={"application": "grocery-list", "environment": "development"},
+                version="1",
+            )
+            handlers.append(loki_handler)
+            handler_description = "Loki+File+Console"
+            print("✓ Connected to Loki logging server")
+        else:
+            print("⚠ Loki server not ready, using fallback logging")
+    except Exception as e:
+        print(f"⚠ Could not connect to Loki server ({e}), using fallback logging")
+    
+    # Create queue listener with verified handlers
+    queue_listener = QueueListener(log_queue, *handlers, respect_handler_level=True)
+    
+    # Clear any existing handlers and setup new logger
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Setup application logger
+    logger = logging.getLogger("fastapi-logger")
+    logger.handlers.clear()
+    
+    queue_handler = QueueHandler(log_queue)
+    logger.addHandler(queue_handler)
+    logger.setLevel(logging.INFO)
+    
+    # Start queue listener
+    queue_listener.start()
+    
+    print(f"✓ Logging setup complete. Handlers: {len(handlers)} ({handler_description})")
+    
+    return queue_listener, logger
+
+# Initialize logging
+queue_listener, logger = setup_logging()
+
+
+def cleanup_logging():
+    if queue_listener:
+        queue_listener.stop()
+
+atexit.register(cleanup_logging)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Add both variations
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["*"]
 )
 
-file_handler = RotatingFileHandler(
-    'server.log', 
-    maxBytes=10*1024*1024,  # 10MB
-    backupCount=5
-)
-file_handler.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-
-# Create queue listener
-queue_listener = QueueListener(log_queue, file_handler, loki_handler, respect_handler_level=True)
-
-# Setup logger with queue handler
-logger = logging.getLogger("fastapi-logger")
-queue_handler = QueueHandler(log_queue)
-logger.addHandler(queue_handler)
-logger.setLevel(logging.INFO)
-
-# Start queue listener
-queue_listener.start()
-
+# Then add your custom middleware
 @app.middleware("http")
 async def optimized_middleware(request: Request, call_next):
-    # Only log important events, not every request
     if request.url.path == "/metrics":
         auth_header = request.headers.get("Authorization")
-
         if not auth_header or not auth_header.startswith("Bearer "):
             return PlainTextResponse("Unauthorized", status_code=401)
-
         token = auth_header.removeprefix("Bearer ").strip()
-
         if token != api_key:
             logger.warning("Unauthorized metrics access attempt")
             return PlainTextResponse("Unauthorized", status_code=401)
 
-    # Handle exceptions
     try:
         start_time = time.time()
         response = await call_next(request)
         process_time = time.time() - start_time
-        
-        # Log slow requests (>1 second) or errors
-        if process_time > 1.0 or (hasattr(response, 'status_code') and response.status_code >= 400):
-            logger.warning(f"Slow/Error request: {request.method} {request.url.path} - {process_time:.2f}s - Status: {getattr(response, 'status_code', 'unknown')}")
-        
+
+        if process_time > 1.0 or (hasattr(response, "status_code") and response.status_code >= 400):
+            logger.warning(
+                f"Slow/Error request: {request.method} {request.url.path} - {process_time:.2f}s - Status: {getattr(response, 'status_code', 'unknown')}"
+            )
+
         return response
+
     except Exception as e:
         logger.error(f"Unhandled exception on {request.method} {request.url.path}: {str(e)}")
         logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        
+
         return JSONResponse(
             status_code=500,
             content={
                 "detail": f"Internal server error: {str(e)}",
                 "path": str(request.url.path),
-                "method": request.method
-            }
+                "method": request.method,
+            },
         )
+
 
 # Cache for frequently accessed queries
 @lru_cache(maxsize=50)
@@ -795,19 +874,87 @@ async def create_upload_file(request: Request, image: UploadFile | None = None):
         raise HTTPException(status_code=500, detail="Failed to process image")
     
 @app.post("/transcribe")
-async def transcribe_endpoint(file: UploadFile = File(...)):
-
-##    if not file.content_type.startswith("audio/"):
-##        return {"error": "Invalid audio file"}
-
-    contents = await file.read()
-
-    with open(f"uploads/{file.filename}", "wb") as f:
-        f.write(contents)
+async def transcribe_endpoint(request: Request, file: UploadFile = File(...)):
+    try:
+        # Validate file type
+        if not file.content_type or not (
+            file.content_type.startswith("audio/") or 
+            file.content_type in ["video/webm", "application/octet-stream"]
+        ):
+            logger.warning(f"Invalid content type: {file.content_type}")
+            # Don't reject - some browsers send webm as application/octet-stream
         
-    transcribed_text = transcribe(file_path=f"uploads/{file.filename}", model=app.state.whisper)
+        # Ensure uploads directory exists
+        uploads_dir = "uploads"
+        os.makedirs(uploads_dir, exist_ok=True)
+        
+        # Read file contents
+        contents = await file.read()
+        logger.info(f"Received file: {file.filename}, size: {len(contents)} bytes, type: {file.content_type}")
+        
+        if len(contents) == 0:
+            raise HTTPException(status_code=400, detail="Empty file received")
+        
+        # Create safe filename
+        safe_filename = f"audio_{int(time.time() * 1000)}.webm"
+        file_path = os.path.join(uploads_dir, safe_filename)
+        
+        # Write file
+        with open(file_path, "wb") as f:
+            f.write(contents)
+        
+        logger.info(f"File saved to: {file_path}")
+        
+        # Check if whisper model is available
+        if not hasattr(request.app.state, 'whisper') or not request.app.state.whisper:
+            raise HTTPException(status_code=503, detail="Whisper model not available")
+        
+        # Transcribe
+        logger.info("Starting transcription...")
+        transcribed_text = transcribe(file_path=file_path, model=request.app.state.whisper)
+        logger.info(f"Transcription completed: {transcribed_text[:100]}...")
+        
+        #retrieve classes
+        async with request.app.state.pool.acquire() as con:
+            async with con.transaction():
+                query = "SELECT distinct(item_name) FROM item_list WHERE iswished = 'false'"
+                rows = await con.fetch(query)
+                classes = [r["item_name"] for r in rows]          
+                print(f"retrieved classes: {classes}")
+
+        class_retrieved = classifier.classify(input_text=transcribed_text, classes=classes)
+
+        
+        # Clean up file
+        try:
+            os.remove(file_path)
+            logger.debug(f"Cleaned up file: {file_path}")
+        except Exception as cleanup_error:
+            logger.warning(f"Failed to cleanup file {file_path}: {cleanup_error}")
+        
+        return {
+            "transcribed_text": transcribed_text, 
+            "class_retrieved": class_retrieved,
+            "size": len(contents),
+            "filename": safe_filename
+        }
     
-    return {"transcribed_text": transcribed_text, "size": len(contents)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Transcription error: {str(e)}")
+        logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        
+        # Clean up file if it exists
+        if 'file_path' in locals():
+            try:
+                os.remove(file_path)
+            except:
+                pass
+        
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+    
+    
     
 # Background task (if needed)
 async def food_name_classifier(sleep_interval=60*60):
@@ -832,5 +979,5 @@ if __name__ == "__main__":
         workers=1,
         loop="uvloop",
         http="httptools",
-        access_log=False,  # Disable access logging for better performance
+        access_log=True,  
     )

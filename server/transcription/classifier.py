@@ -1,102 +1,68 @@
+from typing import List, Union, Dict
+from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
 from langchain_ollama import ChatOllama
-from typing import Literal
 
-
-llm = ChatOllama(model="qwen3:1.7b")  
+llm = ChatOllama(model="qwen3:1.7b")
 
 class Classification(BaseModel):
-    category: Literal["milch", "apfel", "ball", "honig", "bananen", "birnen", "unknown"] = Field(
-        description="The exact category from the available classes that best matches the text"
-    )
-    confidence: float = Field(
-        description="Confidence score between 0.0 and 1.0",
-        ge=0.0,
-        le=1.0
-    )
+    category: str  # runtime-validated against injected classes
+    confidence: float = Field(ge=0.0, le=1.0)
 
-# More explicit prompt
-tagging_prompt = ChatPromptTemplate.from_template(
-    """
-You are a text classifier. Your job is to find which category from the available classes best matches the input text.
+PROMPT_TMPL = """
+Find the item in the text: "{input}"
 
-Available categories: {classes}
+Options: {classes}
 
-Input text: "{input}"
+Return EXACTLY one JSON object and nothing else, e.g.:
+{{"category":"milch","confidence":0.95}}
 
-Look for keywords in the input text that match the available categories. 
-If "milch" appears in the text, choose "milch".
-If "apfel" appears in the text, choose "apfel".
-And so on...
-
-If no clear match is found, use "unknown" and set confidence low.
-
-Return your classification with a confidence score.
+- "category" must be one of the options above. If none match, return "unknown".
+- "confidence" must be a float between 0.0 and 1.0.
 """
-)
 
-# Alternative: Even more explicit prompt
-explicit_prompt = ChatPromptTemplate.from_template(
-    """
-Find the food item mentioned in this text: "{input}"
+def _normalize_classes(classes: Union[str, List[str]]) -> List[str]:
+    if isinstance(classes, str):
+        cls = [c.strip() for c in classes.split(",") if c.strip()]
+    else:
+        cls = [str(c).strip() for c in classes if str(c).strip()]
+    if "unknown" not in cls:
+        cls.append("unknown")
+    return cls
 
-Choose EXACTLY ONE from these options: {classes}
+def classify(input_text: str, classes: Union[str, List[str]]) -> Dict[str, Union[str, float]]:
+    classes_list = _normalize_classes(classes)
+    classes_str = ", ".join(classes_list)
 
-Examples:
-- "ich will milch" → category: "milch"
-- "ich brauche äpfel" → category: "apfel" 
-- "kaufe bananen" → category: "bananen"
-
-Your response should identify which food item from the list appears in the input text.
-"""
-)
-
-def main_test():
-    # Try both approaches
+    prompt = ChatPromptTemplate.from_template(PROMPT_TMPL)
     structured_llm = llm.with_structured_output(Classification)
-    chain1 = tagging_prompt | structured_llm
-    chain2 = explicit_prompt | structured_llm
+    chain = prompt | structured_llm
 
-    inp = "ich will heute milch"
-    classes = "milch, apfel, ball, honig, bananen, birnen"
+    # If your client is async, replace with: result = await chain.invoke({...})
+    result = chain.invoke({"input": input_text, "classes": classes_str})
+    out = result.model_dump()
 
-    print("=== Approach 1: Detailed instructions ===")
+    # Defensive parsing/validation
+    cat = out.get("category")
     try:
-        response1 = chain1.invoke({"input": inp, "classes": classes})
-        print("Result:", response1.model_dump())
-    except Exception as e:
-        print("Error:", e)
+        conf = float(out.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        conf = 0.0
 
-    print("\n=== Approach 2: Simple examples ===")
+    if cat not in classes_list:
+        cat = "unknown"
+        conf = min(conf, 0.2)
+
+    conf = max(0.0, min(1.0, conf))
+
+    # Final validation through pydantic to ensure types/limits
     try:
-        response2 = chain2.invoke({"input": inp, "classes": classes})
-        print("Result:", response2.model_dump())
-    except Exception as e:
-        print("Error:", e)
+        validated = Classification(category=cat, confidence=conf)
+    except ValidationError:
+        # fallback safe value
+        validated = Classification(category="unknown", confidence=0.0)
 
-    # Test with more examples
-    test_cases = [
-        "ich will heute milch",
-        "brauche äpfel für kuchen", 
-        "honig ist lecker",
-        "der ball ist rot"  # non-food item to test
-    ]
-
-    print("\n=== Testing multiple inputs ===")
-    for test_input in test_cases:
-        try:
-            result = chain2.invoke({"input": test_input, "classes": classes})
-            print(f"Input: '{test_input}' → {result.model_dump()}")
-        except Exception as e:
-            print(f"Input: '{test_input}' → Error: {e}")
-
-def classifiy(input, classes):
-    structured_llm = llm.with_structured_output(Classification)
-    #chain = tagging_prompt | structured_llm
-    chain = explicit_prompt | structured_llm
-    
-    result = chain.invoke({"input": input, "classes": classes})
-    return result.model_dump()
-
-main_test()
+    # Guarantee category is one of the injected set (or "unknown")
+    if validated.category not in classes_list:
+        return {"category": "unknown", "confidence": 0.0}
+    return {"category": validated.category, "confidence": validated.confidence}

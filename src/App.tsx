@@ -1,6 +1,6 @@
 import './App.css';
 import Container from './comp/Container';
-import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import ErrorContainer from './comp/ErrorContainer';
 import DropdownComp from './comp/Dropdown';
 import { useNavigate } from 'react-router-dom';
@@ -30,6 +30,12 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [SidebarIsOpen, setSidebarIsOpen] = useState(false)
 
+  // Updated audio recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+
   const navigateScanner = useCallback((clickedNode: Props | null, count: number | null) => {
 
     if(!count){
@@ -42,6 +48,126 @@ function App() {
       usenav(`/scanner?text=&count=${encodeURIComponent(count)}`);
     }
   }, [usenav]);
+
+  // Improved audio recording functions
+  const startRecording = async (): Promise<void> => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000, // Whisper prefers 16kHz
+        } 
+      });
+      
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus' 
+        : 'audio/webm';
+      
+      mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
+      
+      recordedChunksRef.current = [];
+
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorderRef.current.onstop = () => {
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorderRef.current.start(1000); // Collect data every second
+      setIsRecording(true);
+      console.log("Recording started...");
+      
+    } catch (error) {
+      console.error("Failed to start recording:", error);
+      setError("Failed to access microphone. Please check permissions.");
+    }
+  };
+
+  const stopRecording = (): Promise<Blob> => {
+    return new Promise((resolve) => {
+      if (!mediaRecorderRef.current) {
+        resolve(new Blob());
+        return;
+      }
+
+      mediaRecorderRef.current.onstop = () => {
+        const audioBlob = new Blob(recordedChunksRef.current, { 
+          type: "audio/webm" 
+        });
+        setIsRecording(false);
+        resolve(audioBlob);
+      };
+
+      mediaRecorderRef.current.stop();
+    });
+  };
+
+  const uploadAudio = async (blob: Blob, filename = "recording.webm"): Promise<any> => {
+    const file = new File([blob], filename, { type: blob.type });
+    const formData = new FormData();
+    formData.append("file", file);
+
+    console.log(`Uploading file: ${filename}, size: ${blob.size} bytes, type: ${blob.type}`);
+
+    const response = await fetch("http://localhost:3030/transcribe", {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Upload failed: ${response.status} - ${errorText}`);
+    }
+    
+    return response.json();
+  };
+
+  const handleRecording = async () => {
+    try {
+      setError(null); // Clear any previous errors
+      
+      if (!isRecording) {
+        // Start recording
+        await startRecording();
+      } else {
+        // Stop recording and upload
+        console.log("Stopping recording...");
+        const blob = await stopRecording();
+        
+        if (blob.size === 0) {
+          setError("No audio data recorded");
+          return;
+        }
+        
+        console.log("Recording stopped, uploading...");
+        setIsLoading(true);
+        
+        const result = await uploadAudio(blob);
+        console.log("Transcription result:", result);
+        
+        setTranscriptionResult(result.transcribed_text);
+        
+        // Auto-clear transcription result after 10 seconds
+        setTimeout(() => setTranscriptionResult(null), 10000);
+      }
+    } catch (error) {
+      console.error("Recording/transcription error:", error);
+      setError(error instanceof Error ? error.message : "Recording failed");
+      setIsRecording(false);
+      
+      // Stop any ongoing recording on error
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const increaseItemCount = useCallback(async (clickedNode: Props) => {
       if(clickedNode.text){
@@ -78,8 +204,7 @@ function App() {
       await fetch(
         `/api/add_ean_to_list/?item_name=${encodeURIComponent(
           clickedNode.text
-        )}&count=-1
-        &wish_list=true`
+        )}&count=-1&wish_list=true`
       );
   
       let shouldReload = false;
@@ -107,8 +232,6 @@ function App() {
     }
   }, []);
 
-
-
   const fetchItems = useCallback(async (subgroups: string | null, classnames: string | null) => {
     setIsLoading(true);
     setError(null);
@@ -125,11 +248,11 @@ function App() {
       
 
       interface ApiResponse {
-        item_list: [string, string, string, string, number, string][];  // or whatever the actual structure is
+        item_list: [string, string, string, string, number, string][];
       }
 
       interface RawItem {
-        0: string;  // assuming first element
+        0: string;  // ean
         1: string;  // text
         2: string; // subgroups
         3: string;  // classname
@@ -137,7 +260,6 @@ function App() {
         5: string; // timestamps
       }
 
-      // Then use them:
       if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
       const responseData: ApiResponse = await response.json();
 
@@ -191,7 +313,6 @@ function App() {
     }
   }, []);
 
-
   const containerComponents = useMemo(() => {
     return data.map((element, idx) => (
       <Container
@@ -207,7 +328,6 @@ function App() {
       />
     ));
   }, [data, increaseItemCount, decreaseItemCount]);
-
 
   useEffect(() => {
     const loadInitialData = async () => {
@@ -241,8 +361,17 @@ function App() {
     loadInitialData();
   }, [fetchClassnames, fetchItems, fetchSubgroups]); 
 
+  // Cleanup effect for media recorder
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
+
   if (isLoading && data.length === 0) {
-    return <div className="flex justify-center items-center min-h-screen"></div>;
+    return <div className="flex justify-center items-center min-h-screen">Loading...</div>;
   }
 
   return (
@@ -266,7 +395,6 @@ function App() {
               <Bars3Icon className="h-6 w-6 text-white" />
               }
         </div>
-
 
           <div className="flex items-center gap-4 mb-4 ml-4">
             <div>
@@ -293,7 +421,33 @@ function App() {
               <StyledButton text='+' onClick={() => navigateScanner(null, 1)} className='mx-2' />
               <StyledButton text='-' onClick={() => navigateScanner(null, -1)} className='mx-2' />
             </div>
-            {isLoading && <div className="text-sm text-gray-500"></div>}
+            <div className="flex flex-col gap-2">
+              <button 
+                onClick={handleRecording}
+                disabled={isLoading}
+                className={`px-4 py-2 rounded text-white font-medium transition-colors ${
+                  isRecording 
+                    ? 'bg-red-500 hover:bg-red-600 animate-pulse' 
+                    : 'bg-blue-500 hover:bg-blue-600'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {isLoading 
+                  ? 'Processing...' 
+                  : isRecording 
+                    ? 'Stop' 
+                    : 'Record'
+                }
+              </button>
+              
+              {transcriptionResult && (
+                <div className="max-w-xs p-2 bg-green-100 border border-green-300 rounded text-sm">
+                  <p className="font-semibold text-green-800">Transcribed:</p>
+                  <p className="text-green-700">{transcriptionResult}</p>
+                </div>
+              )}
+            </div>
+            
+            {isLoading && <div className="text-sm text-gray-500">Loading...</div>}
           </div>
 
           {containerComponents}
