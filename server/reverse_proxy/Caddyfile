@@ -1,0 +1,17 @@
+# Caddyfile
+:443 {
+    # Serve /transcribe over HTTPS, proxy to local FastAPI
+    handle_path /transcribe* {
+        reverse_proxy 127.0.0.1:3030
+    }
+
+    # Optional: serve a static page for testing
+    handle {
+        respond "Use /transcribe for HTTPS"
+    }
+}
+
+# HTTP endpoints on port 8080
+http://:8080 {
+    reverse_proxy 127.0.0.1:3030
+}

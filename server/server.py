@@ -1,6 +1,8 @@
 import os
+from pathlib import Path
 import traceback
 
+import httpx
 import requests
 os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
@@ -13,7 +15,7 @@ from fastapi import FastAPI, File, Query, Request, UploadFile, HTTPException
 import torch
 import uvicorn
 
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger  # noqa: F401
@@ -55,6 +57,8 @@ api_key = "one-rgs iodesftheontisissihdebeten thncstthinciree wholeswedissh-ek-"
 scheduler = AsyncIOScheduler()
 
 device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+
+
 
 async def init_database(pool):
     """Initialize database schema if it doesn't exist - async version"""
@@ -279,9 +283,27 @@ def cleanup_logging():
 atexit.register(cleanup_logging)
 
 
+BACKEND_URL = "http://192.168.1.165:3030"
+
+@app.api_route("/transcribe/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy(request: Request, path: str):
+    client = httpx.AsyncClient()
+    url = f"{BACKEND_URL}/{path}"
+    
+    # forward the request
+    req_headers = dict(request.headers)
+    body = await request.body()
+    resp = await client.request(
+        request.method, url, headers=req_headers, content=body, timeout=None
+    )
+    
+    # stream response back to client
+    return StreamingResponse(resp.aiter_raw(), status_code=resp.status_code, headers=resp.headers)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Add both variations
+    #allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Add both variations
+    allow_origins="*",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -872,7 +894,15 @@ async def create_upload_file(request: Request, image: UploadFile | None = None):
     except Exception as e:
         logger.error(f"Error processing image: {e}")
         raise HTTPException(status_code=500, detail="Failed to process image")
-    
+
+def purge_folder(folder_rel: str):
+    folder = Path(folder_rel)
+    for p in folder.iterdir():
+        if p.is_symlink():
+            continue
+        if p.is_file():
+            p.unlink()
+            
 @app.post("/transcribe")
 async def transcribe_endpoint(request: Request, file: UploadFile = File(...)):
     try:
@@ -920,7 +950,7 @@ async def transcribe_endpoint(request: Request, file: UploadFile = File(...)):
                 query = "SELECT distinct(item_name) FROM item_list WHERE iswished = 'false'"
                 rows = await con.fetch(query)
                 classes = [r["item_name"] for r in rows]          
-                print(f"retrieved classes: {classes}")
+                #print(f"retrieved classes: {classes}")
 
         class_retrieved = classifier.classify(input_text=transcribed_text, classes=classes)
 
@@ -928,6 +958,7 @@ async def transcribe_endpoint(request: Request, file: UploadFile = File(...)):
         # Clean up file
         try:
             os.remove(file_path)
+            purge_folder("uploads")
             logger.debug(f"Cleaned up file: {file_path}")
         except Exception as cleanup_error:
             logger.warning(f"Failed to cleanup file {file_path}: {cleanup_error}")
@@ -980,4 +1011,6 @@ if __name__ == "__main__":
         loop="uvloop",
         http="httptools",
         access_log=True,  
+        ssl_certfile="server/certs/grocery-list.pem",
+        ssl_keyfile="server/certs/grocery-list-key.pem"
     )

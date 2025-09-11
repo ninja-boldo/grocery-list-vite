@@ -114,7 +114,7 @@ function App() {
 
     console.log(`Uploading file: ${filename}, size: ${blob.size} bytes, type: ${blob.type}`);
 
-    const response = await fetch("http://localhost:3030/transcribe", {
+    const response = await fetch("https://192.168.1.165:3030/transcribe", {
       method: "POST",
       body: formData,
     });
