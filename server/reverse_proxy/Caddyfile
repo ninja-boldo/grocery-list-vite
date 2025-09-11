@@ -5,7 +5,7 @@
         reverse_proxy 127.0.0.1:3030
     }
 
-    # Optional: serve a static page for testing
+
     handle {
         respond "Use /transcribe for HTTPS"
     }

@@ -1010,7 +1010,5 @@ if __name__ == "__main__":
         workers=1,
         loop="uvloop",
         http="httptools",
-        access_log=True,  
-        ssl_certfile="server/certs/grocery-list.pem",
-        ssl_keyfile="server/certs/grocery-list-key.pem"
+        access_log=True
     )

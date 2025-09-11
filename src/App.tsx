@@ -15,7 +15,7 @@ interface Props {
   style?: string;
   count: number;
   classname: string | null;
-  perish_dates: string | null;
+  perish_dates: string[] | null;
   onClickIncrease: (clickedNode: Props) => void; 
   onClickDecrease: (clickedNode: Props) => void; 
 }
@@ -107,14 +107,14 @@ function App() {
     });
   };
 
-  const uploadAudio = async (blob: Blob, filename = "recording.webm"): Promise<any> => {
+  const uploadAudio = async (blob: Blob, filename = "recording.webm"): Promise<unknown> => {
     const file = new File([blob], filename, { type: blob.type });
     const formData = new FormData();
     formData.append("file", file);
 
     console.log(`Uploading file: ${filename}, size: ${blob.size} bytes, type: ${blob.type}`);
 
-    const response = await fetch("https://192.168.1.165:3030/transcribe", {
+    const response = await fetch("api/transcribe", {
       method: "POST",
       body: formData,
     });
@@ -150,7 +150,7 @@ function App() {
         const result = await uploadAudio(blob);
         console.log("Transcription result:", result);
         
-        setTranscriptionResult(result.transcribed_text);
+        setTranscriptionResult((result as { transcribed_text: string }).transcribed_text);
         
         // Auto-clear transcription result after 10 seconds
         setTimeout(() => setTranscriptionResult(null), 10000);
@@ -248,7 +248,7 @@ function App() {
       
 
       interface ApiResponse {
-        item_list: [string, string, string, string, number, string][];
+        item_list: [string, string, string, string, number, string[]][];
       }
 
       interface RawItem {
@@ -257,7 +257,7 @@ function App() {
         2: string; // subgroups
         3: string;  // classname
         4: number;  // count
-        5: string; // timestamps
+        5: string[]; // timestamps
       }
 
       if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
@@ -273,6 +273,7 @@ function App() {
         onClickIncrease: increaseItemCount,
         onClickDecrease: decreaseItemCount
       }));
+      console.log("element.perish_dates: " + temp_data[0].perish_dates)
 
       setData(temp_data);
     } 
