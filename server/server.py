@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
+import shlex
 import traceback
+import urllib
 
 import httpx
 import requests
@@ -60,11 +62,63 @@ device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
 
 
 
-async def init_database(pool):
-    """Initialize database schema if it doesn't exist - async version"""
+
+
+def _parse_db_url(db_url: str):
+    # returns (user, host, port, dbname, env) where env may include PGPASSWORD
+    p = urllib.parse.urlparse(db_url)
+    user = urllib.parse.unquote(p.username) if p.username else None
+    password = urllib.parse.unquote(p.password) if p.password else None
+    host = p.hostname
+    port = str(p.port) if p.port else None
+    dbname = p.path.lstrip("/") if p.path else None
+    env = dict(os.environ)
+    if password:
+        env["PGPASSWORD"] = password
+    return user, host, port, dbname, env
+
+async def _run_psql_command(cmd_args: list[str], env: Optional[dict] = None):
+    proc = await asyncio.create_subprocess_exec(
+        *cmd_args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    out, err = await proc.communicate()
+    return proc.returncode, out.decode(errors="ignore"), err.decode(errors="ignore")
+
+async def _psql_restore_file(dump_path: str, dbname: str, user: str, host: Optional[str], port: Optional[str], env: dict):
+    cmd = ["psql", "-U", user, "-d", dbname, "-f", dump_path]
+    if host:
+        cmd[1:1] = ["-h", host]
+    if port:
+        cmd[1:1] = ["-p", str(port)]
+    logger.info("Restoring SQL dump via psql: %s", dump_path)
+    return await _run_psql_command(cmd, env=env)
+
+async def _psql_copy_csv(csv_path: str, dbname: str, user: str, host: Optional[str], port: Optional[str], env: dict):
+    copy_cmd = (
+        r"\copy food(code,product_name,quantity,packaging,brands_en,categories,ingredients_text,energy_kcal_100g) "
+        f"FROM {shlex.quote(csv_path)} WITH (FORMAT csv, HEADER true)"
+    )
+    cmd = ["psql", "-U", user, "-d", dbname, "-c", copy_cmd]
+    if host:
+        cmd[1:1] = ["-h", host]
+    if port:
+        cmd[1:1] = ["-p", str(port)]
+    logger.info("Loading CSV via psql \\copy: %s", csv_path)
+    return await _run_psql_command(cmd, env=env)
+
+async def init_database(pool, dump_path: str = os.environ.get("PG_DUMP", "maindb.sql"), csv_path: str = CSV_FILE):
+    """
+    Initialize DB schema, attempt to restore dump_path (plain SQL) if present, then
+    ensure 'food' has rows — fall back to csv_path via psql \\copy if still empty.
+    """
+    user, host, port, dbname, env = _parse_db_url(DATABASE_URL)
+
     try:
+        # Ensure DDL exists and indexes
         async with pool.acquire() as con:
-            # Create food table
             await con.execute("""
                 CREATE TABLE IF NOT EXISTS food (
                     code TEXT,
@@ -77,8 +131,6 @@ async def init_database(pool):
                     energy_kcal_100g TEXT
                 );
             """)
-            
-            # Create item_list table with proper columns
             await con.execute("""
                 CREATE TABLE IF NOT EXISTS item_list (
                     id SERIAL PRIMARY KEY,
@@ -91,49 +143,78 @@ async def init_database(pool):
                     timestamps JSONB DEFAULT '[]'::jsonb
                 );
             """)
-            
-            # Add timestamps column if it doesn't exist (for existing databases)
-            try:
-                await con.execute("ALTER TABLE item_list ADD COLUMN IF NOT EXISTS timestamps JSONB DEFAULT '[]'::jsonb;")
-            except Exception:
-                pass 
-            
-            # Add indexes for performance
-            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_subgroups ON item_list(subgroups);")
-            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_class ON item_list(class);")
-            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_ean ON item_list(ean);")
-            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_item_name ON item_list(item_name);")
-            await con.execute("CREATE INDEX IF NOT EXISTS idx_item_list_subgroups_class ON item_list(subgroups, class);")
-            await con.execute("CREATE INDEX IF NOT EXISTS idx_food_code ON food(code);")
-            await con.execute("CREATE INDEX IF NOT EXISTS idx_food_product_name ON food(product_name);")
+            await con.execute("ALTER TABLE item_list ADD COLUMN IF NOT EXISTS timestamps JSONB DEFAULT '[]'::jsonb;")
+            idxs = [
+                ("idx_item_list_subgroups", "item_list(subgroups)"),
+                ("idx_item_list_class", "item_list(class)"),
+                ("idx_item_list_ean", "item_list(ean)"),
+                ("idx_item_list_item_name", "item_list(item_name)"),
+                ("idx_item_list_subgroups_class", "item_list(subgroups, class)"),
+                ("idx_food_code", "food(code)"),
+                ("idx_food_product_name", "food(product_name)"),
+            ]
+            for name, target in idxs:
+                await con.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target};")
 
-            count = await con.fetchval("SELECT COUNT(*) FROM food;")
-            
-            if count == 0 and os.path.exists(CSV_FILE):
-                # Use COPY for bulk insert - more efficient than individual inserts
-                with open(CSV_FILE, 'r', encoding='utf-8') as f:
-                    await con.copy_from_table(
-                        'food', 
-                        source=f,
-                        columns=['code', 'product_name', 'quantity', 'packaging', 'brands_en', 
-                                'categories', 'ingredients_text', 'energy_kcal_100g'],
-                        format='csv',
-                        header=True,
-                        delimiter=','
-                    )
-                logging.getLogger("fastapi-logger").info(f"Loaded data from {CSV_FILE}")
-            
-            count = await con.fetchval("SELECT COUNT(*) FROM food;")
-            print(f"Food table has {count} entries")
-            
-            # List tables
-            tables = await con.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public';")
-            logging.getLogger("fastapi-logger").info(f"Available tables: {[t['tablename'] for t in tables]}")
+            # initial count
+            exists = await con.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename=$1)",
+                "food"
+            )
+            count = 0
+            if exists:
+                count = await con.fetchval("SELECT COUNT(*) FROM food;")
+            logger.info("Initial food row count: %s", count)
 
-        logging.getLogger("fastapi-logger").info("Database schema initialized successfully")
-    except Exception as e:
-        logging.getLogger("fastapi-logger").error(f"Failed to initialize database schema: {e}")
-        # Don't raise - continue without CSV data if needed
+        # If dump exists and table empty, restore dump (psql)
+        if os.path.exists(dump_path) and count == 0:
+            logger.info("Found dump file at %s — attempting restore", dump_path)
+            rc, out, err = await _psql_restore_file(dump_path, dbname, user, host, port, env)
+            if rc != 0:
+                logger.error("psql restore failed (rc=%s): %s", rc, err.strip())
+            else:
+                logger.info("psql restore succeeded.")
+        else:
+            logger.info("Dump file not found at %s", dump_path)
+
+        # Re-check count
+        async with pool.acquire() as con:
+            exists_after = await con.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename=$1)",
+                "food"
+            )
+            count_after = 0
+            if exists_after:
+                count_after = await con.fetchval("SELECT COUNT(*) FROM food;")
+            logger.info("Food count after restore attempt: %s", count_after)
+
+        # If still empty and CSV exists, load CSV via psql \copy
+        if count_after == 0 and os.path.exists(csv_path):
+            logger.info("Food empty after restore — attempting CSV fallback: %s", csv_path)
+            rc, out, err = await _psql_copy_csv(csv_path, dbname, user, host, port, env)
+            if rc != 0:
+                logger.error("psql \\copy failed (rc=%s): %s", rc, err.strip())
+            else:
+                logger.info("CSV \\copy completed successfully.")
+        elif count_after == 0:
+            logger.warning("Food table empty and no CSV available at %s", csv_path)
+
+        # final status
+        async with pool.acquire() as con:
+            final_exists = await con.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_tables WHERE schemaname='public' AND tablename=$1)",
+                "food"
+            )
+            final_count = 0
+            if final_exists:
+                final_count = await con.fetchval("SELECT COUNT(*) FROM food;")
+            tables = await con.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public';")
+            logger.info("Final food count: %s", final_count)
+            logger.info("Available tables: %s", [t["tablename"] for t in tables])
+
+    except Exception:
+        logger.exception("Failed to initialize database schema")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -624,7 +705,7 @@ async def add_ean_manual(
     operation_id = f"{int(time.time() * 1000)}"  # Unique operation ID for tracking
     
     logger.info(f"[{operation_id}] Starting add_ean_manual with params: ean={ean}, item_name={item_name}, count={count}, subgroups={subgroups}, is_wish_list={is_wish_list}")
-    print(f"[{operation_id}] Starting add_ean_manual with params: ean={ean}, item_name={item_name}, count={count}, subgroups={subgroups}, is_wish_list={is_wish_list}")
+    #print(f"[{operation_id}] Starting add_ean_manual with params: ean={ean}, item_name={item_name}, count={count}, subgroups={subgroups}, is_wish_list={is_wish_list}")
     
     try:
         # Input validation and sanitization
@@ -953,6 +1034,18 @@ async def transcribe_endpoint(request: Request, file: UploadFile = File(...)):
                 #print(f"retrieved classes: {classes}")
 
         class_retrieved = classifier.classify(input_text=transcribed_text, classes=classes)
+
+        
+        #checkout the retrieved item
+        async with request.app.state.pool.acquire() as con:
+            async with con.transaction():
+                await con.execute(
+                        "UPDATE item_list SET count = count - 1 WHERE item_name = $1;",
+                        class_retrieved
+                    )
+                await con.execute("""
+                                  delete from item_list where count <= 0
+                                  """)
 
         
         # Clean up file

@@ -16,8 +16,8 @@ interface Props {
   count: number;
   classname: string | null;
   perish_dates: string[] | null;
-  onClickIncrease: (clickedNode: Props) => void; 
-  onClickDecrease: (clickedNode: Props) => void; 
+  onClickIncrease: (clickedNode: Props) => Promise<void>; 
+  onClickDecrease: (clickedNode: Props) => Promise<void>; 
 }
 
 function App() {

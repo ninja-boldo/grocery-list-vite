@@ -14,9 +14,9 @@ interface Props {
   style?: string;
   count: number;
   classname: string | null;
-  perish_dates: string | null;
-  onClickIncrease: (clickedNode: Props) => void; 
-  onClickDecrease: (clickedNode: Props) => void; 
+  perish_dates: string[] | null;
+  onClickIncrease: (clickedNode: Props) => Promise<void>; 
+  onClickDecrease: (clickedNode: Props) => Promise<void>; 
 }
 
 function WishList() {
@@ -117,7 +117,7 @@ function WishList() {
       
 
       interface ApiResponse {
-        item_list: [string, string, string, string, number, string][];  // or whatever the actual structure is
+        item_list: [string, string, string, string, number, string[]][];  // or whatever the actual structure is
       }
 
       interface RawItem {
@@ -126,7 +126,7 @@ function WishList() {
         2: string; // subgroups
         3: string;  // classname
         4: number;  // count
-        5: string; // timestamps
+        5: string[]; // timestamps
       }
 
       // Then use them:

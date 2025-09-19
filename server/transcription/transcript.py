@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 import sys
-import os
 import uuid
 from pathlib import Path
-import subprocess
 
 # optional: import torch only to check CUDA/MPS availability
 try:
@@ -32,7 +30,7 @@ def get_device(prefer_gpu=True):
 # -------------------------------
 # Whisper model initialization
 # -------------------------------
-def init_whisper(model_name="large-v3", device=None):
+def init_whisper(model_name="distil-large-v3", device=None):
 
     whisper_models = [
         "tiny", "tiny.en", "base", "base.en", "small", "small.en",
@@ -146,13 +144,17 @@ def main(argv):
     while i < len(argv):
         a = argv[i]
         if a == "--model" and i+1 < len(argv):
-            model_name = argv[i+1]; i += 2
+            model_name = argv[i+1]
+            i += 2
         elif a == "--device" and i+1 < len(argv):
-            device_arg = argv[i+1]; i += 2
+            device_arg = argv[i+1]
+            i += 2
         elif a == "--lang" and i+1 < len(argv):
-            lang = argv[i+1]; i += 2
+            lang = argv[i+1]
+            i += 2
         elif a == "--beam" and i+1 < len(argv):
-            beam = int(argv[i+1]); i += 2
+            beam = int(argv[i+1])
+            i += 2
         else:
             print(f"Unknown/invalid arg: {a}")
             return 2
