@@ -46,3 +46,4 @@ tmp_pack_QoeAVX
 *.csv
 *.parquet
 *.m4a
+*.sql
