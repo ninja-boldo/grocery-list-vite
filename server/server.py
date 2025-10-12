@@ -14,7 +14,6 @@ import shutil
 from typing import Optional, Union
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, Query, Request, UploadFile, HTTPException
-import torch
 import uvicorn
 
 from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
@@ -34,6 +33,7 @@ from logging_loki import LokiHandler
 import asyncpg
 from functools import lru_cache
 import asyncio
+import torch
 
 
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
@@ -1033,8 +1033,8 @@ async def transcribe_endpoint(request: Request, file: UploadFile = File(...)):
                 classes = [r["item_name"] for r in rows]          
                 #print(f"retrieved classes: {classes}")
 
-        class_retrieved = classifier.classify(input_text=transcribed_text, classes=classes)
-
+        classified = classifier.classify(input_text=transcribed_text, classes=classes)
+        class_retrieved = classified["category"]
         
         #checkout the retrieved item
         async with request.app.state.pool.acquire() as con:

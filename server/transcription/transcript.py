@@ -30,12 +30,12 @@ def get_device(prefer_gpu=True):
 # -------------------------------
 # Whisper model initialization
 # -------------------------------
-def init_whisper(model_name="distil-large-v3", device=None):
+def init_whisper(model_name="large-v3-turbo", device=None):
 
     whisper_models = [
         "tiny", "tiny.en", "base", "base.en", "small", "small.en",
         "medium", "medium.en", "large", "large-v1", "large-v2",
-        "large-v3", "distil-small-v2", "distil-large-v3"
+        "large-v3", "distil-small-v2", "distil-large-v3", "large-v3-turbo"
     ]
     if model_name not in whisper_models:
         raise ValueError(f"Model {model_name} not available. Choose from: {whisper_models}")

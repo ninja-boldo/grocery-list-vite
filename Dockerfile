@@ -5,9 +5,8 @@ FROM python:3.11-slim-bookworm AS base
 
 # updating and installing python
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \
+RUN apt-get update \
     curl git build-essential python3 python3-pip python3-venv sudo file locales
-
 
 # Set locale
 RUN locale-gen en_US.UTF-8
@@ -15,42 +14,27 @@ ENV LANG=en_US.UTF-8
 ENV LANGUAGE=en_US:en
 ENV LC_ALL=en_US.UTF-8
 
-
 # Install Node.js
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     node --version && npm --version
 
-
-
 RUN node --version && npm --version && which npm
-
-
 
 
 WORKDIR /app
 
 
-
-
 COPY grocery-list2/package*.json ./
-
-
 
 # Install npm dependencies
 RUN npm install
 
-
-
 # Copy the project files
 COPY grocery-list2/ .
 
-
-
 #install yarn
 RUN npm install --global yarn
-
-
 
 # Clear cache and reinstall to fix rollup issue
 RUN rm -rf node_modules package-lock.json && \
@@ -58,11 +42,7 @@ RUN rm -rf node_modules package-lock.json && \
     npm install || (echo "npm install failed" && exit 1) && \
     npm run build || (echo "npm build failed" && exit 1)
 
-
-
 RUN pip install uv
-
-
 
 # Install Python dependencies with automatic version fixing
 RUN pip install --upgrade pip && \
@@ -79,7 +59,6 @@ RUN pip install --upgrade pip && \
          requirements.txt > requirements_fixed.txt && \
      echo "Fixed requirements.txt -> requirements_fixed.txt" && \
      uv pip install --system -r requirements_fixed.txt --no-cache-dir)
-
 
 # Expose ports
 EXPOSE 3030 4040 5000

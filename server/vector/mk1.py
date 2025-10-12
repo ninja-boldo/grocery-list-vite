@@ -1,163 +1,238 @@
+import ollama
 from pymilvus import MilvusClient
-from sentence_transformers import SentenceTransformer
+from typing import List, Dict, Any
 
-client = MilvusClient("milvus_demo.db")
-
-docs = [
-    # History
-    "The Roman Empire reached its greatest territorial extent under Emperor Trajan in 117 AD.",
-    "The Great Fire of London destroyed large parts of the city in 1666.",
-    "Cleopatra VII was the last active ruler of the Ptolemaic Kingdom of Egypt.",
-    "World War II ended in 1945 with the surrender of Germany and Japan.",
-    "The Berlin Wall fell in 1989, marking the end of the Cold War.",
-    "The French Revolution began in 1789 and overthrew the monarchy.",
-    "The American Civil War lasted from 1861 to 1865.",
-    "Genghis Khan founded the Mongol Empire in the 13th century.",
-    "The Declaration of Independence was signed in 1776.",
-    "The Renaissance was a cultural movement that began in Italy in the 14th century.",
-
-    # Astronomy
-    "The Milky Way is a barred spiral galaxy containing our Solar System.",
-    "Black holes are regions of spacetime where gravity is so strong that nothing can escape.",
-    "Jupiter has at least 79 known moons, the largest being Ganymede.",
-    "Saturn is famous for its system of rings composed of ice and rock.",
-    "A supernova occurs when a massive star explodes at the end of its life cycle.",
-    "The Andromeda Galaxy is the closest spiral galaxy to the Milky Way.",
-    "Mars is known as the Red Planet because of iron oxide on its surface.",
-    "The Sun is a G-type main-sequence star located at the center of our Solar System.",
-    "Neutron stars are incredibly dense remnants of supernova explosions.",
-    "The Hubble Space Telescope was launched in 1990 and still operates today.",
-
-    # Computer Science
-    "Python is a high-level programming language known for its readability.",
-    "The C programming language was developed by Dennis Ritchie in the 1970s.",
-    "A binary search algorithm finds the position of a target value within a sorted array.",
-    "JavaScript is widely used for web development.",
-    "Databases can be relational or non-relational.",
-    "Machine learning is a subset of artificial intelligence.",
-    "Sorting algorithms include quicksort, mergesort, and bubble sort.",
-    "Operating systems manage hardware and software resources.",  # This should match!
-    "Git is a version control system created by Linus Torvalds.",
-    "Big O notation describes algorithmic complexity.",
-
-    # Sports
-    "Lionel Messi has won the Ballon d'Or multiple times.",
-    "The Olympic Games are held every four years.",
-    "Tennis is played either as singles or doubles.",
-    "Basketball was invented by James Naismith in 1891.",
-    "The FIFA World Cup is the most watched sporting event globally.",
-    "Michael Jordan is considered one of the greatest basketball players of all time.",
-    "The Tour de France is a famous cycling competition.",
-    "Cricket is especially popular in India, England, and Australia.",
-    "Baseball is known as America's pastime.",
-    "The Super Bowl is the championship game of the NFL.",
-
-    # Music
-    "The Beatles were an English rock band formed in Liverpool in 1960.",
-    "Classical music often features orchestras with strings, woodwinds, brass, and percussion.",
-    "Hip hop originated in the Bronx, New York City, during the 1970s.",
-    "Jazz developed in the early 20th century in the United States.",
-    "Beethoven composed nine symphonies.",
-    "Elvis Presley was called the King of Rock and Roll.",
-    "Reggae originated in Jamaica in the late 1960s.",
-    "K-pop is a popular music genre from South Korea.",
-    "The violin is a common instrument in classical and folk music.",
-    "Electronic dance music is often played at festivals and clubs.",
-
-    # Geography
-    "Mount Everest is the highest mountain on Earth.",
-    "The Amazon River is the second longest river in the world.",
-    "The Sahara is the largest hot desert on the planet.",
-    "Tokyo is the most populous metropolitan area in the world.",
-    "Antarctica is the coldest continent.",
-    "The Nile River flows through northeastern Africa.",
-    "Greenland is the world's largest island.",
-    "The Great Barrier Reef is located off the coast of Australia.",
-    "The Alps are a mountain range in Europe.",
-    "The Pacific Ocean is the largest ocean on Earth.",
-
-    # Biology
-    "DNA carries genetic information in living organisms.",
-    "Photosynthesis is the process by which plants produce energy.",
-    "The human brain contains around 86 billion neurons.",
-    "Mitochondria are known as the powerhouses of the cell.",
-    "Charles Darwin proposed the theory of natural selection.",
-    "The circulatory system transports blood and nutrients.",
-    "Ants are social insects that live in colonies.",
-    "The human skeleton has 206 bones.",
-    "Viruses require a host cell to reproduce.",
-    "Proteins are made of chains of amino acids.",
-
-    # Literature
-    "William Shakespeare wrote Romeo and Juliet.",
-    "George Orwell is the author of 1984.",
-    "Homer is traditionally said to have written the Iliad and the Odyssey.",
-    "Moby-Dick was written by Herman Melville.",
-    "Pride and Prejudice is a novel by Jane Austen.",
-    "The Divine Comedy was written by Dante Alighieri.",
-    "The Brothers Grimm collected and published folktales.",
-    "J.K. Rowling is the author of the Harry Potter series.",
-    "The Catcher in the Rye was written by J.D. Salinger.",
-    "War and Peace was written by Leo Tolstoy.",
-
-    # Technology
-    "The first iPhone was released in 2007.",
-    "The Internet originated from ARPANET in the late 1960s.",
-    "Cloud computing provides on-demand computing services.",
-    "Blockchain is the technology underlying cryptocurrencies.",
-    "5G is the fifth generation of mobile network technology.",
-    "Artificial neural networks are inspired by the human brain.",
-    "Quantum computing uses qubits instead of bits.",
-    "Virtual reality immerses users in a digital environment.",
-    "3D printing creates physical objects from digital models.",
-    "Self-driving cars use sensors and AI to navigate."
-]
-
-# SBERT model
-sbert_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
-
-# Drop and recreate collection to ensure clean state
-if client.has_collection("demo_collection"):
-    client.drop_collection("demo_collection")
-
-# Create collection with explicit parameters
-client.create_collection(
-    "demo_collection", 
-    dimension=768,  # all-mpnet-base-v2 produces 768-dim vectors
-    metric_type="COSINE"  # Explicitly set cosine similarity
-)
-
-# Encode documents
-vectors = sbert_model.encode(docs).tolist()
-
-# Insert data
-data = [{"id": i, "vector": vectors[i], "text": docs[i]} for i in range(len(vectors))]
-client.insert("demo_collection", data)
-
-# Load collection for searching
-client.load_collection("demo_collection")
-
-# Test queries
-test_queries = [
-    "operating system hardware management",
-    "i manage hardware as does the os",
-    "systems that control computer hardware",
-    "black holes and space", 
-    "databases often are relational but also can be non relational"
-]
-
-print("Testing different queries:")
-for query in test_queries:
-    print(f"\nQuery: '{query}'")
-    query_vector = sbert_model.encode([query]).tolist()
-    print(f"the vector of this query: '{query}' is this: '{query_vector}'")
+#   nomic-embed-text
+#   bge-m3
+#   jina/jina-embeddings-v2-base-de
+class VectorSearchSystem:
+    def __init__(self, db_path: str = "vector_search.db", model_name: str = "jina/jina-embeddings-v2-base-de"):
+        """Initialize the vector search system"""
+        self.client = MilvusClient(db_path)
+        self.model_name = model_name
+        self.collection_name = "documents"
+        
+    def embed_text(self, text: str | List[str]) -> List[List[float]]:
+        """Get embeddings for text"""
+        if isinstance(text, str):
+            text = [text]
+        
+        response = ollama.embed(model=self.model_name, input=text)
+        return response['embeddings']
     
-    results = client.search(
-        collection_name="demo_collection",
-        data=query_vector,
-        output_fields=["text"],
-        limit=3
-    )
+    def create_collection(self, documents: List[str], force_recreate: bool = False):
+        """Create and populate the vector collection"""
+        
+        if self.client.has_collection(self.collection_name):
+            if force_recreate:
+                self.client.drop_collection(self.collection_name)
+                print(f"✓ Dropped existing collection '{self.collection_name}'")
+            else:
+                print(f"✓ Collection '{self.collection_name}' already exists")
+                return
+        
+        # Get embeddings for all documents
+        print(f"🔄 Generating embeddings for {len(documents)} documents...")
+        embeddings = self.embed_text(documents)
+        dim = len(embeddings[0])
+        
+        # Create collection with optimal settings
+        self.client.create_collection(
+            self.collection_name, 
+            dimension=dim, 
+            metric_type="COSINE",  
+            auto_id=False
+        )
+        
+        # Prepare data for insertion
+        data = []
+        for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
+            data.append({
+                "id": i,
+                "vector": embedding,
+                "text": doc
+            })
+        
+        # Insert data
+        self.client.insert(self.collection_name, data)
+        self.client.load_collection(self.collection_name)
+        
+        print(f"✓ Created collection with {len(documents)} documents (dim={dim})")
     
-    for i, result in enumerate(results[0]):
-        print(f"  {i+1}. (distance: {result['distance']:.4f}) {result['entity']['text']}")
+    def search(self, query: str, top_k: int = 5, min_score: float = 0.0) -> List[Dict[str, Any]]:
+        """Search for similar documents"""
+        
+        # Get query embedding
+        query_embedding = self.embed_text(query)
+        
+        # Search
+        results = self.client.search(
+            collection_name=self.collection_name,
+            data=query_embedding,
+            output_fields=["text"],
+            limit=top_k
+        )
+        
+        # Format results
+        formatted_results = []
+        for result in results[0]:
+            score = result["distance"]
+            # Skip results below minimum score threshold
+            if score < min_score:
+                continue
+                
+            formatted_results.append({
+                "text": result["entity"]["text"],
+                "score": score,
+                "id": result["id"]
+            })
+        
+        return formatted_results
+    
+    def print_search_results(self, query: str, results: List[Dict[str, Any]]):
+        """Pretty print search results"""
+        print(f"\n🔍 Query: '{query}'")
+        print("-" * 80)
+        
+        if not results:
+            print("   No results found.")
+            return
+        
+        for i, result in enumerate(results, 1):
+            score = result["score"]
+            text = result["text"]
+            
+            # Add score interpretation
+            if score > 0.85:
+                quality = "🟢 Excellent"
+            elif score > 0.75:
+                quality = "🟡 Good"
+            elif score > 0.65:
+                quality = "🟠 Fair"
+            else:
+                quality = "🔴 Poor"
+            
+            print(f"   {i}. {quality} (Score: {score:.4f})")
+            print(f"      {text}")
+            print()
+
+def get_curated_documents():
+    """Get a curated set of documents without problematic entries"""
+    
+    return [
+        # History
+        "The Roman Empire reached its greatest territorial extent under Emperor Trajan in 117 AD.",
+        "World War II ended in 1945 with the surrender of Germany and Japan.",
+        "The Berlin Wall fell in 1989, marking the end of the Cold War.",
+        "The Declaration of Independence was signed in 1776.",
+        "The French Revolution began in 1789 and overthrew the monarchy.",
+        
+        # Astronomy & Space
+        "The Milky Way is a barred spiral galaxy containing our Solar System.",
+        "Jupiter has at least 79 known moons, the largest being Ganymede.",
+        "Saturn is famous for its system of rings composed of ice and rock.",
+        "Mars is known as the Red Planet because of iron oxide on its surface.",
+        "Black holes are regions of spacetime where gravity prevents escape.",
+        "The Hubble Space Telescope has revolutionized our understanding of the universe.",
+        
+        # Computer Science & Technology
+        "Python is a high-level programming language known for its readability.",
+        "JavaScript is widely used for web development and user interfaces.",
+        "Machine learning is a subset of artificial intelligence.",
+        "Operating systems manage hardware and software resources.",
+        "Git is a version control system for tracking code changes.",
+        "Cloud computing provides scalable on-demand computing resources.",
+        
+        # Music & Arts
+        "The Beatles were an English rock band formed in Liverpool in 1960.",
+        "Jazz developed in the early 20th century in the United States.",
+        "Beethoven composed nine symphonies during his lifetime.",
+        "Hip hop originated in the Bronx during the 1970s.",
+        
+        # Sports
+        "Basketball was invented by James Naismith in 1891.",
+        "The FIFA World Cup is the most watched sporting event globally.",
+        "The Olympic Games bring together athletes from around the world.",
+        
+        # Science & Nature
+        "DNA carries genetic information in all living organisms.",
+        "Photosynthesis allows plants to convert sunlight into energy.",
+        "The human brain contains approximately 86 billion neurons.",
+        "Charles Darwin proposed the theory of evolution by natural selection.",
+        "pflaumen",
+        "kirschen",
+        "kartoffeln"
+    ]
+
+def run_comprehensive_tests(search_system: VectorSearchSystem):
+    """Run comprehensive search tests"""
+    
+    test_cases = [
+        # Should find Roman Empire
+        "ancient Rome conquered territories empire Trajan",
+        # Should find Jupiter/space content  
+        "planets moons Jupiter astronomy space",
+        # Should find Python programming
+        "Python programming language readable code",
+        # Should find Beatles music
+        "Beatles rock band Liverpool music",
+        # Should find DNA/biology
+        "DNA genetic information biology life",
+        # Should find World War II
+        "World War Two 1945 Germany Japan",
+        # Should find basketball sports
+        "basketball sports James Naismith invented"
+    ]
+    
+    print("="*80)
+    print("COMPREHENSIVE SEARCH QUALITY TEST")
+    print("="*80)
+    
+    for query in test_cases:
+        results = search_system.search(query, top_k=3, min_score=0.6)
+        search_system.print_search_results(query, results)
+
+def interactive_search(search_system: VectorSearchSystem):
+    """Interactive search interface"""
+    
+    print("="*80)
+    print("INTERACTIVE VECTOR SEARCH")
+    print("Type 'quit' or 'exit' to stop")
+    print("="*80)
+    
+    while True:
+        try:
+            query = input("\n🔍 Enter search query: ").strip()
+            
+            if query.lower() in ['quit', 'exit', '']:
+                break
+            
+            results = search_system.search(query, top_k=5)
+            search_system.print_search_results(query, results)
+            
+        except KeyboardInterrupt:
+            break
+    
+    print("\n👋 Thanks for using Vector Search!")
+
+def main():
+    """Main function"""
+    
+    # Initialize system
+    print("🚀 Initializing Vector Search System...")
+    search_system = VectorSearchSystem()
+    
+    # Get documents
+    documents = get_curated_documents()
+    
+    # Create collection
+    search_system.create_collection(documents, force_recreate=True)
+    
+    # Run tests
+    run_comprehensive_tests(search_system)
+    
+    # Start interactive search
+    interactive_search(search_system)
+
+if __name__ == "__main__":
+    main()
