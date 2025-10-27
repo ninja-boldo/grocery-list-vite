@@ -167,6 +167,7 @@ async def init_database(pool, dump_path: str = os.environ.get("PG_DUMP", "maindb
             logger.info("Initial food row count: %s", count)
 
         # If dump exists and table empty, restore dump (psql)
+        print(f"trying to get to dump file with path: {dump_path}")
         if os.path.exists(dump_path) and count == 0:
             logger.info("Found dump file at %s — attempting restore", dump_path)
             rc, out, err = await _psql_restore_file(dump_path, dbname, user, host, port, env)
