@@ -48,3 +48,4 @@ tmp_pack_QoeAVX
 *.m4a
 *.sql
 *.db
+.env

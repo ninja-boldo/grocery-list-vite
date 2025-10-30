@@ -2,7 +2,10 @@ from typing import List, Union, Dict
 from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
+from langchain_groq import ChatGroq
 
+
+used_model = "qwen3:0.6b"
 #llm = ChatOllama(model="qwen3:1.7b")
 
 class Classification(BaseModel):
@@ -32,7 +35,8 @@ def _normalize_classes(classes: Union[str, List[str]]) -> List[str]:
 
 def classify(input_text: str, classes: Union[str, List[str]]) -> Dict[str, Union[str, float]]:
     try:
-        llm = ChatOllama(model="qwen3:1.7b")
+        #llm = ChatOllama(model=used_model)
+        llm = ChatGroq(model="llama-3.1-8b-instant")
     except:
         print("couldnt allocate the ollama chat model for classification")
     classes_list = _normalize_classes(classes)
