@@ -12,6 +12,9 @@ except Exception:
 from faster_whisper import WhisperModel
 import ffmpeg
 
+import os
+from groq import Groq
+        
 # -------------------------------
 # Device selection
 # -------------------------------
@@ -30,34 +33,34 @@ def get_device(prefer_gpu=True):
 # -------------------------------
 # Whisper model initialization
 # -------------------------------
-def init_whisper(model_name="tiny", device=None):
+def init_whisper(model_name="tiny", device=None, cloud=False):
+    if not cloud:
+        whisper_models = [
+            "tiny", "tiny.en", "base", "base.en", "small", "small.en",
+            "medium", "medium.en", "large", "large-v1", "large-v2",
+            "large-v3", "distil-small-v2", "distil-large-v3", "large-v3-turbo"
+        ]
+        if model_name not in whisper_models:
+            raise ValueError(f"Model {model_name} not available. Choose from: {whisper_models}")
 
-    whisper_models = [
-        "tiny", "tiny.en", "base", "base.en", "small", "small.en",
-        "medium", "medium.en", "large", "large-v1", "large-v2",
-        "large-v3", "distil-small-v2", "distil-large-v3", "large-v3-turbo"
-    ]
-    if model_name not in whisper_models:
-        raise ValueError(f"Model {model_name} not available. Choose from: {whisper_models}")
+        if device is None:
+            device = get_device()
 
-    if device is None:
-        device = get_device()
+        # choose compute_type based on device
+        # - GPU: float16 is usually best
+        # - MPS: float16 may or may not be supported, fallback to float32
+        # - CPU: int8_float32 is fastest for quantized CPU inference
+        if device == "cuda":
+            compute_type = "float16"
+        elif device == "mps":
+            # mps precision support varies; float32 is safer
+            compute_type = "float32"
+        else:
+            compute_type = "int8_float32"
 
-    # choose compute_type based on device
-    # - GPU: float16 is usually best
-    # - MPS: float16 may or may not be supported, fallback to float32
-    # - CPU: int8_float32 is fastest for quantized CPU inference
-    if device == "cuda":
-        compute_type = "float16"
-    elif device == "mps":
-        # mps precision support varies; float32 is safer
-        compute_type = "float32"
-    else:
-        compute_type = "int8_float32"
-
-    print(f"Loading model {model_name} on {device} ({compute_type})...")
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
-    return model
+        print(f"Loading model {model_name} on {device} ({compute_type})...")
+        model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        return model
 
 # -------------------------------
 # WebM → WAV conversion
@@ -98,25 +101,39 @@ def ensure_wav(input_path: str, temp_dir: Path | None = None) -> str:
 # -------------------------------
 # Transcription (German by default)
 # -------------------------------
-def transcribe(file_path: str, model: WhisperModel | None, language="de", beam_size=1, task="transcribe") -> str:
-    if model is None:
-        raise Exception("model parameter cant be none")
-    wav_path = ensure_wav(file_path)
-    print(f"Running transcription on: {wav_path}")
+def transcribe(file_path: str, model: WhisperModel | None, language="de", beam_size=1, task="transcribe", cloud=False) -> str:
+    print(f"filepath: {file_path} and cloud={cloud}")
+    if not cloud:
+        if model is None:
+            raise Exception("model parameter cant be none")
+        wav_path = ensure_wav(file_path)
+        print(f"Running transcription on: {wav_path}")
 
-    # faster-whisper transcribe returns (segments, info)
-    segments, info = model.transcribe(
-        wav_path,
-        beam_size=beam_size,
-        language=language,          # force German ("de")
-        task=task,                  # "transcribe" (speech->text) or "translate"
-        condition_on_previous_text=False
-    )
+        # faster-whisper transcribe returns (segments, info)
+        segments, info = model.transcribe(
+            wav_path,
+            beam_size=beam_size,
+            language=language,          # force German ("de")
+            task=task,                  # "transcribe" (speech->text) or "translate"
+            condition_on_previous_text=False
+        )
 
-    # join segment texts. Keep the timing info in case you need it (info contains language/confidence)
-    text = "".join(segment.text for segment in segments)
-    return text
+        # join segment texts. Keep the timing info in case you need it (info contains language/confidence)
+        text = "".join(segment.text for segment in segments)
+        return text
+    if cloud:
+        print("using the cloud whisper model")
+        client = Groq()
 
+        with open(file_path, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+            file=(file_path, file.read()),
+            model="whisper-large-v3-turbo",
+            temperature=0,
+            response_format="verbose_json",
+            )
+        return transcription.text
+            
 # -------------------------------
 # Optional: simple language detect run
 # -------------------------------

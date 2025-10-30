@@ -31,6 +31,9 @@ RUN npm install
 # copy frontend source
 COPY grocery-list2/ .
 
+ENV GROQ_API_KEY=""
+ENV OPENAI_API_KEY=""
+
 # install yarn (needed for CMD)
 RUN npm install --global yarn
 

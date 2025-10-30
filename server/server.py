@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import shlex
 import traceback
-import urllib
+import urllib.parse
 
 import httpx
 import requests
@@ -42,11 +42,12 @@ from fastapi.middleware.cors import CORSMiddleware
 # ============================================================================
 # MEMORY OPTIMIZATION SETTINGS - Toggle features here
 # ============================================================================
-ENABLE_ML_MODEL = False          # Set to False to disable food classifier model
-ENABLE_WHISPER_MODEL = True     # Set to False to disable voice transcription
-ENABLE_LOKI_LOGGING = True      # Set to False to disable Loki remote logging
-ENABLE_PROMETHEUS = True        # Set to False to disable Prometheus metrics
-ENABLE_FILE_LOGGING = True      # Set to False to use only console logging
+ENABLE_ML_MODEL = False              # Set to False to disable food classifier model
+ENABLE_WHISPER_MODEL_LOCAL = False    # Set to False to disable local voice transcription
+ENABLE_WHISPER_MODEL_CLOUD = True    # Set to False to disable cloud voice trainscription
+ENABLE_LOKI_LOGGING = True           # Set to False to disable Loki remote logging
+ENABLE_PROMETHEUS = True             # Set to False to disable Prometheus metrics
+ENABLE_FILE_LOGGING = True           # Set to False to use only console logging
 
 # Database pool settings (reduced for lower memory usage)
 DB_POOL_MIN_SIZE = 1            # Reduced from 2
@@ -60,13 +61,16 @@ LOG_FILE_MAX_SIZE = 5*1024*1024
 LOG_FILE_BACKUP_COUNT = 2       
 # ============================================================================
 
-
-if ENABLE_WHISPER_MODEL: 
+cloud_transcription = False
+if ENABLE_WHISPER_MODEL_LOCAL or ENABLE_WHISPER_MODEL_CLOUD: 
     from transcription.transcript import init_whisper, transcribe
     from transcription import classifier
+    if ENABLE_WHISPER_MODEL_CLOUD and ENABLE_WHISPER_MODEL_LOCAL:
+        raise Exception("ENABLE_WHISPER_MODEL_LOCAL and ENABLE_WHISPER_MODEL_CLOUD cant be set at the same time")
+
     
 if ENABLE_ML_MODEL:
-    import torch
+    import torch # type: ignore
     import food_classifier.main as food_classifier
     device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu') 
     
@@ -111,7 +115,12 @@ async def _run_psql_command(cmd_args: list[str], env: Optional[dict] = None):
     return proc.returncode, out.decode(errors="ignore"), err.decode(errors="ignore")
 
 # [UNCHANGED] _psql_restore_file function
-async def _psql_restore_file(dump_path: str, dbname: str, user: str, host: Optional[str], port: Optional[str], env: dict):
+async def _psql_restore_file(dump_path: str, dbname: str | None, user: str | None, host: Optional[str], port: Optional[str], env: dict):
+    if dbname is None:
+        raise Exception("dbname parameter cant be none but is in this")
+    if user is None:
+        raise Exception("user parameter cant be none but is in this")
+    
     cmd = ["psql", "-U", user, "-d", dbname, "-f", dump_path]
     if host:
         cmd[1:1] = ["-h", host]
@@ -247,9 +256,9 @@ async def lifespan(app: FastAPI):
         await init_database(app.state.pool)
         
         # Preload whisper model (CONDITIONAL)
-        if ENABLE_WHISPER_MODEL:
+        if ENABLE_WHISPER_MODEL_LOCAL:
             try:
-                app.state.whisper = init_whisper()
+                app.state.whisper = init_whisper(cloud=False)
                 logger.info("Whisper model loaded successfully")
             except Exception as e:
                 logger.error(f"Whisper model initialization failed: {e}")
@@ -257,7 +266,7 @@ async def lifespan(app: FastAPI):
         else:
             app.state.whisper = None
             logger.info("Whisper model disabled (ENABLE_WHISPER_MODEL=False)")
-
+            
         # Load ML model (CONDITIONAL)
         if ENABLE_ML_MODEL:
             try:
@@ -965,6 +974,9 @@ def purge_folder(folder_rel: str):
             
 @app.post("/transcribe")
 async def transcribe_endpoint(request: Request, file: UploadFile = File(...)):
+    if not ENABLE_WHISPER_MODEL_CLOUD and not ENABLE_WHISPER_MODEL_LOCAL:
+        raise Exception("""neither ENABLE_WHISPER_MODEL_CLOUD nor ENABLE_WHISPER_MODEL_LOCAL where enabled/set to true =>
+                        this feature was disabled and cant be used if not one of them is turned on""")
     try:
         # Validate file type
         if not file.content_type or not (
@@ -996,12 +1008,12 @@ async def transcribe_endpoint(request: Request, file: UploadFile = File(...)):
         logger.info(f"File saved to: {file_path}")
         
         # Check if whisper model is available
-        if not hasattr(request.app.state, 'whisper') or not request.app.state.whisper:
+        if (not hasattr(request.app.state, 'whisper') or not request.app.state.whisper) and not ENABLE_WHISPER_MODEL_CLOUD:
             raise HTTPException(status_code=503, detail="Whisper model not available")
         
         # Transcribe
         logger.info("Starting transcription...")
-        transcribed_text = transcribe(file_path=file_path, model=request.app.state.whisper)
+        transcribed_text = transcribe(file_path=file_path, model=request.app.state.whisper, cloud=ENABLE_WHISPER_MODEL_CLOUD)
         logger.info(f"Transcription completed: {transcribed_text[:100]}...")
         
         #retrieve classes
