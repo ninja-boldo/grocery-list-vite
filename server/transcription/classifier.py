@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_ollama import ChatOllama
 
-llm = ChatOllama(model="qwen3:1.7b")
+#llm = ChatOllama(model="qwen3:1.7b")
 
 class Classification(BaseModel):
     category: str  # runtime-validated against injected classes
@@ -31,6 +31,10 @@ def _normalize_classes(classes: Union[str, List[str]]) -> List[str]:
     return cls
 
 def classify(input_text: str, classes: Union[str, List[str]]) -> Dict[str, Union[str, float]]:
+    try:
+        llm = ChatOllama(model="qwen3:1.7b")
+    except:
+        print("couldnt allocate the ollama chat model for classification")
     classes_list = _normalize_classes(classes)
     classes_str = ", ".join(classes_list)
 

@@ -30,7 +30,7 @@ def get_device(prefer_gpu=True):
 # -------------------------------
 # Whisper model initialization
 # -------------------------------
-def init_whisper(model_name="large-v3-turbo", device=None):
+def init_whisper(model_name="tiny", device=None):
 
     whisper_models = [
         "tiny", "tiny.en", "base", "base.en", "small", "small.en",
@@ -82,7 +82,7 @@ def webm_to_wav(input_path: str, output_path: str, sample_rate=16000):
 # -------------------------------
 # Ensure WAV file
 # -------------------------------
-def ensure_wav(input_path: str, temp_dir: Path = None) -> str:
+def ensure_wav(input_path: str, temp_dir: Path | None = None) -> str:
     input_path = str(input_path)
     if input_path.lower().endswith(".wav"):
         return input_path
@@ -98,7 +98,9 @@ def ensure_wav(input_path: str, temp_dir: Path = None) -> str:
 # -------------------------------
 # Transcription (German by default)
 # -------------------------------
-def transcribe(file_path: str, model: WhisperModel, language="de", beam_size=1, task="transcribe") -> str:
+def transcribe(file_path: str, model: WhisperModel | None, language="de", beam_size=1, task="transcribe") -> str:
+    if model is None:
+        raise Exception("model parameter cant be none")
     wav_path = ensure_wav(file_path)
     print(f"Running transcription on: {wav_path}")
 
@@ -134,7 +136,7 @@ def main(argv):
 
     input_file = argv[1]
     # defaults
-    model_name = "small"
+    model_name = "tiny"
     device_arg = "auto"
     lang = "de"
     beam = 1
@@ -165,6 +167,7 @@ def main(argv):
     else:
         device = device_arg
 
+    
     model = init_whisper(model_name=model_name, device=device)
 
     # optional: show detected language if you want to debug auto-detect
