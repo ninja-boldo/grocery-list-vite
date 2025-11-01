@@ -433,12 +433,13 @@ app.add_middleware(
 async def optimized_middleware(request: Request, call_next):
     if request.url.path == "/metrics":
         auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return PlainTextResponse("Unauthorized", status_code=401)
-        token = auth_header.removeprefix("Bearer ").strip()
-        if token != api_key:
-            logger.warning("Unauthorized metrics access attempt")
-            return PlainTextResponse("Unauthorized", status_code=401)
+        #if not auth_header or not auth_header.startswith("Bearer "):
+        #    return PlainTextResponse("Unauthorized", status_code=401)
+            
+        #token = auth_header.removeprefix("Bearer ").strip()
+        #if token != api_key:
+        #    logger.warning("Unauthorized metrics access attempt")
+        #    return PlainTextResponse("Unauthorized", status_code=401)
     try:
         start_time = time.time()
         response = await call_next(request)

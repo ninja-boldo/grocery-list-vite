@@ -1,17 +1,109 @@
 version: '3.8'
-
 services:
-  grocery-list:
-    build:
-      context: .
-      dockerfile: grocery-list2/Dockerfile
-      platforms:
-        - linux/amd64
-    image: boldo42/grocery-list-vite
-    ports:
-      - "8000:8000"  # Adjust port as needed
-    env_file:
-      - grocery-list2/.env  # Path to your .env file
+  postgres-db:
+    image: postgres:17-alpine
+    container_name: postgres-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: maindb
     volumes:
-      - ./grocery-list2:/app  # Optional: for development hot-reload
+      - postgres_data:/var/lib/postgresql/data
+      - ./maindb.sql:/docker-entrypoint-initdb.d/maindb.sql:ro
+    
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=64MB"
+      - "-c"
+      - "effective_cache_size=192MB"
+      - "-c"
+      - "maintenance_work_mem=32MB"
+      - "-c"
+      - "max_connections=20"
+      - "-c"
+      - "work_mem=4MB"
+      - "-c"
+      - "wal_buffers=2MB"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - grocery-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+  app:
+    image: boldo42/grocery-list-vite
+    container_name: grocery-app
+    expose:
+      - "4040"
+      - "3030"
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    environment:
+      RUNNING_IN_CONTAINER: "true"
+    env_file:
+      - .env
+    networks:
+      - grocery-network
+    volumes:
+      - ./maindb.sql:/app/maindb.sql:ro
+    deploy:
+      resources:
+        limits:
+          memory: 812M
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:4040/health || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 1
+      start_period: 30s
+  nginx:
+    image: nginx:alpine
+    container_name: grocery-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - app
+    networks:
+      - grocery-network
     restart: unless-stopped
+
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=12d"
+    networks:
+      - grocery-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+volumes:
+  postgres_data:
+  prometheus_data:
+
+networks:
+  grocery-network:
+    driver: bridge
