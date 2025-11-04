@@ -21,6 +21,11 @@ interface Props {
 }
 
 function App() {
+
+  const getDimensions = () => ({ width: window.innerWidth, height: window.innerHeight });
+
+
+
   const usenav = useNavigate();
 
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +41,12 @@ function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { width, height } = getDimensions();
+  const phoneWidth = 500;
+  console.warn("these are your dimensions with width being: " + width + " and height being: " + height)
+
+
   const navigateScanner = useCallback((clickedNode: Props | null, count: number | null) => {
 
     if(!count){
@@ -49,6 +60,7 @@ function App() {
     }
   }, [usenav]);
 
+  
   // Improved audio recording functions
   const startRecording = async (): Promise<void> => {
     try {
@@ -374,15 +386,17 @@ function App() {
   if (isLoading && data.length === 0) {
     return <div className="flex justify-center items-center min-h-screen">Loading...</div>;
   }
-
+//TODO: 
   return (
-    <div className="flex flex-col justify-start min-h-screen">
+    
+    <div className="flex flex-col justify-start min-h-screen max-w-screen over">
       {error ? (
         <ErrorContainer text={error} />
       ) : (
         <>
         
-        <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-indigo-950 min-w-10 min-h-10"
+        { 10000 > phoneWidth ?
+          <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-indigo-950 min-w-10 min-h-10"
              onClick={() => setSidebarIsOpen(!SidebarIsOpen)}>
               {SidebarIsOpen ?(
                 <>
@@ -396,8 +410,12 @@ function App() {
               <Bars3Icon className="h-6 w-6 text-white" />
               }
         </div>
+        : 
+        <></>
+        }
 
-          <div className="flex items-center gap-4 mb-4 ml-4">
+          <div className="flex items-center gap-1 mb-4 ml-4">
+            {(width > phoneWidth ?(
             <div>
               <DropdownComp 
                 task="subgroups" 
@@ -408,46 +426,70 @@ function App() {
                 style="" 
               />
             </div>
-            <div>
+            ):
+              <div className='max-w-40 mx-1 bg-amber-500'>
               <DropdownComp 
-                task="classnames" 
-                text="class" 
-                elements={classnames} 
+                task="subgroups" 
+                text="subs" 
+                elements={subgroups} 
                 onClickElement={fetchItems} 
                 onClickReset={fetchItems} 
                 style="" 
               />
             </div>
-            <div>
-              <StyledButton text='+' onClick={() => navigateScanner(null, 1)} className='mx-2' />
-              <StyledButton text='-' onClick={() => navigateScanner(null, -1)} className='mx-2' />
-            </div>
-            <div className="flex flex-col gap-2">
-              <button 
+
+            )}
+
+            {(width > phoneWidth ?(
+              <div>
+                <DropdownComp 
+                  task="classnames" 
+                  text="class" 
+                  elements={classnames} 
+                  onClickElement={fetchItems} 
+                  onClickReset={fetchItems} 
+                  style="" 
+                />
+              </div>
+              ):
+              <></>
+
+            )}
+
+            {width > phoneWidth ? 
+              <div className='ml-2 flex'>
+              
+                <StyledButton text='+' onClick={() => navigateScanner(null, 1)} className='mx-2' />
+                <StyledButton text='-' onClick={() => navigateScanner(null, -1)} className='mx-2' />
+              </div>
+                :
+                <div className='ml-1 flex'>
+                  <StyledButton text='+' onClick={() => navigateScanner(null, 1)} className='mx-1 max-w-8' />
+                  <StyledButton text='-' onClick={() => navigateScanner(null, -1)} className='mx-1 max-w-8' />
+                
+              </div>
+            }
+
+            <div className="flex flex-col gap-1 max-w-full">
+              <button
                 onClick={handleRecording}
                 disabled={isLoading}
-                className={`px-4 py-2 rounded text-white font-medium transition-colors ${
-                  isRecording 
-                    ? 'bg-red-500 hover:bg-red-600 animate-pulse' 
-                    : 'bg-blue-500 hover:bg-blue-600'
-                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                className={`px-1 py-1 rounded text-white font-medium text-[clamp(.7rem,.9rem,1rem)] transition-colors flex-shrink-0 ${
+                  isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-blue-500 hover:bg-blue-600'
+                } disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto`}
               >
-                {isLoading 
-                  ? 'Processing...' 
-                  : isRecording 
-                    ? 'Stop' 
-                    : 'Record'
-                }
+                {isLoading ? 'Processing...' : isRecording ? 'Stop' : 'Record'}
               </button>
-              
+
               {transcriptionResult && (
-                <div className="max-w-xs p-2 bg-green-100 border border-green-300 rounded text-sm">
-                  <p className="font-semibold text-green-800">Transcribed:</p>
-                  <p className="text-green-700">{transcriptionResult}</p>
+                <div className="w-full max-w-[18rem] sm:max-w-xs p-1.5 bg-green-100 border border-green-300 rounded text-xs truncate">
+                  <p className="font-semibold text-green-800 text-[0.75rem]">Transcribed:</p>
+                  <p className="text-green-700 truncate">{transcriptionResult}</p>
                 </div>
               )}
             </div>
-            
+
+
             {isLoading && <div className="text-sm text-gray-500">Loading...</div>}
           </div>
 

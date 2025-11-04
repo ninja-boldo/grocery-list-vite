@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect, memo } from 'react';
 
 interface Props {
@@ -6,13 +5,12 @@ interface Props {
   text: string;
   elements: string[];
   style: string | null;
+  className?: string; // allow external sizing
   onClickElement: (subgroups: string | null,  classnames: string | null) => void;
   onClickReset: (subgroups: null, classnames: null) => void;
 }
 
-const DropdownComp = ({ task, text, elements, style, onClickElement, onClickReset }: Props) => {
-
-    //console.log("the received elements: '" + elements + "'")
+const DropdownComp = ({ task, text, elements, style, className, onClickElement, onClickReset }: Props) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -22,7 +20,6 @@ const DropdownComp = ({ task, text, elements, style, onClickElement, onClickRese
         setIsOpen(false);
       }
     };
-
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
@@ -30,8 +27,7 @@ const DropdownComp = ({ task, text, elements, style, onClickElement, onClickRese
   const handleElementClick = (element: string) => {
     if(task === "subgroups"){
       onClickElement(element, null);
-    }
-    else if(task === "classnames"){
+    } else if(task === "classnames"){
       onClickElement(null, element);
     }
     setIsOpen(false);
@@ -53,12 +49,12 @@ const DropdownComp = ({ task, text, elements, style, onClickElement, onClickRese
         font: 'inherit',
         color: 'inherit',
         textAlign: 'left',
-        verticalAlign: 'baseline'
+        verticalAlign: 'baseline',
+        maxWidth: '6rem' /* constrain default width; override via className/style */
       }}
-
-      className={`${style}`}
+      className={`${style ?? ''} ${className ?? ''}`}
     >
-      <div style={{ display: 'flex' }}>
+      <div style={{ display: 'flex', width: '100%' }}>
         {/* Main Button */}
         <button
           onClick={() => onClickReset(null, null)}
@@ -74,27 +70,26 @@ const DropdownComp = ({ task, text, elements, style, onClickElement, onClickRese
             borderBottom: '1px solid #6b7280',
             borderLeft: '1px solid #6b7280',
             borderRight: 'none',
-            padding: '10px 16px',
+            padding: '6px 8px' /* reduced padding */,
             borderTopLeftRadius: '8px',
             borderBottomLeftRadius: '8px',
             cursor: 'pointer',
-            fontSize: '14px',
+            fontSize: '13px' /* slightly smaller */,
             fontWeight: '500',
             fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            lineHeight: '1.5',
+            lineHeight: '1.2',
             textAlign: 'center',
-            textDecoration: 'none',
             userSelect: 'none',
             transition: 'all 0.2s ease',
             outline: 'none',
             whiteSpace: 'nowrap',
-            boxShadow: mainHover ? '0 2px 4px rgba(0, 0, 0, 0.1)' : 'none'
+            overflow: 'hidden',
+            textOverflow: 'ellipsis'
           }}
         >
           {isOpen ? "reset" : text}
-
         </button>
-        
+
         {/* Dropdown Toggle */}
         <button
           onClick={() => setIsOpen(!isOpen)}
@@ -112,22 +107,20 @@ const DropdownComp = ({ task, text, elements, style, onClickElement, onClickRese
             borderBottom: '1px solid #6b7280',
             borderRight: '1px solid #6b7280',
             borderLeft: '1px solid #374151',
-            padding: '10px 12px',
+            padding: '6px 8px' /* reduced padding */,
             borderTopRightRadius: '8px',
             borderBottomRightRadius: '8px',
             cursor: 'pointer',
-            fontSize: '14px',
-            fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-            lineHeight: '1.5',
+            fontSize: '13px',
+            lineHeight: '1.2',
             userSelect: 'none',
             transition: 'all 0.2s ease',
-            outline: 'none',
-            boxShadow: toggleHover ? '0 2px 4px rgba(0, 0, 0, 0.1)' : 'none'
+            outline: 'none'
           }}
         >
           <svg 
-            width="16" 
-            height="16" 
+            width="14" 
+            height="14" 
             viewBox="0 0 24 24" 
             fill="none" 
             stroke="currentColor" 
@@ -151,14 +144,12 @@ const DropdownComp = ({ task, text, elements, style, onClickElement, onClickRese
             left: '0',
             marginTop: '4px',
             backgroundColor: '#374151',
-            borderTop: '1px solid #4b5563',
-            borderBottom: '1px solid #4b5563',
-            borderLeft: '1px solid #4b5563',
-            borderRight: '1px solid #4b5563',
+            border: '1px solid #4b5563',
             borderRadius: '8px',
             boxShadow: '0 10px 25px rgba(0, 0, 0, 0.25), 0 4px 10px rgba(0, 0, 0, 0.1)',
             zIndex: 1000,
-            minWidth: '100%',
+            minWidth: 'max-content',
+            maxWidth: '18rem', /* prevent runaway width */
             overflow: 'hidden',
             backdropFilter: 'blur(8px)'
           }}
@@ -174,19 +165,19 @@ const DropdownComp = ({ task, text, elements, style, onClickElement, onClickRese
                 boxSizing: 'border-box',
                 display: 'block',
                 width: '100%',
-                padding: '12px 16px',
+                padding: '8px 10px' /* reduced padding */,
                 backgroundColor: hoveredIndex === index ? '#4b5563' : 'transparent',
                 color: hoveredIndex === index ? '#ffffff' : '#d1d5db',
                 cursor: 'pointer',
-                fontSize: '14px',
-                fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                lineHeight: '1.5',
+                fontSize: '13px',
+                lineHeight: '1.2',
                 textAlign: 'left',
-                textDecoration: 'none',
                 userSelect: 'none',
                 transition: 'all 0.15s ease',
                 outline: 'none',
                 whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
                 borderBottom: index < elements.length - 1 ? '1px solid #4b5563' : 'none'
               }}
             >
@@ -198,6 +189,5 @@ const DropdownComp = ({ task, text, elements, style, onClickElement, onClickRese
     </div>
   );
 };
-
 
 export default memo(DropdownComp);
