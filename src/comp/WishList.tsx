@@ -1,231 +1,407 @@
 import '../App.css';
 import Container from './Container';
-import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import ErrorContainer from './ErrorContainer';
 import { useNavigate } from 'react-router-dom';
 import StyledButton from './StyledButton';
+import { Bars3Icon } from '@heroicons/react/24/outline';
+import SidebarComp from './Sidebar';
+import InfoContainer from './InfoContainer';
 
-import { Bars3Icon } from '@heroicons/react/24/outline'
-import SidebarComp from "./Sidebar"
-
-interface Props {
+// ============================================================================
+// TYPES
+// ============================================================================
+interface ItemProps {
   text: string | null;
   subgroups: string | null;
   style?: string;
   count: number;
   classname: string | null;
   perish_dates: string[] | null;
-  onClickIncrease: (clickedNode: Props) => Promise<void>; 
-  onClickDecrease: (clickedNode: Props) => Promise<void>; 
+  onClickIncrease: (item: ItemProps) => Promise<void>;
+  onClickDecrease: (item: ItemProps) => Promise<void>;
 }
 
-function WishList() {
-  const usenav = useNavigate();
+interface ApiResponse {
+  item_list: [string, string, string, string, number, string][];
+}
 
-  const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<Props[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [SidebarIsOpen, setSidebarIsOpen] = useState(false)
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+const PHONE_WIDTH = 500;
+const TRANSCRIPTION_TIMEOUT = 10000;
+const API_CONFIG = {
+  retries: 3,
+  baseDelay: 1000,
+  timeout: 10000,
+} as const;
 
-  const navigateScanner = useCallback((clickedNode: Props | null, count: number | null) => {
+// ============================================================================
+// SELF-HEALING API UTILITIES
+// ============================================================================
+async function apiCall<T>(
+  url: string,
+  options: RequestInit = {},
+  retries = API_CONFIG.retries
+): Promise<T> {
+  let lastError: Error | null = null;
 
-    if(!count){
-      count = 1
-    }
-    if(clickedNode?.subgroups){
-      const subgroups = clickedNode.subgroups || "";
-      usenav(`/scanner?subgroups=${encodeURIComponent(subgroups)}&count=${encodeURIComponent(count)}&wishlist=true`);
-    } else {
-      usenav(`/scanner?text=&count=${encodeURIComponent(count)}&wishlist=true`);
-    }
-  }, [usenav]);
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.timeout);
 
-  const increaseItemCount = useCallback(async (clickedNode: Props) => {
-    if(clickedNode.text){
-      setIsLoading(true);
-      try {
-        await fetch(`/api/add_ean_to_list/?item_name=${encodeURIComponent(clickedNode.text)}&count=+1&wish_list=true`);
-        // Instead of reloading, update state locally for better UX
-        setData(prevData => 
-          prevData.map(item => 
-            item.text === clickedNode.text 
-              ? { ...item, count: item.count + 1 }
-              : item
-          )
-        );
-      } catch (error) {
-        console.error("Failed to increase count:", error);
-        setError("Failed to update item count");
-      } finally {
-        setIsLoading(false);
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-    } else {
-      console.error("Increase: clickedNode.text is invalid:", clickedNode.text);
+      return await response.json();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < retries - 1) {
+        await new Promise((r) => setTimeout(r, API_CONFIG.baseDelay * (attempt + 1)));
+      }
     }
+  }
+  throw lastError ?? new Error('API call failed');
+}
+
+/** Fire-and-forget with optimistic UI - errors logged but not thrown */
+async function apiCallSafe(url: string): Promise<boolean> {
+  try {
+    await apiCall(url);
+    return true;
+  } catch (error) {
+    console.error('API call failed (non-blocking):', error);
+    return false;
+  }
+}
+
+// ============================================================================
+// COMPONENT
+// ============================================================================
+function WishList() {
+  const navigate = useNavigate();
+
+  // Reactive window width
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  const isMobile = windowWidth <= PHONE_WIDTH;
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const decreaseItemCount = useCallback(async (clickedNode: Props) => {
-  if (!clickedNode.text) {
-    console.error("Decrease: clickedNode.text is invalid:", clickedNode.text);
-    return;
-  }
+  // State
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<ItemProps[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [transcription, setTranscription] = useState<string | null>(null);
 
-  setIsLoading(true);
-  try {
-    await fetch(
-      `/api/add_ean_to_list/?item_name=${encodeURIComponent(
-        clickedNode.text
-      )}&count=-1
-      &wish_list=true`
-    );
+  // Refs for audio recording
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const transcriptionTimer = useRef<NodeJS.Timeout | null>(null);
 
-    let shouldReload = false;
-    setData(prevData =>
-      prevData.map(item => {
-        if (item.text !== clickedNode.text) {
-          return item;
-        }
-        const newCount = Math.max(0, item.count - 1);
-        if (newCount < 1) {
-          shouldReload = true;
-        }
-        return { ...item, count: newCount };
-      })
-    );
+  // Navigation
+  const navigateScanner = useCallback(
+    (item: ItemProps | null, count: number = 1) => {
+      const params = new URLSearchParams({ wishlist: 'true', count: String(count) });
+      if (item?.subgroups) params.set('subgroups', item.subgroups);
+      else params.set('text', '');
+      navigate(`/scanner?${params}`);
+    },
+    [navigate]
+  );
 
-    if (shouldReload) {
-      location.reload();
-    }
-  } catch (err) {
-    console.error("Failed to decrease count:", err);
-    setError("Failed to update item count");
-  } finally {
-    setIsLoading(false);
-  }
-}, []);
+  // ========== Recording ==========
+  const startRecording = useCallback(async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, sampleRate: 16000 },
+    });
 
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : 'audio/webm';
 
+    const recorder = new MediaRecorder(stream, { mimeType });
+    recordedChunksRef.current = [];
 
-  const fetchItems = useCallback(async () => {
-    setIsLoading(true);
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      stream.getTracks().forEach((track) => track.stop());
+    };
+
+    mediaRecorderRef.current = recorder;
+    recorder.start(1000);
+    setIsRecording(true);
+  }, []);
+
+  const stopRecording = useCallback((): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const recorder = mediaRecorderRef.current;
+      if (!recorder) {
+        resolve(new Blob());
+        return;
+      }
+
+      recorder.onstop = () => {
+        const audioBlob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
+        setIsRecording(false);
+        resolve(audioBlob);
+      };
+
+      recorder.stop();
+    });
+  }, []);
+
+  const handleRecording = useCallback(async () => {
     setError(null);
-    
+
     try {
-        console.log("fetched the wishlist with this url: " + `/api/fetch_items?only_wish_list=true`)
-        const response = await fetch(`/api/fetch_items?only_wish_list=true`);
-      
-      
+      if (!isRecording) {
+        await startRecording();
+      } else {
+        setIsLoading(true);
 
-      interface ApiResponse {
-        item_list: [string, string, string, string, number, string[]][];  // or whatever the actual structure is
+        const blob = await stopRecording();
+        if (blob.size === 0) {
+          setError('No audio recorded');
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', new File([blob], 'recording.webm', { type: blob.type }));
+
+        const params = new URLSearchParams({ only_wish_list: 'false' });
+        params.set('ListTypesInput', "wish_list");
+
+        const result = await apiCall<{ transcribed_text: string }>(`/api/transcribe?${params}`, {
+          method: 'POST',
+          body: formData
+        });
+        
+
+        setTranscription(result.transcribed_text);
+
+        // Refresh the wish list after transcription (item may have been removed)
+        await fetchItems();
+
+        // Auto-clear transcription
+        if (transcriptionTimer.current) clearTimeout(transcriptionTimer.current);
+        transcriptionTimer.current = setTimeout(() => setTranscription(null), TRANSCRIPTION_TIMEOUT);
       }
-
-      interface RawItem {
-        0: string;  // assuming first element
-        1: string;  // text
-        2: string; // subgroups
-        3: string;  // classname
-        4: number;  // count
-        5: string[]; // timestamps
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Recording failed');
+      setIsRecording(false);
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
       }
-
-      // Then use them:
-      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-      const responseData: ApiResponse = await response.json();
-
-      const temp_data: Props[] = responseData.item_list.map((row: RawItem) => ({
-        text: row[1],
-        subgroups: row[2],
-        style: "",
-        classname: row[3],
-        count: row[4],
-        perish_dates: row[5],
-        onClickIncrease: increaseItemCount,
-        onClickDecrease: decreaseItemCount
-      }));
-
-      setData(temp_data);
-    } 
-    catch (error: unknown) {
-      setError(error instanceof Error ? error.message : String(error));
-      console.error("Fetch failed:", error);
     } finally {
       setIsLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRecording, startRecording, stopRecording]);
 
+  // Item count handlers with optimistic updates
+  const increaseItemCount = useCallback(async (item: ItemProps) => {
+    if (!item.text) return;
+
+    // Optimistic update
+    setData((prev) =>
+      prev.map((i) => (i.text === item.text ? { ...i, count: i.count + 1 } : i))
+    );
+
+    const success = await apiCallSafe(
+      `/api/add_ean_to_list/?item_name=${encodeURIComponent(item.text)}&count=1&wish_list=true`
+    );
+
+    // Rollback on failure
+    if (!success) {
+      setData((prev) =>
+        prev.map((i) => (i.text === item.text ? { ...i, count: i.count - 1 } : i))
+      );
+      setError('Failed to update item count');
+    }
+  }, []);
+
+  const decreaseItemCount = useCallback(async (item: ItemProps) => {
+    if (!item.text) return;
+
+    const willDelete = item.count <= 1;
+
+    // Optimistic update
+    setData((prev) =>
+      willDelete
+        ? prev.filter((i) => i.text !== item.text)
+        : prev.map((i) => (i.text === item.text ? { ...i, count: i.count - 1 } : i))
+    );
+
+    const success = await apiCallSafe(
+      `/api/add_ean_to_list/?item_name=${encodeURIComponent(item.text)}&count=-1&wish_list=true`
+    );
+
+    // Rollback on failure - refetch to get accurate state
+    if (!success) {
+      setError('Failed to update item count');
+      // fetchItems will be called via useEffect when error state changes
+    }
+  }, []);
+
+  // Data fetching with self-healing
+  const fetchItems = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const response = await apiCall<ApiResponse>('/api/fetch_items?only_wish_list=true');
+
+      const items: ItemProps[] = response.item_list.map((row) => ({
+        text: row[1],
+        subgroups: row[2],
+        style: '',
+        classname: row[3],
+        count: row[4],
+        perish_dates: typeof row[5] === 'string' ? JSON.parse(row[5] || '[]') : row[5],
+        onClickIncrease: increaseItemCount,
+        onClickDecrease: decreaseItemCount,
+      }));
+
+      setData(items);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to fetch wish list';
+      setError(message);
+      console.error('WishList fetch failed:', error);
+    } finally {
+      setIsLoading(false);
+    }
   }, [increaseItemCount, decreaseItemCount]);
 
+  // Memoized container list
+  const containerComponents = useMemo(
+    () =>
+      data.map((item, idx) => (
+        <Container
+          key={`${item.text}-${idx}`}
+          text={item.text}
+          subgroups={item.subgroups}
+          count={item.count}
+          classname={item.classname}
+          perish_dates={['none']}
+          onClickIncrease={increaseItemCount}
+          onClickDecrease={decreaseItemCount}
+          style=""
+        />
+      )),
+    [data, increaseItemCount, decreaseItemCount]
+  );
 
-  const containerComponents = useMemo(() => {
-    return data.map((element, idx) => (
-      <Container
-        key={`${element.text}-${idx}`} 
-        text={element.text}
-        subgroups={element.subgroups}
-        count={element.count}
-        classname={element.classname}
-        perish_dates={["none"]}
-        onClickIncrease={increaseItemCount}
-        onClickDecrease={decreaseItemCount}
-        style=""
-      />
-    ));
-  }, [data, increaseItemCount, decreaseItemCount]);
-
-
+  // Initial data load
   useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        await fetchItems()
+    fetchItems();
+  }, [fetchItems]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
       }
-       catch (error) {
-        setError("Failed to load initial data");
-        console.error("Initial data load failed:", error);
-      }
+      if (transcriptionTimer.current) clearTimeout(transcriptionTimer.current);
     };
+  }, []);
 
-    loadInitialData();
-  }, [fetchItems]); 
-
+  // Loading state
   if (isLoading && data.length === 0) {
-    return <div className="flex justify-center items-center min-h-screen"></div>;
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="text-cyan-400 text-lg">Loading...</div>
+      </div>
+    );
   }
 
+  const noItemsAvailable = data.length === 0 && !error;
+
   return (
-    <div className="flex flex-col justify-start min-h-screen">
-      {error ? (
-        <ErrorContainer text={error} />
-      ) : (
-        <>
-        
-        <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-indigo-950 min-w-10 min-h-10"
-             onClick={() => setSidebarIsOpen(!SidebarIsOpen)}>
-              {SidebarIsOpen ?(
-                <>
-                  <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-gray-700 min-w-10 min-h-10 z-50"
-                      onClick={() => setSidebarIsOpen(!SidebarIsOpen)}>
-                    <SidebarComp isOpen={SidebarIsOpen} onClose={() => setSidebarIsOpen(false)} />
-                    <Bars3Icon className="h-6 w-6 text-white" />
-                  </div>
-                </>
-              ): 
-              <Bars3Icon className="h-6 w-6 text-white" />
-              }
-        </div>
+    <>
+      {/* Sidebar - always rendered for animation */}
+      <SidebarComp isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
+      <div className="flex flex-col min-h-screen">
+        {error ? (
+          <ErrorContainer text={error} />
+        ) : (
+          <>
+            {/* Header */}
+            <header className="flex items-center h-14 sm:h-16 px-3 sm:px-6 gap-3 sm:gap-4">
+              {/* Sidebar Toggle */}
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-slate-700/50 transition-colors flex-shrink-0"
+              >
+                <Bars3Icon className="h-6 w-6 text-white" />
+              </button>
 
-          <div className="flex items-center gap-4 mb-4 ml-4">
-            <div>
-              <StyledButton text='+' onClick={() => navigateScanner(null, 1)} className='mx-2' />
-              <StyledButton text='-' onClick={() => navigateScanner(null, -1)} className='mx-2' />
-            </div>
-            {isLoading && <div className="text-sm text-gray-500"></div>}
-          </div>
+              {/* Add/Remove Buttons */}
+              <div className="flex gap-2">
+                <StyledButton text="+" onClick={() => navigateScanner(null, 1)} className="" />
+                <StyledButton text="-" onClick={() => navigateScanner(null, -1)} className="" />
+              </div>
 
-          {containerComponents}
-        </>
-      )}
-    </div>
+              {/* Recording Button */}
+              <button
+                onClick={handleRecording}
+                disabled={isLoading}
+                className={`px-3 sm:px-4 py-2 rounded-lg text-white font-medium text-sm transition-colors flex-shrink-0 ${
+                  isRecording
+                    ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                    : 'bg-blue-500 hover:bg-blue-600'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {isLoading ? '...' : isRecording ? 'Stop' : 'Record'}
+              </button>
+
+              {/* Transcription result - inline on desktop */}
+              {transcription && !isMobile && (
+                <div className="max-w-xs p-2 bg-green-100 border border-green-300 rounded text-xs">
+                  <p className="text-green-700 truncate">{transcription}</p>
+                </div>
+              )}
+
+              {isLoading && <span className="text-sm text-gray-400 ml-2">Updating...</span>}
+            </header>
+
+            {/* Mobile transcription result */}
+            {transcription && isMobile && (
+              <div className="mx-3 mt-2 p-2 bg-green-100 border border-green-300 rounded text-xs">
+                <p className="font-semibold text-green-800">Transcribed:</p>
+                <p className="text-green-700">{transcription}</p>
+              </div>
+            )}
+
+            {/* Main Content */}
+            <main className="flex-1 p-3 sm:p-4 md:p-6">
+              <div className="max-w-4xl mx-auto">
+                {noItemsAvailable ? (
+                  <InfoContainer text={"No items on your wish list.\nAdd something you'd like to buy!"} />
+                ) : (
+                  containerComponents
+                )}
+              </div>
+            </main>
+          </>
+        )}
+      </div>
+    </>
   );
 }
 

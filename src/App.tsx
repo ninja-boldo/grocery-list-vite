@@ -5,495 +5,417 @@ import ErrorContainer from './comp/ErrorContainer';
 import DropdownComp from './comp/Dropdown';
 import { useNavigate } from 'react-router-dom';
 import StyledButton from './comp/StyledButton';
+import { Bars3Icon } from '@heroicons/react/24/outline';
+import SidebarComp from "./comp/Sidebar";
+import InfoContainer from './comp/InfoContainer';
 
-import { Bars3Icon } from '@heroicons/react/24/outline'
-import SidebarComp from "./comp/Sidebar"
-
-interface Props {
+// ============================================================================
+// Types
+// ============================================================================
+interface Item {
   text: string | null;
   subgroups: string | null;
-  style?: string;
-  count: number;
   classname: string | null;
+  count: number;
   perish_dates: string[] | null;
-  onClickIncrease: (clickedNode: Props) => Promise<void>; 
-  onClickDecrease: (clickedNode: Props) => Promise<void>; 
 }
 
+// ============================================================================
+// Constants
+// ============================================================================
+const PHONE_WIDTH = 500;
+const TRANSCRIPTION_TIMEOUT = 10000;
+const RETRY_ATTEMPTS = 3;
+const RETRY_DELAY = 1000;
+
+// ============================================================================
+// API Utilities - Self-healing with retry logic
+// ============================================================================
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function apiCall<T>(
+  url: string, 
+  options?: RequestInit, 
+  retries = RETRY_ATTEMPTS
+): Promise<T> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < retries - 1) await sleep(RETRY_DELAY * (attempt + 1));
+    }
+  }
+  throw lastError;
+}
+
+// Fire-and-forget API call (for optimistic updates)
+async function apiCallSafe(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================================
+// Data Transformers
+// ============================================================================
+interface ApiResponse {
+  item_list: [string, string, string, string, number, string[]][];
+}
+
+const transformItems = (data: ApiResponse): Item[] =>
+  data.item_list.map(([, text, subgroups, classname, count, perish_dates]) => ({
+    text,
+    subgroups,
+    classname,
+    count,
+    perish_dates: perish_dates ?? []
+  }));
+
+// ============================================================================
+// Main Component
+// ============================================================================
 function App() {
+  const navigate = useNavigate();
+  
+  // Reactive window width
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  const isMobile = windowWidth <= PHONE_WIDTH;
 
-  const getDimensions = () => ({ width: window.innerWidth, height: window.innerHeight });
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
-
-
-  const usenav = useNavigate();
-
+  // State
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<Props[]>([]);
+  const [data, setData] = useState<Item[]>([]);
   const [subgroups, setSubgroups] = useState<string[]>([]);
   const [classnames, setClassnames] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [SidebarIsOpen, setSidebarIsOpen] = useState(false)
-
-  // Updated audio recording state
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [transcriptionResult, setTranscriptionResult] = useState<string | null>(null);
+  const [transcription, setTranscription] = useState<string | null>(null);
+  
+  // Refs for audio recording
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const transcriptionTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { width, height } = getDimensions();
-  const phoneWidth = 500;
-  console.warn("these are your dimensions with width being: " + width + " and height being: " + height)
-
-
-  const navigateScanner = useCallback((clickedNode: Props | null, count: number | null) => {
-
-    if(!count){
-      count = 1
-    }
-    if(clickedNode?.subgroups){
-      const subgroups = clickedNode.subgroups || "";
-      usenav(`/scanner?subgroups=${encodeURIComponent(subgroups)}&count=${encodeURIComponent(count)}`);
-    } else {
-      usenav(`/scanner?text=&count=${encodeURIComponent(count)}`);
-    }
-  }, [usenav]);
-
-  
-  // Improved audio recording functions
-  const startRecording = async (): Promise<void> => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000, // Whisper prefers 16kHz
-        } 
-      });
-      
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-        ? 'audio/webm;codecs=opus' 
-        : 'audio/webm';
-      
-      mediaRecorderRef.current = new MediaRecorder(stream, { mimeType });
-      
-      recordedChunksRef.current = [];
-
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recordedChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorderRef.current.onstop = () => {
-        // Stop all tracks to release microphone
-        stream.getTracks().forEach(track => track.stop());
-      };
-
-      mediaRecorderRef.current.start(1000); // Collect data every second
-      setIsRecording(true);
-      console.log("Recording started...");
-      
-    } catch (error) {
-      console.error("Failed to start recording:", error);
-      setError("Failed to access microphone. Please check permissions.");
-    }
-  };
-
-  const stopRecording = (): Promise<Blob> => {
-    return new Promise((resolve) => {
-      if (!mediaRecorderRef.current) {
-        resolve(new Blob());
-        return;
-      }
-
-      mediaRecorderRef.current.onstop = () => {
-        const audioBlob = new Blob(recordedChunksRef.current, { 
-          type: "audio/webm" 
-        });
-        setIsRecording(false);
-        resolve(audioBlob);
-      };
-
-      mediaRecorderRef.current.stop();
-    });
-  };
-
-  const uploadAudio = async (blob: Blob, filename = "recording.webm"): Promise<unknown> => {
-    const file = new File([blob], filename, { type: blob.type });
-    const formData = new FormData();
-    formData.append("file", file);
-
-    console.log(`Uploading file: ${filename}, size: ${blob.size} bytes, type: ${blob.type}`);
-
-    const response = await fetch("api/transcribe", {
-      method: "POST",
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Upload failed: ${response.status} - ${errorText}`);
-    }
-    
-    return response.json();
-  };
-
-  const handleRecording = async () => {
-    try {
-      setError(null); // Clear any previous errors
-      
-      if (!isRecording) {
-        // Start recording
-        await startRecording();
-      } else {
-        // Stop recording and upload
-        console.log("Stopping recording...");
-        const blob = await stopRecording();
-        
-        if (blob.size === 0) {
-          setError("No audio data recorded");
-          return;
-        }
-        
-        console.log("Recording stopped, uploading...");
-        setIsLoading(true);
-        
-        const result = await uploadAudio(blob);
-        console.log("Transcription result:", result);
-        
-        setTranscriptionResult((result as { transcribed_text: string }).transcribed_text);
-        
-        // Auto-clear transcription result after 10 seconds
-        setTimeout(() => setTranscriptionResult(null), 10000);
-      }
-    } catch (error) {
-      console.error("Recording/transcription error:", error);
-      setError(error instanceof Error ? error.message : "Recording failed");
-      setIsRecording(false);
-      
-      // Stop any ongoing recording on error
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-        mediaRecorderRef.current.stop();
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const increaseItemCount = useCallback(async (clickedNode: Props) => {
-      if(clickedNode.text){
-        setIsLoading(true);
-        try {
-          await fetch(`/api/add_ean_to_list/?item_name=${encodeURIComponent(clickedNode.text)}&count=+1&wish_list=false`);
-          // Instead of reloading, update state locally for better UX
-          setData(prevData => 
-            prevData.map(item => 
-              item.text === clickedNode.text 
-                ? { ...item, count: item.count + 1 }
-                : item
-            )
-          );
-        } catch (error) {
-          console.error("Failed to increase count:", error);
-          setError("Failed to update item count");
-        } finally {
-          setIsLoading(false);
-        }
-      } else {
-        console.error("Increase: clickedNode.text is invalid:", clickedNode.text);
-      }
-    }, []);
-
-  const decreaseItemCount = useCallback(async (clickedNode: Props) => {
-    if (!clickedNode.text) {
-      console.error("Decrease: clickedNode.text is invalid:", clickedNode.text);
-      return;
-    }
-  
-    setIsLoading(true);
-    try {
-      await fetch(
-        `/api/add_ean_to_list/?item_name=${encodeURIComponent(
-          clickedNode.text
-        )}&count=-1&wish_list=true`
-      );
-  
-      let shouldReload = false;
-      setData(prevData =>
-        prevData.map(item => {
-          if (item.text !== clickedNode.text) {
-            return item;
-          }
-          const newCount = Math.max(0, item.count - 1);
-          if (newCount < 1) {
-            shouldReload = true;
-          }
-          return { ...item, count: newCount };
-        })
-      );
-  
-      if (shouldReload) {
-        location.reload();
-      }
-    } catch (err) {
-      console.error("Failed to decrease count:", err);
-      setError("Failed to update item count");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  const fetchItems = useCallback(async (subgroups: string | null, classnames: string | null) => {
+  // ========== Data Fetching ==========
+  const fetchItems = useCallback(async (subgroup?: string | null, classname?: string | null) => {
     setIsLoading(true);
     setError(null);
     
     try {
-      let response;
-      if(subgroups) {
-        response = await fetch(`/api/fetch_items?subgroups=${encodeURIComponent(subgroups)}&only_wish_list=false`);
-      } else if(classnames) {
-        response = await fetch(`/api/fetch_items?classnames=${encodeURIComponent(classnames)}&only_wish_list=false`);
-      } else {
-        response = await fetch(`/api/fetch_items?only_wish_list=false`);
-      }
+      const params = new URLSearchParams({ only_wish_list: 'false' });
+      if (subgroup) params.set('subgroups', subgroup);
+      if (classname) params.set('classnames', classname);
       
-
-      interface ApiResponse {
-        item_list: [string, string, string, string, number, string[]][];
+      const response = await apiCall<ApiResponse>(`/api/fetch_items?${params}`);
+      setData(transformItems(response));
+      console.warn("got this as a fetch response: " + transformItems(response))
+      if (data.length === 0){
+        
+        //setError("there are no items in the database")
       }
-
-      interface RawItem {
-        0: string;  // ean
-        1: string;  // text
-        2: string; // subgroups
-        3: string;  // classname
-        4: number;  // count
-        5: string[]; // timestamps
-      }
-
-      if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
-      const responseData: ApiResponse = await response.json();
-
-      const temp_data: Props[] = responseData.item_list.map((row: RawItem) => ({
-        text: row[1],
-        subgroups: row[2],
-        style: "",
-        classname: row[3],
-        count: row[4],
-        perish_dates: row[5],
-        onClickIncrease: increaseItemCount,
-        onClickDecrease: decreaseItemCount
-      }));
-      console.log("element.perish_dates: " + temp_data[0].perish_dates)
-
-      setData(temp_data);
-    } 
-    catch (error: unknown) {
-      setError(error instanceof Error ? error.message : String(error));
-      console.error("Fetch failed:", error);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch items');
     } finally {
       setIsLoading(false);
     }
-
-  }, [increaseItemCount, decreaseItemCount]);
-
-  const fetchSubgroups = useCallback(async (): Promise<string[]> => {
-    try {
-      const response = await fetch("/api/fetch_subgroups");
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-      const data = await response.json();
-      return data.subgroups;
-    } catch (error) {
-      console.error("Failed to fetch subgroups:", error);
-      throw error;
-    }
   }, []);
 
-  const fetchClassnames = useCallback(async (): Promise<string[]> => {
-    try {
-      const response = await fetch("/api/fetch_classnames");
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-      const data = await response.json();
-      return data.classnames;
-    } catch (error) {
-      console.error("Failed to fetch classnames:", error);
-      throw error;
-    }
+  const fetchMetadata = useCallback(async () => {
+    const [subRes, classRes] = await Promise.allSettled([
+      apiCall<{ subgroups: string[] }>('/api/fetch_subgroups'),
+      apiCall<{ classnames: string[] }>('/api/fetch_classnames')
+    ]);
+    
+    if (subRes.status === 'fulfilled') setSubgroups(subRes.value.subgroups);
+    if (classRes.status === 'fulfilled') setClassnames(classRes.value.classnames);
   }, []);
 
-  const containerComponents = useMemo(() => {
-    return data.map((element, idx) => (
-      <Container
-        key={`${element.text}-${idx}`} 
-        text={element.text}
-        subgroups={element.subgroups}
-        count={element.count}
-        classname={element.classname}
-        perish_dates={element.perish_dates}
-        onClickIncrease={increaseItemCount}
-        onClickDecrease={decreaseItemCount}
-        style=""
-      />
+  // ========== Item Operations (Optimistic Updates) ==========
+  const updateItemCount = useCallback(async (item: Item, delta: number) => {
+    if (!item.text) return;
+    
+    const newCount = item.count + delta;
+    
+    // Optimistic update
+    setData(prev => prev.map(i => 
+      i.text === item.text ? { ...i, count: Math.max(0, newCount) } : i
     ));
-  }, [data, increaseItemCount, decreaseItemCount]);
+    
+    // API call
+    const wishList = delta < 0 ? 'true' : 'false';
+    const success = await apiCallSafe(
+      `/api/add_ean_to_list/?item_name=${encodeURIComponent(item.text)}&count=${delta > 0 ? '+' : ''}${delta}&wish_list=${wishList}`
+    );
+    
+    // Rollback on failure
+    if (!success) {
+      setError('Failed to update item');
+      setData(prev => prev.map(i => 
+        i.text === item.text ? { ...i, count: item.count } : i
+      ));
+    }
+    
+    // Reload if item removed (count reached 0)
+    if (success && newCount <= 0) {
+      setTimeout(() => window.location.reload(), 100);
+    }
+  }, []);
 
-  useEffect(() => {
-    const loadInitialData = async () => {
-      try {
-        // run all initial fetches in parallel
-        const [, subgroupsResult, classnamesResult] = await Promise.allSettled([
-          fetchItems(null, null),
-          fetchSubgroups(),
-          fetchClassnames()
-        ]);
+  const increaseItem = useCallback((item: Item) => updateItemCount(item, 1), [updateItemCount]);
+  const decreaseItem = useCallback((item: Item) => updateItemCount(item, -1), [updateItemCount]);
 
-        if (subgroupsResult.status === 'fulfilled') {
-          setSubgroups(subgroupsResult.value);
-        } else {
-          console.error("Failed to fetch subgroups:", subgroupsResult.reason);
-        }
+  // ========== Recording ==========
+  const startRecording = useCallback(async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ 
+      audio: { channelCount: 1, sampleRate: 16000 } 
+    });
+    
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+      ? 'audio/webm;codecs=opus' 
+      : 'audio/webm';
+    
+    const recorder = new MediaRecorder(stream, { mimeType });
+    recordedChunksRef.current = [];
 
-        if (classnamesResult.status === 'fulfilled') {
-          setClassnames(classnamesResult.value);
-          console.warn("Fetched the following classnames:", classnamesResult.value);
-        } else {
-          console.error("Failed to fetch classnames:", classnamesResult.reason);
-        }
-
-      } catch (error) {
-        setError("Failed to load initial data");
-        console.error("Initial data load failed:", error);
-      }
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) recordedChunksRef.current.push(e.data);
     };
 
-    loadInitialData();
-  }, [fetchClassnames, fetchItems, fetchSubgroups]); 
+    recorder.onstop = () => {
+      stream.getTracks().forEach(track => track.stop());
+    };
 
-  // Cleanup effect for media recorder
-  useEffect(() => {
-    return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+    mediaRecorderRef.current = recorder;
+    recorder.start(1000);
+    setIsRecording(true);
+  }, []);
+
+  const stopRecording = useCallback((): Promise<Blob> => {
+    return new Promise((resolve) => {
+      const recorder = mediaRecorderRef.current;
+      if (!recorder) {
+        resolve(new Blob());
+        return;
+      }
+
+      recorder.onstop = () => {
+        const audioBlob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
+        setIsRecording(false);
+        resolve(audioBlob);
+      };
+
+      recorder.stop();
+    });
+  }, []);
+
+  const handleRecording = useCallback(async () => {
+    setError(null);
+    
+    try {
+      if (!isRecording) {
+        await startRecording();
+      } else {
+        setIsLoading(true);
+        
+        const blob = await stopRecording();
+        if (blob.size === 0) {
+          setError('No audio recorded');
+          return;
+        }
+        
+        const formData = new FormData();
+        formData.append('file', new File([blob], 'recording.webm', { type: blob.type }));
+        
+        const params = new URLSearchParams({ only_wish_list: 'false' });
+        params.set('ListTypesInput', "item_list");
+
+        const result = await apiCall<{ transcribed_text: string }>(`/api/transcribe?${params}`, {
+          method: 'POST',
+          body: formData
+        });
+        
+        setTranscription(result.transcribed_text);
+        
+        // Auto-clear transcription
+        if (transcriptionTimer.current) clearTimeout(transcriptionTimer.current);
+        transcriptionTimer.current = setTimeout(() => setTranscription(null), TRANSCRIPTION_TIMEOUT);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Recording failed');
+      setIsRecording(false);
+      if (mediaRecorderRef.current?.state === 'recording') {
         mediaRecorderRef.current.stop();
       }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isRecording, startRecording, stopRecording]);
+
+  // ========== Navigation ==========
+  const navigateScanner = useCallback((count: number) => {
+    navigate(`/scanner?text=&count=${encodeURIComponent(count)}`);
+  }, [navigate]);
+
+  // ========== Effects ==========
+  useEffect(() => {
+    fetchItems();
+    fetchMetadata();
+  }, [fetchItems, fetchMetadata]);
+
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      if (transcriptionTimer.current) clearTimeout(transcriptionTimer.current);
     };
   }, []);
 
+  // ========== Memoized Components ==========
+  const itemList = useMemo(() => 
+    data.map((item, idx) => (
+      <Container
+        key={`${item.text}-${idx}`}
+        text={item.text}
+        subgroups={item.subgroups}
+        count={item.count}
+        classname={item.classname}
+        perish_dates={item.perish_dates}
+        onClickIncrease={increaseItem}
+        onClickDecrease={decreaseItem}
+        style=""
+      />
+    )),
+  [data, increaseItem, decreaseItem]);
+
+  // ========== Render ==========
   if (isLoading && data.length === 0) {
-    return <div className="flex justify-center items-center min-h-screen">Loading...</div>;
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="text-cyan-400 text-lg">Loading...</div>
+      </div>
+    );
   }
-//TODO: 
-  return (
+
+  let displayError = null;
+  let noItemsAvailable: boolean = false;
+  if(error?.includes('there are no items in the database')){
+      displayError = null;  //'No items in database' 
+      noItemsAvailable = true;
+
+    }
+  else{
+    displayError = error;
+  }
+
     
-    <div className="flex flex-col justify-start min-h-screen max-w-screen over">
-      {error ? (
-        <ErrorContainer text={error} />
+  return (
+    <div className="flex flex-col min-h-screen">
+      {/* Sidebar - always rendered, visibility controlled by CSS transform */}
+      <SidebarComp isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      
+      {displayError ? (
+        <ErrorContainer text={displayError} />
       ) : (
         <>
-        
-        { 10000 > phoneWidth ?
-          <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-indigo-950 min-w-10 min-h-10"
-             onClick={() => setSidebarIsOpen(!SidebarIsOpen)}>
-              {SidebarIsOpen ?(
-                <>
-                  <div className="absolute top-0 left-0 flex items-center justify-center rounded-xl m-4 hover:bg-gray-700 min-w-10 min-h-10 z-50"
-                      onClick={() => setSidebarIsOpen(!SidebarIsOpen)}>
-                    <SidebarComp isOpen={SidebarIsOpen} onClose={() => setSidebarIsOpen(false)} />
-                    <Bars3Icon className="h-6 w-6 text-white" />
-                  </div>
-                </>
-              ): 
+          {/* Header Bar - transparent background */}
+          <header className="flex items-center h-14 sm:h-16 px-3 sm:px-6 gap-3 sm:gap-4">
+            {/* Sidebar Toggle */}
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-slate-700/50 transition-colors flex-shrink-0"
+            >
               <Bars3Icon className="h-6 w-6 text-white" />
-              }
-        </div>
-        : 
-        <></>
-        }
+            </button>
 
-          <div className="flex items-center gap-1 mb-4 ml-4">
-            {(width > phoneWidth ?(
-            <div>
+            {/* Dropdowns */}
+            <DropdownComp 
+              task="subgroups" 
+              text="subs" 
+              elements={subgroups} 
+              onClickElement={fetchItems} 
+              onClickReset={fetchItems} 
+              style="" 
+            />
+
+            {!isMobile && (
               <DropdownComp 
-                task="subgroups" 
-                text="subs" 
-                elements={subgroups} 
+                task="classnames" 
+                text="class" 
+                elements={classnames} 
                 onClickElement={fetchItems} 
                 onClickReset={fetchItems} 
                 style="" 
               />
-            </div>
-            ):
-              <div className='max-w-40 mx-1 bg-amber-500'>
-              <DropdownComp 
-                task="subgroups" 
-                text="subs" 
-                elements={subgroups} 
-                onClickElement={fetchItems} 
-                onClickReset={fetchItems} 
-                style="" 
+            )}
+
+            {/* Add/Remove Buttons */}
+            <div className="flex gap-2">
+              <StyledButton 
+                text="+" 
+                onClick={() => navigateScanner(1)} 
+                className="" 
+              />
+              <StyledButton 
+                text="-" 
+                onClick={() => navigateScanner(-1)} 
+                className="" 
               />
             </div>
 
+            {/* Recording Button */}
+            <button
+              onClick={handleRecording}
+              disabled={isLoading}
+              className={`px-3 sm:px-4 py-2 rounded-lg text-white font-medium text-sm transition-colors flex-shrink-0 ${
+                isRecording 
+                  ? 'bg-red-500 hover:bg-red-600 animate-pulse' 
+                  : 'bg-blue-500 hover:bg-blue-600'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {isLoading ? '...' : isRecording ? 'Stop' : 'Record'}
+            </button>
+
+            {/* Transcription result - inline on desktop, below on mobile */}
+            {transcription && (
+              <div className="hidden sm:block max-w-xs p-2 bg-green-100 border border-green-300 rounded text-xs">
+                <p className="text-green-700 truncate">{transcription}</p>
+              </div>
             )}
+          </header>
 
-            {(width > phoneWidth ?(
-              <div>
-                <DropdownComp 
-                  task="classnames" 
-                  text="class" 
-                  elements={classnames} 
-                  onClickElement={fetchItems} 
-                  onClickReset={fetchItems} 
-                  style="" 
-                />
-              </div>
-              ):
-              <></>
+          {/* Mobile transcription result */}
+          {transcription && isMobile && (
+            <div className="mx-3 mt-2 p-2 bg-green-100 border border-green-300 rounded text-xs">
+              <p className="font-semibold text-green-800">Transcribed:</p>
+              <p className="text-green-700">{transcription}</p>
+            </div>
+          )}
 
-            )}
-
-            {width > phoneWidth ? 
-              <div className='ml-2 flex'>
-              
-                <StyledButton text='+' onClick={() => navigateScanner(null, 1)} className='mx-2' />
-                <StyledButton text='-' onClick={() => navigateScanner(null, -1)} className='mx-2' />
-              </div>
-                :
-                <div className='ml-1 flex'>
-                  <StyledButton text='+' onClick={() => navigateScanner(null, 1)} className='mx-1 max-w-8' />
-                  <StyledButton text='-' onClick={() => navigateScanner(null, -1)} className='mx-1 max-w-8' />
-                
-              </div>
-            }
-
-            <div className="flex flex-col gap-1 max-w-full">
-              <button
-                onClick={handleRecording}
-                disabled={isLoading}
-                className={`px-1 py-1 rounded text-white font-medium text-[clamp(.7rem,.9rem,1rem)] transition-colors flex-shrink-0 ${
-                  isRecording ? 'bg-red-500 hover:bg-red-600 animate-pulse' : 'bg-blue-500 hover:bg-blue-600'
-                } disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto`}
-              >
-                {isLoading ? 'Processing...' : isRecording ? 'Stop' : 'Record'}
-              </button>
-
-              {transcriptionResult && (
-                <div className="w-full max-w-[18rem] sm:max-w-xs p-1.5 bg-green-100 border border-green-300 rounded text-xs truncate">
-                  <p className="font-semibold text-green-800 text-[0.75rem]">Transcribed:</p>
-                  <p className="text-green-700 truncate">{transcriptionResult}</p>
-                </div>
+          {/* Main Content */}
+          <main className="flex-1 p-3 sm:p-4 md:p-6">
+            <div className="max-w-4xl mx-auto">
+              {noItemsAvailable ? (
+                <InfoContainer text={"No items available in the database.\nSo perhaps add one."} />
+              ) : (
+                itemList
               )}
             </div>
-
-
-            {isLoading && <div className="text-sm text-gray-500">Loading...</div>}
-          </div>
-
-          {containerComponents}
+          </main>
         </>
       )}
     </div>
