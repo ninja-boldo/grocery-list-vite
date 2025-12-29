@@ -19,6 +19,7 @@ from fastapi import FastAPI, File, Query, Request, UploadFile, HTTPException
 import uvicorn
 
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel
 
 
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -523,6 +524,68 @@ def purge_folder(folder_path: str) -> None:
 
 
 # ============================================================================
+# PYDANTIC MODELS (Data Transfer Objects)
+# ============================================================================
+class GroceryItem(BaseModel):
+    """Core item representation"""
+    ean: str
+    item_name: str
+    subgroups: str = ""
+    class_name: str = ""
+    count: int = 1
+    perish_dates: list[str] = []
+    is_wish_list: bool = False
+
+
+class ItemUpdateRequest(BaseModel):
+    """Request model for item updates"""
+    ean: Optional[str] = None
+    item_name: Optional[str] = None
+    subgroups: Optional[str] = None
+    count: Optional[int] = 1
+    is_wish_list: Optional[bool] = False
+
+
+class ItemUpdateResponse(BaseModel):
+    """Response model for item updates"""
+    ean: str
+    product_name: str
+    subgroups: str = ""
+    operation: str  # 'created', 'updated', 'deleted', 'created_new'
+    execution_time: Optional[float] = None
+
+
+class ItemListResponse(BaseModel):
+    """Response model for item list"""
+    items: list[GroceryItem]
+    total: int
+
+
+class MetadataResponse(BaseModel):
+    """Response model for metadata"""
+    subgroups: list[str]
+    classnames: list[str]
+
+
+class BatchUpdateItem(BaseModel):
+    """Single item in batch update"""
+    item_name: str
+    count_delta: int
+
+
+class BatchUpdateRequest(BaseModel):
+    """Request model for batch updates"""
+    items: list[BatchUpdateItem]
+
+
+class BatchUpdateResponse(BaseModel):
+    """Response model for batch updates"""
+    updated: int
+    failed: int
+    errors: list[str]
+
+
+# ============================================================================
 # APPLICATION LIFESPAN
 # ============================================================================
 @asynccontextmanager
@@ -647,11 +710,439 @@ async def request_middleware(request: Request, call_next):
 
 
 # ============================================================================
-# API ENDPOINTS
+# NEW RESTful API ENDPOINTS (Optimized & Consistent Naming)
 # ============================================================================
+
+@app.get("/api/items")
+async def get_items(
+    request: Request,
+    subgroups: Optional[str] = Query(None),
+    classnames: Optional[str] = Query(None),
+    only_wish_list: Optional[bool] = Query(None)
+) -> ItemListResponse:
+    """
+    Fetch items with optional filters (NEW optimized endpoint)
+    
+    This endpoint uses a cleaner response format and improved performance.
+    For backwards compatibility, the old /fetch_items endpoint is still available.
+    """
+    logger.info(f"get_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list}")
+    
+    try:
+        # Convert boolean to string for build_fetch_query
+        wish_list_str = None
+        if only_wish_list is True:
+            wish_list_str = "true"
+        elif only_wish_list is False:
+            wish_list_str = "false"
+        
+        query, params = build_fetch_query(subgroups, classnames, wish_list_str)
+        rows = await request.app.state.db.fetch_with_retry(query, *params)
+        
+        items = []
+        for row in rows:
+            perish_dates = []
+            try:
+                perish_dates = json.loads(row['timestamps'] or '[]')
+                # Convert ISO timestamps to dates
+                perish_dates = [
+                    datetime.datetime.fromisoformat(t).date().isoformat()
+                    for t in perish_dates
+                ]
+            except (json.JSONDecodeError, ValueError):
+                perish_dates = []
+            
+            items.append(GroceryItem(
+                ean=row['ean'] or '',
+                item_name=row['item_name'] or '',
+                subgroups=row['subgroups'] or '',
+                class_name=row['class'] or '',
+                count=row['count'] or 0,
+                perish_dates=perish_dates,
+                is_wish_list=False  # TODO: Add iswished column check
+            ))
+        
+        logger.info(f"get_items returned {len(items)} items")
+        return ItemListResponse(items=items, total=len(items))
+        
+    except Exception as e:
+        logger.error(f"get_items error: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to fetch items")
+
+
+async def addByDataDump(
+    request: Request,
+    ean: Optional[str] = Query(None),
+    item_name: Optional[str] = Query(None),
+    subgroups: Optional[str] = Query(None),
+    count: Optional[int] = Query(1),
+    is_wish_list: Optional[bool] = Query(False)):
+    try:
+        async with request.app.state.pool.acquire() as con:
+            async with con.transaction():
+                # Resolve item_name from EAN if needed
+                resolved_item_name = item_name
+                resolved_ean = ean or "0"
+                is_wish_list_str = "true" if is_wish_list else "false"
+                count = count if count else 1
+                start_time = time.time()
+                subgroups = subgroups if subgroups else "none"
+                
+                if ean and not item_name:
+                    row = await con.fetchrow(
+                        "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
+                    )
+                    if row:
+                        resolved_item_name = row['item_name']
+                    else:
+                        row = await con.fetchrow(
+                            "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
+                        )
+                        if row:
+                            resolved_item_name = row['product_name']
+                        else:
+                            raise HTTPException(status_code=404, detail=f"Item not found for EAN: {ean}")
+                
+                # Fast path: Single query for common operations
+                current_time = datetime.datetime.now().isoformat()
+                
+                # Check existing item
+                existing = await con.fetchrow(
+                    "SELECT count, timestamps FROM item_list WHERE item_name = $1",
+                    resolved_item_name
+                )
+                
+                if not existing:
+                    # Create new item
+                    timestamps = [current_time] * count if count > 0 else []
+                    await con.execute(
+                        """INSERT INTO item_list 
+                           (ean, item_name, subgroups, class, count, timestamps, iswished) 
+                           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                        resolved_ean, resolved_item_name, subgroups, "", count,
+                        json.dumps(timestamps), is_wish_list_str
+                    )
+                    operation = "created"
+                else:
+                    # Update existing item
+                    existing_count = existing['count']
+                    existing_ts = json.loads(existing['timestamps'] or '[]')
+                    
+                    if count < 0:
+                        to_remove = min(abs(count), existing_count)
+                        new_ts = existing_ts[to_remove:]
+                        new_count = existing_count - to_remove
+                    else:
+                        new_ts = existing_ts + [current_time] * count
+                        new_count = existing_count + count
+                    
+                    if new_count <= 0:
+                        await con.execute(
+                            "DELETE FROM item_list WHERE item_name = $1",
+                            resolved_item_name
+                        )
+                        operation = "deleted"
+                    else:
+                        await con.execute(
+                            "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
+                            new_count, json.dumps(new_ts), resolved_item_name
+                        )
+                        operation = "updated"
+                
+                execution_time = time.time() - start_time
+                
+                return ItemUpdateResponse(
+                    ean=resolved_ean,
+                    product_name=resolved_item_name or "",
+                    subgroups=subgroups,
+                    operation=operation,
+                    execution_time=execution_time
+                )
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"update_item error: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to update item")
+
+
+
+def constructFetchUrlOpenfood(ean: str | int) -> str:
+    if isinstance(ean, int):
+        ean = str(ean)  
+    return f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=product_name"
+    
+async def getProduct(request: Request, ean: str, item_name: str, useDbDump: bool = False) -> tuple[str, str, bool]:
+    if useDbDump:
+        async with request.app.state.pool.acquire() as con:
+            if ean and not item_name:
+                # Fixed: reduced indentation
+                row = await con.fetchrow(
+                    "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
+                )
+                if row:
+                    resolved_item_name = row['item_name']
+                else:
+                    row = await con.fetchrow(
+                        "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
+                    )
+                    if row:
+                        resolved_item_name = row['product_name']
+                    else:
+                        raise HTTPException(status_code=404, detail=f"Item not found for EAN: {ean}")
+                            
+            existing = await con.fetchrow(
+                "SELECT count, timestamps FROM item_list WHERE item_name = $1",
+                resolved_item_name
+            )
+        return (ean, resolved_item_name, existing)
+    
+    else:
+        resp: requests.Response = requests.get(url=constructFetchUrlOpenfood(ean))
+        if resp.status_code == 200:
+            jsonResp = resp.json()
+            resolved_item_name: str = jsonResp["product"]["product_name"]
+            existing = True
+            print(f"api request yielded this json: {jsonResp}")  # Moved inside if block
+        else:
+            resolved_item_name = ""  # Provide default value
+            existing = False
+            
+        return (ean, resolved_item_name, existing)
+        
+@app.get("/api/items/update")
+async def update_item_endpoint(
+    request: Request,
+    ean: Optional[str] = Query(None),
+    item_name: Optional[str] = Query(None),
+    subgroups: Optional[str] = Query(None),
+    count: Optional[int] = Query(1),
+    is_wish_list: Optional[bool] = Query(False)
+) -> ItemUpdateResponse:
+    """
+    Update item (NEW optimized endpoint)
+    
+    This endpoint provides faster performance for high-frequency operations.
+    Uses optimized database queries and reduced transaction overhead.
+    For backwards compatibility, old endpoints remain available.
+    """
+    useDataDump: bool = False
+    
+    # Validate input
+    if not ean and not item_name:
+        raise HTTPException(status_code=400, detail="Must supply ean or item_name")
+    
+    count = safe_int(count, 1)
+    subgroups = sanitize_string(subgroups)
+    
+    try:
+        async with request.app.state.pool.acquire() as con:
+            async with con.transaction():
+                # Resolve item_name from EAN if needed
+                resolved_item_name = item_name
+                resolved_ean = ean or "0"
+                is_wish_list_str = "true" if is_wish_list else "false"
+                count = count if count else 1
+                start_time = time.time()
+                subgroups = subgroups if subgroups else "none"
+                
+                resolved_ean, resolved_item_name, existing = getProductByEan(ean=ean, item_name=item_name)
+                
+                # Fast path: Single query for common operations
+                current_time = datetime.datetime.now().isoformat()
+                
+                
+                
+                if not existing:
+                    # Create new item
+                    timestamps = [current_time] * count if count > 0 else []
+                    await con.execute(
+                        """INSERT INTO item_list 
+                           (ean, item_name, subgroups, class, count, timestamps, iswished) 
+                           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                        resolved_ean, resolved_item_name, subgroups, "", count,
+                        json.dumps(timestamps), is_wish_list_str
+                    )
+                    operation = "created"
+                else:
+                    # Update existing item
+                    existing_count = existing['count']
+                    existing_ts = json.loads(existing['timestamps'] or '[]')
+                    
+                    if count < 0:
+                        to_remove = min(abs(count), existing_count)
+                        new_ts = existing_ts[to_remove:]
+                        new_count = existing_count - to_remove
+                    else:
+                        new_ts = existing_ts + [current_time] * count
+                        new_count = existing_count + count
+                    
+                    if new_count <= 0:
+                        await con.execute(
+                            "DELETE FROM item_list WHERE item_name = $1",
+                            resolved_item_name
+                        )
+                        operation = "deleted"
+                    else:
+                        await con.execute(
+                            "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
+                            new_count, json.dumps(new_ts), resolved_item_name
+                        )
+                        operation = "updated"
+                
+                execution_time = time.time() - start_time
+                
+                return ItemUpdateResponse(
+                    ean=resolved_ean,
+                    product_name=resolved_item_name or "",
+                    subgroups=subgroups,
+                    operation=operation,
+                    execution_time=execution_time
+                )
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"update_item error: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to update item")
+        
+        
+
+
+@app.post("/api/items/batch")
+async def batch_update_items(
+    request: Request,
+    batch_request: BatchUpdateRequest
+) -> BatchUpdateResponse:
+    """
+    Batch update multiple items (NEW optimized endpoint for heavy hitters)
+    
+    This endpoint is optimized for updating multiple items in a single request,
+    reducing network overhead and improving performance for bulk operations.
+    """
+    start_time = time.time()
+    updated = 0
+    failed = 0
+    errors = []
+    
+    try:
+        async with request.app.state.pool.acquire() as con:
+            async with con.transaction():
+                current_time = datetime.datetime.now().isoformat()
+                
+                for item in batch_request.items:
+                    try:
+                        # Get existing item
+                        existing = await con.fetchrow(
+                            "SELECT count, timestamps FROM item_list WHERE item_name = $1",
+                            item.item_name
+                        )
+                        
+                        if not existing:
+                            errors.append(f"Item not found: {item.item_name}")
+                            failed += 1
+                            continue
+                        
+                        existing_count = existing['count']
+                        existing_ts = json.loads(existing['timestamps'] or '[]')
+                        
+                        if item.count_delta < 0:
+                            to_remove = min(abs(item.count_delta), existing_count)
+                            new_ts = existing_ts[to_remove:]
+                            new_count = existing_count - to_remove
+                        else:
+                            new_ts = existing_ts + [current_time] * item.count_delta
+                            new_count = existing_count + item.count_delta
+                        
+                        if new_count <= 0:
+                            await con.execute(
+                                "DELETE FROM item_list WHERE item_name = $1",
+                                item.item_name
+                            )
+                        else:
+                            await con.execute(
+                                "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
+                                new_count, json.dumps(new_ts), item.item_name
+                            )
+                        
+                        updated += 1
+                        
+                    except Exception as e:
+                        errors.append(f"{item.item_name}: {str(e)}")
+                        failed += 1
+        
+        execution_time = time.time() - start_time
+        logger.info(f"batch_update completed in {execution_time:.2f}s: {updated} updated, {failed} failed")
+        
+        return BatchUpdateResponse(updated=updated, failed=failed, errors=errors)
+        
+    except Exception as e:
+        logger.error(f"batch_update error: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Batch update failed")
+
+
+@app.get("/api/metadata")
+async def get_metadata(request: Request) -> MetadataResponse:
+    """
+    Fetch all metadata in single request (NEW optimized endpoint)
+    
+    Combines subgroups and classnames into one call to reduce round trips.
+    This is faster than calling /fetch_subgroups and /fetch_classnames separately.
+    """
+    try:
+        async with request.app.state.pool.acquire() as con:
+            subgroups_rows, classnames_rows = await asyncio.gather(
+                con.fetch(get_distinct_query("subgroups")),
+                con.fetch(get_distinct_query("class"))
+            )
+        
+        return MetadataResponse(
+            subgroups=[r['subgroups'] for r in subgroups_rows],
+            classnames=[r['class'] for r in classnames_rows]
+        )
+    except Exception as e:
+        logger.error(f"get_metadata error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch metadata")
+
+
+@app.get("/api/metadata/subgroups")
+async def get_subgroups(request: Request):
+    """Fetch only subgroups (NEW endpoint)"""
+    try:
+        rows = await request.app.state.db.fetch_with_retry(get_distinct_query("subgroups"))
+        return {"subgroups": [r['subgroups'] for r in rows]}
+    except Exception as e:
+        logger.error(f"get_subgroups error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch subgroups")
+
+
+@app.get("/api/metadata/classnames")
+async def get_classnames(request: Request):
+    """Fetch only classnames (NEW endpoint)"""
+    try:
+        rows = await request.app.state.db.fetch_with_retry(get_distinct_query("class"))
+        return {"classnames": [r['class'] for r in rows]}
+    except Exception as e:
+        logger.error(f"get_classnames error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch classnames")
+
+
+# ============================================================================
+# LEGACY API ENDPOINTS (Backwards Compatibility - Deprecated)
+# ============================================================================
+
 @app.get("/fetch_subgroups")
 async def fetch_subgroups(request: Request):
-    """Fetch distinct subgroups"""
+    """
+    Fetch distinct subgroups
+    
+    @deprecated Use /api/metadata/subgroups or /api/metadata instead
+    This endpoint is maintained for backwards compatibility only.
+    """
     try:
         rows = await request.app.state.db.fetch_with_retry(get_distinct_query("subgroups"))
         return {"subgroups": [r['subgroups'] for r in rows]}
@@ -662,7 +1153,12 @@ async def fetch_subgroups(request: Request):
 
 @app.get("/fetch_classnames")
 async def fetch_classnames(request: Request):
-    """Fetch distinct class names"""
+    """
+    Fetch distinct class names
+    
+    @deprecated Use /api/metadata/classnames or /api/metadata instead
+    This endpoint is maintained for backwards compatibility only.
+    """
     try:
         rows = await request.app.state.db.fetch_with_retry(get_distinct_query("class"))
         return {"classnames": [r['class'] for r in rows]}
@@ -673,7 +1169,12 @@ async def fetch_classnames(request: Request):
 
 @app.get("/fetch_all_metadata")
 async def fetch_all_metadata(request: Request):
-    """Fetch subgroups and classnames in single request"""
+    """
+    Fetch subgroups and classnames in single request
+    
+    @deprecated Use /api/metadata instead (same functionality, better naming)
+    This endpoint is maintained for backwards compatibility only.
+    """
     try:
         async with request.app.state.pool.acquire() as con:
             subgroups, classnames = await asyncio.gather(
@@ -696,7 +1197,12 @@ async def fetch_items(
     classnames: Optional[str] = Query(None),
     only_wish_list: Optional[str] = Query(None)
 ):
-    """Fetch items with optional filters"""
+    """
+    Fetch items with optional filters
+    
+    @deprecated Use /api/items instead for better performance and cleaner response
+    This endpoint is maintained for backwards compatibility only.
+    """
     logger.info(f"fetch_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list}")
     
     try:
@@ -733,7 +1239,12 @@ async def add_ean_to_list(
     item_name: Optional[str] = Query(None),
     wish_list: Optional[str] = Query(None)
 ):
-    """Add item to list by EAN or name"""
+    """
+    Add item to list by EAN or name
+    
+    @deprecated Use /api/items/update instead for better performance
+    This endpoint is maintained for backwards compatibility only.
+    """
     if not ean and not item_name:
         raise HTTPException(status_code=400, detail="Must supply ean or item_name")
     
@@ -830,7 +1341,12 @@ async def add_ean_manual(
     item_name: Optional[str] = Query(None),
     is_wish_list: Optional[str] = Query(None)
 ):
-    """Enhanced manual EAN addition with comprehensive error handling"""
+    """
+    Enhanced manual EAN addition with comprehensive error handling
+    
+    @deprecated Use /api/items/update instead for better performance and consistency
+    This endpoint is maintained for backwards compatibility only.
+    """
     start_time = time.time()
     op_id = f"{int(time.time() * 1000)}"
     

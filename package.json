@@ -10,12 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@ericblade/quagga2": "^1.8.4",
+    "@ericblade/quagga2": "^1.12.1",
     "@heroicons/react": "^2.2.0",
     "@tailwindcss/vite": "^4.1.11",
     "@zxing/library": "^0.21.3",
     "bootstrap": "^5.3.7",
     "headlessui": "^0.0.0",
+    "html5-qrcode": "^2.3.8",
     "jimp": "^1.6.0",
     "lucide-react": "^0.526.0",
     "onnxruntime-web": "^1.22.0",
