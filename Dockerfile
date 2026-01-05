@@ -1,70 +1,55 @@
-# gotta be invoked for build from one layer above to be able to access the whole grocery list 2 folder
-FROM python:3.11-slim-bookworm AS base
+# ---------- frontend build ----------
+FROM node:20-bookworm-slim AS frontend
 
-# system setup
 ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /app
 
-# install dependencies (no duplicate python installs)
+# system deps
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        curl git build-essential sudo file locales postgresql-client && \
+        git build-essential locales && \
     rm -rf /var/lib/apt/lists/*
 
-# locale
 RUN locale-gen en_US.UTF-8
-ENV LANG=en_US.UTF-8 \
-    LANGUAGE=en_US:en \
-    LC_ALL=en_US.UTF-8
+ENV LANG=en_US.UTF-8
 
-# node.js setup
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/* && \
-    node --version && npm --version
+# install Yarn globally
+RUN corepack enable && corepack prepare yarn@stable --activate
+
+# copy lockfiles first for cache
+COPY package.json yarn.lock ./
+
+
+
+
+# copy source 
+COPY . .
+
+# install deps
+RUN yarn install
+
+# build frontend
+RUN yarn build
+
+# ---------- backend runtime ----------
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-# copy and install npm deps
-COPY grocery-list2/package*.json ./
-RUN npm install
+# python deps
+COPY requirements.txt .
+RUN pip install -U pip uv && \
+    uv pip install --system -r requirements.txt
 
-# copy frontend source
-COPY grocery-list2/ .
+# copy backend and frontend dist
+COPY server /app/server
+COPY --from=frontend /app/dist /app/dist
 
-ENV GROQ_API_KEY=""
-ENV OPENAI_API_KEY=""
+# copy start script
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
-# install yarn (needed for CMD)
-RUN npm install --global yarn
 
-RUN yarn install
 
-# clear npm cache safely (remove dead data only)
-RUN yarn cache clean
-
-# rebuild to fix rollup issue (same behavior)
-RUN yarn run build || (echo "yarn build failed" && exit 1)
-
-# install uv and python deps
-RUN pip install --no-cache-dir -U pip uv && \
-    uv pip install --system -r requirements.txt --no-cache-dir || \
-    (echo "Auto-fixing incompatible versions..." && \
-     sed -e 's/contourpy==1\.3\.3/contourpy==1.3.2/g' \
-         -e 's/networkx==3\.5/networkx>=3.4,<3.5/g' \
-         -e '/pyobjc-core/d' \
-         -e '/pyobjc-framework/d' \
-         -e '/PyGetWindow/d' \
-         -e '/PyAutoGUI/d' \
-         -e '/MouseInfo/d' \
-         -e '/PyMsgBox/d' \
-         requirements.txt > requirements_fixed.txt && \
-     echo "Fixed requirements.txt -> requirements_fixed.txt" && \
-     uv pip install --system -r requirements_fixed.txt --no-cache-dir)
-
-# expose ports (same ones)
-EXPOSE 3030 4040 5000
-
-# same combined startup
-CMD ["bash", "-c", "python server/server.py & \
-                    sleep 2 && yarn run preview --port 4040 --host 0.0.0.0 & \
-                    wait"]
+EXPOSE 3030 4040
+CMD ["python", "server/server.py"]

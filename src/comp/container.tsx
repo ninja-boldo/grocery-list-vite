@@ -7,6 +7,7 @@ interface Props {
   count: number;
   classname: string | null;
   perish_dates: string[] | null;
+  imageUrl: string;
   onClickIncrease: (clickedNode: Props) => Promise<void>;
   onClickDecrease: (clickedNode: Props) => Promise<void>;
 }
@@ -18,6 +19,7 @@ const Container = ({
   count,
   classname,
   perish_dates,
+  imageUrl,
   onClickIncrease,
   onClickDecrease,
 }: Props) => {
@@ -73,6 +75,7 @@ const Container = ({
         count,
         classname,
         perish_dates,
+        imageUrl,
         onClickIncrease,
         onClickDecrease,
       });
@@ -92,6 +95,7 @@ const Container = ({
         count,
         classname,
         perish_dates,
+        imageUrl,
         onClickIncrease,
         onClickDecrease,
       });
@@ -241,11 +245,30 @@ const Container = ({
           {perish_dates_arr && perish_dates_arr.length > 0 ? (
             <div className="bg-gradient-to-r from-slate-900/80 to-slate-800/80 backdrop-blur-md rounded-xl border border-cyan-500/20 shadow-lg shadow-cyan-500/10 mx-2">
               {/* Header */}
-              <div className="flex items-center gap-2 p-3 border-b border-slate-700/50">
-                <div className="w-1.5 h-1.5 rounded-full bg-cyan-400/80 shadow-sm shadow-cyan-400/50"></div>
-                <h4 className="text-cyan-300/90 text-sm font-medium">Expiration Dates</h4>
-                <div className="ml-auto text-xs text-slate-400/70 font-mono">
-                  {perish_dates_arr.length} item{perish_dates_arr.length !== 1 ? 's' : ''}
+              <div className="flex items-start gap-3 p-3 border-b border-slate-700/50">
+                {/* Image */}
+                <img
+                  src={imageUrl}
+                  loading="lazy"
+                  alt={`couldnt display image of the product ${text}`}
+                  className="w-20 h-20 object-contain rounded-lg bg-slate-800/30 p-1 border border-slate-700/40 flex-shrink-0"
+                />
+                
+                {/* Content */}
+                <div className="flex-1 min-w-0 flex flex-col gap-2.5">
+                  {/* Product name */}
+                  <h3 className="text-slate-100 text-base font-semibold leading-tight break-words">
+                    {text}
+                  </h3>
+                  
+                  {/* Added timestamp info row - clearly grouped */}
+                  <div className="flex items-center gap-2 bg-cyan-500/10 rounded-lg px-2.5 py-1.5 border border-cyan-500/20">
+                    <div className="w-1.5 h-1.5 rounded-full bg-cyan-400/80 shadow-sm shadow-cyan-400/50 flex-shrink-0"></div>
+                    <span className="text-cyan-300 text-sm font-medium">Dates added</span>
+                    <span className="text-cyan-200/70 text-xs font-mono">
+                      ({perish_dates_arr.length} item{perish_dates_arr.length !== 1 ? 's' : ''})
+                    </span>
+                  </div>
                 </div>
               </div>
               

@@ -8,6 +8,7 @@ import StyledButton from './comp/StyledButton';
 import { Bars3Icon } from '@heroicons/react/24/outline';
 import SidebarComp from "./comp/Sidebar";
 import InfoContainer from './comp/InfoContainer';
+import AttributionNotice from './comp/AttributionNotice';
 
 // ============================================================================
 // Types
@@ -295,6 +296,7 @@ function App() {
         count={item.count}
         classname={item.classname}
         perish_dates={item.perish_dates}
+        imageUrl='https://upload.wikimedia.org/wikipedia/commons/4/4e/Bananen_Frucht.jpg'
         onClickIncrease={increaseItem}
         onClickDecrease={decreaseItem}
         style=""
@@ -417,7 +419,11 @@ function App() {
             </div>
           </main>
         </>
+
       )}
+      
+      {/* Floating Attribution Notice */}
+      <AttributionNotice floating />
     </div>
   );
 }

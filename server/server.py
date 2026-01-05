@@ -59,8 +59,8 @@ class Config:
     DB_POOL_MIN_SIZE = 1
     DB_POOL_MAX_SIZE = 5
     DB_COMMAND_TIMEOUT = 30
-    DB_RETRY_ATTEMPTS = 3
-    DB_RETRY_DELAY = 1.0
+    DB_RETRY_ATTEMPTS = 10
+    DB_RETRY_DELAY = 2.0
     
     # Cache settings
     LRU_CACHE_SIZE = 20
@@ -481,7 +481,8 @@ def validate_wish_list(value: Optional[str]) -> str:
 def build_fetch_query(
     subgroups: Optional[str],
     classnames: Optional[str],
-    only_wish_list: Optional[str]
+    only_wish_list: Optional[str],
+    onlyNotNull: Optional[str]
 ) -> tuple[str, list]:
     """Build optimized SQL query for fetching items"""
     base = "SELECT ean, item_name, subgroups, class, count, timestamps FROM item_list"
@@ -499,9 +500,16 @@ def build_fetch_query(
     if only_wish_list == "true":
         params.append("true")
         conditions.append(f"iswished = ${len(params)}")
+    
     elif only_wish_list == "false":
         conditions.append("COALESCE(lower(iswished::text), '') <> 'true'")
     
+    if onlyNotNull == "false":
+        pass
+    else:
+        conditions.append("not item_name = 'null' ")
+        
+        
     where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     limit = "" if any([subgroups, classnames, only_wish_list]) else " LIMIT 1000"
     
@@ -736,7 +744,7 @@ async def get_items(
         elif only_wish_list is False:
             wish_list_str = "false"
         
-        query, params = build_fetch_query(subgroups, classnames, wish_list_str)
+        query, params = build_fetch_query(subgroups, classnames, wish_list_str, onlyNotNull="true")
         rows = await request.app.state.db.fetch_with_retry(query, *params)
         
         items = []
@@ -1206,7 +1214,7 @@ async def fetch_items(
     logger.info(f"fetch_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list}")
     
     try:
-        query, params = build_fetch_query(subgroups, classnames, only_wish_list)
+        query, params = build_fetch_query(subgroups, classnames, only_wish_list, onlyNotNull="true")
         rows = await request.app.state.db.fetch_with_retry(query, *params)
         
         item_list = [
@@ -1318,11 +1326,13 @@ async def add_ean_to_list(
                 )
                 product_name = product_row['product_name'] if product_row else item_name
                 
+                presentInDb: bool = True if product_name.strip().lower() != "null" and product_name.strip() != "" else False
                 return {
                     "ean": ean,
                     "product_name": product_name,
                     "done": True,
-                    "subgroups": subgroups
+                    "subgroups": subgroups,
+                    "present_in_database": presentInDb
                 }
                 
     except HTTPException:
