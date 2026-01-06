@@ -53,11 +53,26 @@ export default function ImprovedScanner() {
     lastSentRef.current = { ean: eanToSend, ts: now };
 
     const finalCount = quantityToSend || count;
-    const url = `/api/add_ean_to_list/?ean=${encodeURIComponent(eanToSend)}&subgroups=${encodeURIComponent(subgroups)}&count=${encodeURIComponent(finalCount)}&wish_list=${isWishList}`;
-
+    const url = `/api/add_ean_to_list/`;
     try {
       log('Sending EAN to server', { ean: eanToSend, count: finalCount, url });
-      await fetch(url);
+      
+
+      fetch(url, {
+          method: "POST",
+          body: JSON.stringify({
+            ean: eanToSend,
+            count: count,
+            subgroups: subgroups,
+            wish_list: isWishList ? "true" : "false"
+          }),
+          headers: {
+            "Content-type": "application/json; charset=UTF-8"
+          }
+        }).catch(err => {
+          console.error('Error sending EAN:', err);
+        });
+
       setShowSuccess(true);
       
       // Haptic feedback
@@ -76,11 +91,22 @@ export default function ImprovedScanner() {
 
   // Send item by name to server
   const sendByName = useCallback(async (itemName: string, quantityToSend: number) => {
-    const url = `/api/add_ean_to_list/?item_name=${encodeURIComponent(itemName)}&subgroups=${encodeURIComponent(subgroups)}&count=${encodeURIComponent(quantityToSend)}&wish_list=${isWishList}`;
+    const url = `/api/add_ean_to_list/`;
 
     try {
       log('Sending item by name to server', { itemName, count: quantityToSend, url });
-      await fetch(url);
+      await fetch(url, {
+        method: "POST",
+        body: JSON.stringify({
+          item_name: itemName,
+          count: quantityToSend,
+          subgroups: subgroups,
+          wish_list: isWishList ? "true" : "false"
+        }),
+        headers: {
+          "Content-type": "application/json; charset=UTF-8"
+        }
+      });
       setShowSuccess(true);
       
       // Haptic feedback

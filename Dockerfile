@@ -13,20 +13,11 @@ RUN apt-get update && \
 RUN locale-gen en_US.UTF-8
 ENV LANG=en_US.UTF-8
 
-# install Yarn globally
-RUN corepack enable && corepack prepare yarn@stable --activate
-
-# copy lockfiles first for cache
-COPY package.json yarn.lock ./
-
-
-
-
-# copy source 
+# copy everything first (simpler approach)
 COPY . .
 
-# install deps
-RUN yarn install
+# clean install
+RUN yarn install --frozen-lockfile
 
 # build frontend
 RUN yarn build
@@ -48,8 +39,6 @@ COPY --from=frontend /app/dist /app/dist
 # copy start script
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
-
-
 
 EXPOSE 3030 4040
 CMD ["python", "server/server.py"]

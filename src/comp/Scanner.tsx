@@ -133,9 +133,19 @@ export default function FullScreenCameraScanner() {
 
     console.log('the parentsList read by use params are like this: ' + subgroups + '\ncount read out: ' + count);
     // keep the original API endpoint and query-style call
-    const url = `/api/add_ean_to_list/?ean=${encodeURIComponent(eanToSend)}&subgroups=${encodeURIComponent(subgroups)}&count=${encodeURIComponent(count)}`;
+    const url = `/api/add_ean_to_list/`;
 
-    fetch(url).catch(err => {
+    fetch(url, {
+      method: "POST",
+      body: JSON.stringify({
+        ean: eanToSend,
+        count: count,
+        subgroups: subgroups
+      }),
+      headers: {
+        "Content-type": "application/json; charset=UTF-8"
+      }
+    }).catch(err => {
       console.error('Error sending EAN:', err);
     });
   };

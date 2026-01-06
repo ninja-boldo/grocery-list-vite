@@ -18,12 +18,22 @@ interface ItemProps {
   count: number;
   classname: string | null;
   perish_dates: string[] | null;
+  imageUrl: string;
   onClickIncrease: (item: ItemProps) => Promise<void>;
   onClickDecrease: (item: ItemProps) => Promise<void>;
 }
 
+interface ApiItem {
+  text: string;
+  subgroups: string | null;
+  classname: string | null;
+  count: number;
+  perish_dates: string[] | null;
+  imageUrl: string;
+}
+
 interface ApiResponse {
-  item_list: [string, string, string, string, number, string][];
+  items: ApiItem[];
 }
 
 // ============================================================================
@@ -221,9 +231,23 @@ function WishList() {
       prev.map((i) => (i.text === item.text ? { ...i, count: i.count + 1 } : i))
     );
 
-    const success = await apiCallSafe(
-      `/api/add_ean_to_list/?item_name=${encodeURIComponent(item.text)}&count=1&wish_list=true`
-    );
+    
+    let success: boolean = true
+    fetch("/api/add_ean_to_list/", {
+      method: "POST",
+      body: JSON.stringify({
+        item_name: item.text,
+        count: 1,
+        subgroups: item.subgroups || '',
+        wish_list: "true"
+      }),
+      headers: {
+        "Content-type": "application/json; charset=UTF-8"
+      }
+    }).catch(err => {
+      console.error('Error sending item:', err);
+      success = false
+    });
 
     // Rollback on failure
     if (!success) {
@@ -264,14 +288,14 @@ function WishList() {
 
     try {
       const response = await apiCall<ApiResponse>('/api/fetch_items?only_wish_list=true');
-
-      const items: ItemProps[] = response.item_list.map((row) => ({
-        text: row[1],
-        subgroups: row[2],
+      const items: ItemProps[] = response.items.map((item) => ({
+        text: item.text,
+        subgroups: item.subgroups,
         style: '',
-        classname: row[3],
-        count: row[4],
-        perish_dates: typeof row[5] === 'string' ? JSON.parse(row[5] || '[]') : row[5],
+        classname: item.classname,
+        count: item.count,
+        perish_dates: item.perish_dates,
+        imageUrl: item.imageUrl,
         onClickIncrease: increaseItemCount,
         onClickDecrease: decreaseItemCount,
       }));
@@ -297,6 +321,7 @@ function WishList() {
           count={item.count}
           classname={item.classname}
           perish_dates={['none']}
+          imageUrl={item.imageUrl}
           onClickIncrease={increaseItemCount}
           onClickDecrease={decreaseItemCount}
           style=""

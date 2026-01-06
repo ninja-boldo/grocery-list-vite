@@ -10,3 +10,6 @@ __pycache__
 README.md
 .env
 .env.local
+
+*.log
+.cache

@@ -10,6 +10,8 @@ import SidebarComp from "./comp/Sidebar";
 import InfoContainer from './comp/InfoContainer';
 import AttributionNotice from './comp/AttributionNotice';
 
+console.log("========== APP.TSX MODULE LOADED ==========");
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -19,6 +21,7 @@ interface Item {
   classname: string | null;
   count: number;
   perish_dates: string[] | null;
+  imageUrl: string;
 }
 
 // ============================================================================
@@ -39,51 +42,93 @@ async function apiCall<T>(
   options?: RequestInit, 
   retries = RETRY_ATTEMPTS
 ): Promise<T> {
+  console.log(`========== API CALL START ==========`);
+  console.log("URL:", url);
+  console.log("Retries:", retries);
+  
   let lastError: Error | null = null;
   
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
+      console.log(`Attempt ${attempt + 1}/${retries}`);
+      
       const response = await fetch(url, options);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
+      console.log("Fetch completed, status:", response.status, response.statusText);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
+      // Get raw text first
+      const rawText = await response.text();
+      console.log("Raw response (first 200 chars):", rawText.substring(0, 200));
+      
+      // Try to parse
+      const parsed = JSON.parse(rawText);
+      console.log("Successfully parsed JSON");
+      console.log("Parsed data type:", typeof parsed);
+      console.log("Is array?", Array.isArray(parsed));
+      
+      return parsed;
+      
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      if (attempt < retries - 1) await sleep(RETRY_DELAY * (attempt + 1));
+      console.error(`Attempt ${attempt + 1} FAILED:`, lastError.message);
+      console.error("Error object:", err);
+      
+      if (attempt < retries - 1) {
+        const delay = RETRY_DELAY * (attempt + 1);
+        console.log(`Waiting ${delay}ms before retry...`);
+        await sleep(delay);
+      }
     }
   }
+  
+  console.error("========== ALL RETRIES FAILED ==========");
   throw lastError;
-}
-
-// Fire-and-forget API call (for optimistic updates)
-async function apiCallSafe(url: string): Promise<boolean> {
-  try {
-    const response = await fetch(url);
-    return response.ok;
-  } catch {
-    return false;
-  }
 }
 
 // ============================================================================
 // Data Transformers
 // ============================================================================
-interface ApiResponse {
-  item_list: [string, string, string, string, number, string[]][];
+interface ApiItem {
+  text: string;
+  subgroups: string | null;
+  classname: string | null;
+  count: number;
+  perish_dates: string[] | null;
+  imageUrl: string;
 }
 
-const transformItems = (data: ApiResponse): Item[] =>
-  data.item_list.map(([, text, subgroups, classname, count, perish_dates]) => ({
-    text,
-    subgroups,
-    classname,
-    count,
-    perish_dates: perish_dates ?? []
+interface ApiResponse {
+  items: ApiItem[];
+}
+
+const transformItems = (data: ApiResponse): Item[] => {
+  console.log("========== TRANSFORM ITEMS ==========");
+  console.log("Input data:", data);
+  console.log("Has items property?", data && 'items' in data);
+  console.log("Items is array?", data?.items && Array.isArray(data.items));
+  
+  const transformed = data.items.map((item) => ({
+    text: item.text,
+    subgroups: item.subgroups,
+    classname: item.classname,
+    count: item.count,
+    perish_dates: item.perish_dates ?? [],
+    imageUrl: item.imageUrl
   }));
+  
+  console.log("Transformed items count:", transformed.length);
+  return transformed;
+};
 
 // ============================================================================
 // Main Component
 // ============================================================================
 function App() {
+  console.log("========== APP COMPONENT RENDER START ==========");
+  
   const navigate = useNavigate();
   
   // Reactive window width
@@ -106,6 +151,8 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [transcription, setTranscription] = useState<string | null>(null);
   
+  console.log("Current state - data:", data, "error:", error, "isLoading:", isLoading);
+  
   // Refs for audio recording
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -113,33 +160,60 @@ function App() {
 
   // ========== Data Fetching ==========
   const fetchItems = useCallback(async (subgroup?: string | null, classname?: string | null) => {
+    console.log("========== FETCH ITEMS CALLED ==========");
+    console.log("subgroup:", subgroup, "classname:", classname);
+    
     setIsLoading(true);
+    console.log("Set isLoading = true");
+    
     setError(null);
+    console.log("Set error = null");
     
     try {
+      console.log("Building query params...");
       const params = new URLSearchParams({ only_wish_list: 'false' });
       if (subgroup) params.set('subgroups', subgroup);
       if (classname) params.set('classnames', classname);
       
-      const response = await apiCall<ApiResponse>(`/api/fetch_items?${params}`);
-      setData(transformItems(response));
-      console.warn("got this as a fetch response: " + transformItems(response))
-      if (data.length === 0){
-        
-        //setError("there are no items in the database")
+      const url = `/api/fetch_items?${params}`;
+      console.log("Calling API with URL:", url);
+      
+      const response = await apiCall<ApiResponse>(url);
+      console.log("API call returned successfully");
+      console.log("Raw API response:", response);
+      
+      const items = transformItems(response);
+      console.log("Items transformed:", items);
+      
+      setData(items);
+      console.log("Set data with", items.length, "items");
+      
+      if (items.length === 0) {
+        console.log("No items returned");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch items');
+      console.error("========== FETCH ITEMS ERROR ==========");
+      console.error("Error caught:", err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch items';
+      console.error("Setting error message:", errorMessage);
+      setError(errorMessage);
     } finally {
+      console.log("========== FETCH ITEMS FINALLY ==========");
       setIsLoading(false);
+      console.log("Set isLoading = false");
     }
   }, []);
 
   const fetchMetadata = useCallback(async () => {
+    console.log("========== FETCH METADATA CALLED ==========");
+    
     const [subRes, classRes] = await Promise.allSettled([
       apiCall<{ subgroups: string[] }>('/api/fetch_subgroups'),
       apiCall<{ classnames: string[] }>('/api/fetch_classnames')
     ]);
+    
+    console.log("Subgroups result:", subRes);
+    console.log("Classnames result:", classRes);
     
     if (subRes.status === 'fulfilled') setSubgroups(subRes.value.subgroups);
     if (classRes.status === 'fulfilled') setClassnames(classRes.value.classnames);
@@ -158,21 +232,32 @@ function App() {
     
     // API call
     const wishList = delta < 0 ? 'true' : 'false';
-    const success = await apiCallSafe(
-      `/api/add_ean_to_list/?item_name=${encodeURIComponent(item.text)}&count=${delta > 0 ? '+' : ''}${delta}&wish_list=${wishList}`
-    );
     
-    // Rollback on failure
-    if (!success) {
+    try {
+      await fetch('/api/add_ean_to_list/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8'
+        },
+        body: JSON.stringify({
+          item_name: item.text,
+          count: delta,
+          subgroups: item.subgroups || '',
+          wish_list: wishList
+        })
+      });
+      
+      // Reload if item removed (count reached 0)
+      if (newCount <= 0) {
+        setTimeout(() => window.location.reload(), 100);
+      }
+    } catch (err) {
+      // Rollback on failure
       setError('Failed to update item');
       setData(prev => prev.map(i => 
         i.text === item.text ? { ...i, count: item.count } : i
       ));
-    }
-    
-    // Reload if item removed (count reached 0)
-    if (success && newCount <= 0) {
-      setTimeout(() => window.location.reload(), 100);
+      console.error('Error updating item:', err);
     }
   }, []);
 
@@ -273,8 +358,12 @@ function App() {
 
   // ========== Effects ==========
   useEffect(() => {
+    console.log("========== INITIAL USEEFFECT RUNNING ==========");
+    console.log("About to call fetchItems()");
     fetchItems();
+    console.log("About to call fetchMetadata()");
     fetchMetadata();
+    console.log("========== INITIAL USEEFFECT COMPLETE ==========");
   }, [fetchItems, fetchMetadata]);
 
   useEffect(() => {
@@ -287,25 +376,51 @@ function App() {
   }, []);
 
   // ========== Memoized Components ==========
-  const itemList = useMemo(() => 
-    data.map((item, idx) => (
-      <Container
-        key={`${item.text}-${idx}`}
-        text={item.text}
-        subgroups={item.subgroups}
-        count={item.count}
-        classname={item.classname}
-        perish_dates={item.perish_dates}
-        imageUrl='https://upload.wikimedia.org/wikipedia/commons/4/4e/Bananen_Frucht.jpg'
-        onClickIncrease={increaseItem}
-        onClickDecrease={decreaseItem}
-        style=""
-      />
-    )),
-  [data, increaseItem, decreaseItem]);
+  console.log("About to create itemList memo");
+  console.log("Current data:", data);
+  console.log("Data type:", typeof data);
+  console.log("Is array?", Array.isArray(data));
+  console.log("Data length:", data?.length);
+
+  const itemList = useMemo(() => {
+    console.log("========== USEMEMO ITEMLIST EXECUTING ==========");
+    console.log("Data in useMemo:", data);
+    console.log("Data is array?", Array.isArray(data));
+    
+    if (!data || !Array.isArray(data)) {
+      console.error("Data is not an array:", data);
+      return [];
+    }
+    
+    console.log(`Mapping ${data.length} items to Container components`);
+    
+    const containers = data.map((item, idx) => {
+      console.log(`Creating container ${idx} for item:`, item.text);
+      return (
+        <Container
+          key={`${item.text}-${idx}`}
+          text={item.text}
+          subgroups={item.subgroups}
+          count={item.count}
+          classname={item.classname}
+          perish_dates={item.perish_dates}
+          imageUrl={item.imageUrl}
+          onClickIncrease={increaseItem}
+          onClickDecrease={decreaseItem}
+          style=""
+        />
+      );
+    });
+    
+    console.log(`Created ${containers.length} container components`);
+    return containers;
+  }, [data, increaseItem, decreaseItem]);
 
   // ========== Render ==========
+  console.log("Render decision - isLoading:", isLoading, "data.length:", data.length);
+  
   if (isLoading && data.length === 0) {
+    console.log("Rendering loading state");
     return (
       <div className="flex justify-center items-center min-h-screen">
         <div className="text-cyan-400 text-lg">Loading...</div>
@@ -318,12 +433,12 @@ function App() {
   if(error?.includes('there are no items in the database')){
       displayError = null;  //'No items in database' 
       noItemsAvailable = true;
-
     }
   else{
     displayError = error;
   }
 
+  console.log("Rendering main UI - displayError:", displayError, "noItemsAvailable:", noItemsAvailable);
     
   return (
     <div className="flex flex-col min-h-screen">
@@ -419,7 +534,6 @@ function App() {
             </div>
           </main>
         </>
-
       )}
       
       {/* Floating Attribution Notice */}

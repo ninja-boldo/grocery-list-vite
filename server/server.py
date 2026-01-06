@@ -309,9 +309,122 @@ def get_script_path(level: int = 0) -> str:
     return script_dir
 
 
-async def init_database(pool: asyncpg.Pool, dump_path: str = "maindb.sql"):
-    """Initialize database schema with self-healing capabilities"""
-    dump_path = os.environ.get("PG_DUMP", dump_path)
+# ============================================================================
+# DATABASE SCHEMA DEFINITION (Single Source of Truth)
+# ============================================================================
+DATABASE_SCHEMA = {
+    "food": {
+        "columns": [
+            ("code", "TEXT"),
+            ("product_name", "TEXT"),
+            ("quantity", "TEXT"),
+            ("packaging", "TEXT"),
+            ("brands_en", "TEXT"),
+            ("categories", "TEXT"),
+            ("ingredients_text", "TEXT"),
+            ("energy_kcal_100g", "TEXT"),
+        ],
+        "indexes": [
+            ("idx_food_code", "code"),
+            ("idx_food_product_name", "product_name"),
+        ],
+    },
+    "item_list": {
+        "columns": [
+            ("id", "SERIAL PRIMARY KEY"),
+            ("ean", "TEXT"),
+            ("item_name", "TEXT"),
+            ("subgroups", "TEXT DEFAULT ''"),
+            ("class", "TEXT DEFAULT ''"),
+            ("count", "INTEGER DEFAULT 1"),
+            ("timestamps", "JSONB DEFAULT '[]'::jsonb"),
+            ("iswished", "TEXT DEFAULT 'false'"),
+            ("image_url", "TEXT DEFAULT '' ")
+        ],
+        "indexes": [
+            ("idx_item_list_ean", "ean"),
+            ("idx_item_list_item_name", "item_name"),
+            ("idx_item_list_subgroups", "subgroups"),
+            ("idx_item_list_class", "class"),
+            ("idx_item_list_iswished", "iswished"),
+        ],
+    },
+}
+
+
+async def ensure_schema_compliance(pool: asyncpg.Pool) -> None:
+    """
+    Ensure database tables match the defined schema.
+    Creates missing tables, adds missing columns, and creates indexes.
+    This is idempotent and safe to run multiple times.
+    """
+    async with pool.acquire() as con:
+        for table_name, schema in DATABASE_SCHEMA.items():
+            logger.info(f"Ensuring schema compliance for table: {table_name}")
+            
+            # Check if table exists
+            table_exists = await con.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = $1
+                )
+                """,
+                table_name
+            )
+            
+            if not table_exists:
+                # Create table from schema
+                columns_def = ", ".join([f"{col} {col_type}" for col, col_type in schema["columns"]])
+                create_sql = f"CREATE TABLE {table_name} ({columns_def})"
+                await con.execute(create_sql)
+                logger.info(f"✓ Created table: {table_name}")
+            else:
+                # Table exists - ensure all columns are present
+                existing_columns = await con.fetch(
+                    """
+                    SELECT column_name, data_type 
+                    FROM information_schema.columns 
+                    WHERE table_schema = 'public' 
+                    AND table_name = $1
+                    """,
+                    table_name
+                )
+                existing_col_names = {row['column_name'] for row in existing_columns}
+                
+                # Add missing columns
+                for col_name, col_def in schema["columns"]:
+                    # Extract just the column name (without PRIMARY KEY, DEFAULT, etc.)
+                    base_col_name = col_name.strip()
+                    
+                    if base_col_name not in existing_col_names:
+                        try:
+                            await con.execute(
+                                f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_def}"
+                            )
+                            logger.info(f"✓ Added column: {table_name}.{col_name}")
+                        except Exception as e:
+                            # Column might already exist or be constrained
+                            logger.debug(f"Column addition skipped for {table_name}.{col_name}: {e}")
+            
+            # Create indexes
+            for idx_name, idx_column in schema["indexes"]:
+                try:
+                    await con.execute(
+                        f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table_name}({idx_column})"
+                    )
+                    logger.debug(f"✓ Ensured index: {idx_name}")
+                except Exception as e:
+                    logger.debug(f"Index creation skipped for {idx_name}: {e}")
+
+
+async def load_data_from_sources(pool: asyncpg.Pool) -> None:
+    """
+    Load data from available sources (SQL dump or CSV).
+    Only loads if tables are empty.
+    """
+    dump_path = os.environ.get("PG_DUMP", "maindb.sql")
     csv_path = Config.get_csv_path()
     
     dump_path_variants = [
@@ -324,118 +437,91 @@ async def init_database(pool: asyncpg.Pool, dump_path: str = "maindb.sql"):
     
     user, host, port, dbname, env = parse_db_url(Config.get_database_url())
     
+    async with pool.acquire() as con:
+        food_count = await con.fetchval("SELECT COUNT(*) FROM food") or 0
+    
+    if food_count > 0:
+        logger.info(f"Food table already populated with {food_count} rows")
+        return
+    
+    logger.info("Food table empty - attempting to load data from available sources")
+    
+    # Try SQL dump first
+    for variant in dump_path_variants:
+        if os.path.exists(variant):
+            logger.info(f"Found SQL dump: {variant}")
+            cmd = ["psql", "-U", user, "-d", dbname, "-f", variant]
+            if host:
+                cmd[1:1] = ["-h", host]
+            if port:
+                cmd[1:1] = ["-p", port]
+            
+            rc, out, err = await run_psql_command(cmd, env)
+            if rc == 0:
+                logger.info("✓ Successfully loaded data from SQL dump")
+                return
+            else:
+                logger.warning(f"SQL dump restore failed: {err}")
+    
+    # Fallback to CSV
+    if os.path.exists(csv_path):
+        logger.info(f"Attempting to load data from CSV: {csv_path}")
+        copy_cmd = (
+            r"\copy food(code,product_name,quantity,packaging,brands_en,"
+            r"categories,ingredients_text,energy_kcal_100g) "
+            f"FROM {shlex.quote(csv_path)} WITH (FORMAT csv, HEADER true)"
+        )
+        cmd = ["psql", "-U", user, "-d", dbname, "-c", copy_cmd]
+        if host:
+            cmd[1:1] = ["-h", host]
+        if port:
+            cmd[1:1] = ["-p", port]
+        
+        rc, out, err = await run_psql_command(cmd, env)
+        if rc == 0:
+            logger.info("✓ Successfully loaded data from CSV")
+        else:
+            logger.error(f"CSV load failed: {err}")
+    else:
+        logger.warning(f"No data sources found. Food table will remain empty.")
+        logger.info("Application will continue with empty food database")
+
+
+async def init_database(pool: asyncpg.Pool, dump_path: str = "maindb.sql"):
+    """
+    Initialize database with schema-driven approach.
+    
+    This function:
+    1. Ensures all tables match the defined schema (creates/updates as needed)
+    2. Attempts to load data from SQL dump or CSV if tables are empty
+    3. Is idempotent and safe to run multiple times
+    4. Will not fail if no data sources are available
+    """
     try:
-        async with pool.acquire() as con:
-            # Create tables with proper schema
-            await con.execute("""
-                CREATE TABLE IF NOT EXISTS food (
-                    code TEXT,
-                    product_name TEXT,
-                    quantity TEXT,
-                    packaging TEXT,
-                    brands_en TEXT,
-                    categories TEXT,
-                    ingredients_text TEXT,
-                    energy_kcal_100g TEXT
-                );
-            """)
-            
-            await con.execute("""
-                CREATE TABLE IF NOT EXISTS item_list (
-                    id SERIAL PRIMARY KEY,
-                    ean TEXT,
-                    item_name TEXT,
-                    subgroups TEXT DEFAULT '',
-                    class TEXT DEFAULT '',
-                    count INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    timestamps JSONB DEFAULT '[]'::jsonb,
-                    iswished TEXT DEFAULT 'false'
-                );
-            """)
-            
-            # Self-healing: Add missing columns
-            columns_to_add = [
-                ("timestamps", "JSONB DEFAULT '[]'::jsonb"),
-                ("iswished", "TEXT DEFAULT 'false'"),
-            ]
-            for col_name, col_def in columns_to_add:
-                try:
-                    await con.execute(
-                        f"ALTER TABLE item_list ADD COLUMN IF NOT EXISTS {col_name} {col_def};"
-                    )
-                except Exception as e:
-                    logger.debug(f"Column {col_name} may already exist: {e}")
-            
-            # Create indexes for performance
-            indexes = [
-                ("idx_item_list_subgroups", "item_list(subgroups)"),
-                ("idx_item_list_class", "item_list(class)"),
-                ("idx_item_list_ean", "item_list(ean)"),
-                ("idx_item_list_item_name", "item_list(item_name)"),
-                ("idx_item_list_iswished", "item_list(iswished)"),
-                ("idx_food_code", "food(code)"),
-                ("idx_food_product_name", "food(product_name)"),
-            ]
-            for idx_name, idx_target in indexes:
-                try:
-                    await con.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {idx_target};")
-                except Exception as e:
-                    logger.debug(f"Index {idx_name} issue: {e}")
-            
-            # Check food table status
-            food_count = await con.fetchval("SELECT COUNT(*) FROM food;") or 0
-            logger.info(f"Food table row count: {food_count}")
+        logger.info("Starting database initialization...")
         
-        # Attempt restore from dump if food table is empty
-        if food_count == 0:
-            for variant in dump_path_variants:
-                if os.path.exists(variant):
-                    logger.info(f"Restoring from dump: {variant}")
-                    cmd = ["psql", "-U", user, "-d", dbname, "-f", variant]
-                    if host:
-                        cmd[1:1] = ["-h", host]
-                    if port:
-                        cmd[1:1] = ["-p", port]
-                    rc, out, err = await run_psql_command(cmd, env)
-                    if rc == 0:
-                        logger.info("Dump restore successful")
-                        break
-                    else:
-                        logger.warning(f"Dump restore failed: {err}")
-            
-            # Fallback to CSV if still empty
-            async with pool.acquire() as con:
-                food_count = await con.fetchval("SELECT COUNT(*) FROM food;") or 0
-            
-            if food_count == 0 and os.path.exists(csv_path):
-                logger.info(f"Loading from CSV: {csv_path}")
-                copy_cmd = (
-                    r"\copy food(code,product_name,quantity,packaging,brands_en,"
-                    r"categories,ingredients_text,energy_kcal_100g) "
-                    f"FROM {shlex.quote(csv_path)} WITH (FORMAT csv, HEADER true)"
-                )
-                cmd = ["psql", "-U", user, "-d", dbname, "-c", copy_cmd]
-                if host:
-                    cmd[1:1] = ["-h", host]
-                if port:
-                    cmd[1:1] = ["-p", port]
-                rc, out, err = await run_psql_command(cmd, env)
-                if rc == 0:
-                    logger.info("CSV load successful")
-                else:
-                    logger.error(f"CSV load failed: {err}")
+        # Step 1: Ensure schema compliance (always runs)
+        await ensure_schema_compliance(pool)
+        logger.info("✓ Schema compliance verified")
         
-        # Final status check
+        # Step 2: Load data if needed (optional, won't fail startup)
+        try:
+            await load_data_from_sources(pool)
+        except Exception as e:
+            logger.warning(f"Data loading failed (non-critical): {e}")
+            logger.info("Application will continue without pre-loaded food data")
+        
+        # Step 3: Final status report
         async with pool.acquire() as con:
-            final_count = await con.fetchval("SELECT COUNT(*) FROM food;") or 0
-            tables = await con.fetch(
-                "SELECT tablename FROM pg_tables WHERE schemaname='public';"
-            )
-            logger.info(f"Database initialized. Food rows: {final_count}, Tables: {[t['tablename'] for t in tables]}")
+            tables_info = []
+            for table_name in DATABASE_SCHEMA.keys():
+                count = await con.fetchval(f"SELECT COUNT(*) FROM {table_name}") or 0
+                tables_info.append(f"{table_name}({count} rows)")
+            
+            logger.info(f"✓ Database initialized successfully: {', '.join(tables_info)}")
             
     except Exception as e:
-        logger.exception(f"Database initialization failed: {e}")
+        logger.exception(f"Critical database initialization error: {e}")
         raise
 
 # ============================================================================
@@ -447,14 +533,13 @@ def get_distinct_query(field: str) -> str:
     return f"SELECT DISTINCT {field} FROM item_list WHERE {field} != '' AND {field} IS NOT NULL ORDER BY {field}"
 
 
-def convert_timestamps_to_dates(timestamps_json: str) -> str:
-    """Convert ISO timestamps to date strings"""
+def convert_timestamps_to_dates(timestamps_json: str) -> list[str]:
+    """Convert ISO timestamps to date strings - returns list not JSON string"""
     try:
-        arr = json.loads(timestamps_json or '[]')
-        dates = [datetime.datetime.fromisoformat(t).date().isoformat() for t in arr]
-        return json.dumps(dates)
+        timestamps = json.loads(timestamps_json or '[]')
+        return [datetime.datetime.fromisoformat(t).date().isoformat() for t in timestamps]
     except (json.JSONDecodeError, ValueError):
-        return '[]'
+        return []
 
 
 def safe_int(value: Any, default: int = 1) -> int:
@@ -479,16 +564,16 @@ def validate_wish_list(value: Optional[str]) -> str:
 
 
 def build_fetch_query(
-    subgroups: Optional[str],
-    classnames: Optional[str],
-    only_wish_list: Optional[str],
-    onlyNotNull: Optional[str]
+    subgroups: Optional[str] = None,
+    classnames: Optional[str] = None,
+    only_wish_list: Optional[str] = None,
+    onlyNotNull: Optional[str] = "true"
 ) -> tuple[str, list]:
-    """Build optimized SQL query for fetching items"""
-    base = "SELECT ean, item_name, subgroups, class, count, timestamps FROM item_list"
+    """Build optimized SQL query for fetching items with filters"""
     conditions = []
     params = []
     
+    # Add filters
     if subgroups:
         params.append(subgroups)
         conditions.append(f"subgroups = ${len(params)}")
@@ -500,20 +585,137 @@ def build_fetch_query(
     if only_wish_list == "true":
         params.append("true")
         conditions.append(f"iswished = ${len(params)}")
-    
     elif only_wish_list == "false":
         conditions.append("COALESCE(lower(iswished::text), '') <> 'true'")
     
-    if onlyNotNull == "false":
-        pass
-    else:
-        conditions.append("not item_name = 'null' ")
-        
-        
-    where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    limit = "" if any([subgroups, classnames, only_wish_list]) else " LIMIT 1000"
+    # Filter out null items
+    if onlyNotNull != "false":
+        conditions.append("item_name IS NOT NULL AND item_name != 'null' AND item_name != ''")
     
-    return f"{base}{where} ORDER BY item_name{limit}", params
+    where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    limit_clause = "" if any([subgroups, classnames, only_wish_list]) else " LIMIT 1000"
+    
+    return (
+        f"SELECT ean, item_name, subgroups, class, count, timestamps, image_url FROM item_list{where_clause} ORDER BY item_name{limit_clause}",
+        params
+    )
+
+
+async def resolve_item_identity(
+    con: asyncpg.Connection,
+    ean: Optional[str],
+    item_name: Optional[str]
+) -> tuple[str, str]:
+    """
+    Resolve EAN and item_name from either parameter.
+    Returns: (ean, item_name)
+    """
+    # Case 1: Both provided
+    if ean and item_name:
+        return (ean, item_name)
+    
+    # Case 2: Only EAN provided
+    if ean and not item_name:
+        row = await con.fetchrow(
+            "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
+        )
+        if row:
+            return (ean, row['item_name'])
+        
+        # Fallback to food database
+        row = await con.fetchrow(
+            "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
+        )
+        if row:
+            return (ean, row['product_name'])
+        
+        raise HTTPException(status_code=404, detail=f"Item not found for EAN: {ean}")
+    
+    # Case 3: Only item_name provided
+    if item_name and not ean:
+        row = await con.fetchrow(
+            "SELECT ean FROM item_list WHERE item_name = $1 LIMIT 1", item_name
+        )
+        return (row['ean'] if row else "0", item_name)
+    
+    raise HTTPException(status_code=400, detail="Must provide ean or item_name")
+
+def getImageUrl(ean: str):
+    try:
+        res = requests.get(f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=selected_images")
+        json = res.json()
+        images: dict[str, str] = json["product"]["selected_images"]["front"]["display"]
+        if list(images.keys()).__contains__("en"):
+            return images["en"]
+        elif list(images.keys()).__contains__("de"):
+            return images["de"]
+        elif list(images.keys()).__contains__("fr"):
+            return images["fr"]
+        elif list(images.keys()).__contains__("es"):
+            return images["es"]
+        logger.warning(f"failed to get the image url for ean: {ean} ")
+    except Exception as e:
+        logger.warning(f"failed to do the image fetching for this ean: {ean}. error: {e} ")
+        
+        
+async def perform_item_operation(
+    con: asyncpg.Connection,
+    item_name: str,
+    ean: str = "0",
+    count_delta: int = 1,
+    subgroups: str = "none",
+    is_wish_list: str = "false"
+) -> str:
+    """
+    Unified item operation handler (create/update/delete).
+    Returns: operation performed ('created', 'updated', 'deleted')
+    """
+    current_time = datetime.datetime.now().isoformat()
+    
+    # Fetch existing item
+    existing = await con.fetchrow(
+        "SELECT count, timestamps FROM item_list WHERE item_name = $1", item_name
+    )
+    
+    if not existing:
+        # Create new item
+        if count_delta <= 0:
+            return "skipped"  # Don't create with zero/negative count
+        
+        timestamps = [current_time] * count_delta
+        await con.execute(
+            """INSERT INTO item_list 
+               (ean, item_name, subgroups, class, count, timestamps, iswished, image_url) 
+               VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+            ean, item_name, subgroups, "", count_delta, json.dumps(timestamps), is_wish_list, getImageUrl(ean)
+        )
+        return "created"
+    
+    # Update existing item
+    existing_count = existing['count']
+    existing_ts = json.loads(existing['timestamps'] or '[]')
+    
+    if count_delta < 0:
+        # Decrease count - remove oldest timestamps
+        to_remove = min(abs(count_delta), existing_count)
+        new_ts = existing_ts[to_remove:]
+        new_count = existing_count - to_remove
+    else:
+        # Increase count - add new timestamps
+        new_ts = existing_ts + [current_time] * count_delta
+        new_count = existing_count + count_delta
+    
+    if new_count <= 0:
+        # Delete item if count reaches zero
+        await con.execute("DELETE FROM item_list WHERE item_name = $1", item_name)
+        return "deleted"
+    
+    # Update item
+    await con.execute(
+        "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
+        new_count, json.dumps(new_ts), item_name
+    )
+    return "updated"
 
 
 def purge_folder(folder_path: str) -> None:
@@ -543,6 +745,7 @@ class GroceryItem(BaseModel):
     count: int = 1
     perish_dates: list[str] = []
     is_wish_list: bool = False
+    imageUrl: str
 
 
 class ItemUpdateRequest(BaseModel):
@@ -552,6 +755,15 @@ class ItemUpdateRequest(BaseModel):
     subgroups: Optional[str] = None
     count: Optional[int] = 1
     is_wish_list: Optional[bool] = False
+
+
+class AddEanRequest(BaseModel):
+    """Request model for add_ean_to_list endpoint (legacy)"""
+    ean: Optional[str] = None
+    item_name: Optional[str] = None
+    subgroups: Optional[str] = None
+    count: Optional[int] = 1
+    wish_list: Optional[str] = None
 
 
 class ItemUpdateResponse(BaseModel):
@@ -738,37 +950,24 @@ async def get_items(
     
     try:
         # Convert boolean to string for build_fetch_query
-        wish_list_str = None
-        if only_wish_list is True:
-            wish_list_str = "true"
-        elif only_wish_list is False:
-            wish_list_str = "false"
+        wish_list_str = "true" if only_wish_list is True else "false" if only_wish_list is False else None
         
-        query, params = build_fetch_query(subgroups, classnames, wish_list_str, onlyNotNull="true")
+        query, params = build_fetch_query(subgroups, classnames, wish_list_str)
         rows = await request.app.state.db.fetch_with_retry(query, *params)
         
-        items = []
-        for row in rows:
-            perish_dates = []
-            try:
-                perish_dates = json.loads(row['timestamps'] or '[]')
-                # Convert ISO timestamps to dates
-                perish_dates = [
-                    datetime.datetime.fromisoformat(t).date().isoformat()
-                    for t in perish_dates
-                ]
-            except (json.JSONDecodeError, ValueError):
-                perish_dates = []
-            
-            items.append(GroceryItem(
+        items = [
+            GroceryItem(
                 ean=row['ean'] or '',
                 item_name=row['item_name'] or '',
                 subgroups=row['subgroups'] or '',
                 class_name=row['class'] or '',
                 count=row['count'] or 0,
-                perish_dates=perish_dates,
-                is_wish_list=False  # TODO: Add iswished column check
-            ))
+                perish_dates=convert_timestamps_to_dates(row['timestamps']),
+                is_wish_list=False,
+                imageUrl=row['image_url'] or '/public/none_available.png'
+            )
+            for row in rows
+        ]
         
         logger.info(f"get_items returned {len(items)} items")
         return ItemListResponse(items=items, total=len(items))
@@ -779,147 +978,6 @@ async def get_items(
         raise HTTPException(status_code=500, detail="Failed to fetch items")
 
 
-async def addByDataDump(
-    request: Request,
-    ean: Optional[str] = Query(None),
-    item_name: Optional[str] = Query(None),
-    subgroups: Optional[str] = Query(None),
-    count: Optional[int] = Query(1),
-    is_wish_list: Optional[bool] = Query(False)):
-    try:
-        async with request.app.state.pool.acquire() as con:
-            async with con.transaction():
-                # Resolve item_name from EAN if needed
-                resolved_item_name = item_name
-                resolved_ean = ean or "0"
-                is_wish_list_str = "true" if is_wish_list else "false"
-                count = count if count else 1
-                start_time = time.time()
-                subgroups = subgroups if subgroups else "none"
-                
-                if ean and not item_name:
-                    row = await con.fetchrow(
-                        "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
-                    )
-                    if row:
-                        resolved_item_name = row['item_name']
-                    else:
-                        row = await con.fetchrow(
-                            "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
-                        )
-                        if row:
-                            resolved_item_name = row['product_name']
-                        else:
-                            raise HTTPException(status_code=404, detail=f"Item not found for EAN: {ean}")
-                
-                # Fast path: Single query for common operations
-                current_time = datetime.datetime.now().isoformat()
-                
-                # Check existing item
-                existing = await con.fetchrow(
-                    "SELECT count, timestamps FROM item_list WHERE item_name = $1",
-                    resolved_item_name
-                )
-                
-                if not existing:
-                    # Create new item
-                    timestamps = [current_time] * count if count > 0 else []
-                    await con.execute(
-                        """INSERT INTO item_list 
-                           (ean, item_name, subgroups, class, count, timestamps, iswished) 
-                           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-                        resolved_ean, resolved_item_name, subgroups, "", count,
-                        json.dumps(timestamps), is_wish_list_str
-                    )
-                    operation = "created"
-                else:
-                    # Update existing item
-                    existing_count = existing['count']
-                    existing_ts = json.loads(existing['timestamps'] or '[]')
-                    
-                    if count < 0:
-                        to_remove = min(abs(count), existing_count)
-                        new_ts = existing_ts[to_remove:]
-                        new_count = existing_count - to_remove
-                    else:
-                        new_ts = existing_ts + [current_time] * count
-                        new_count = existing_count + count
-                    
-                    if new_count <= 0:
-                        await con.execute(
-                            "DELETE FROM item_list WHERE item_name = $1",
-                            resolved_item_name
-                        )
-                        operation = "deleted"
-                    else:
-                        await con.execute(
-                            "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
-                            new_count, json.dumps(new_ts), resolved_item_name
-                        )
-                        operation = "updated"
-                
-                execution_time = time.time() - start_time
-                
-                return ItemUpdateResponse(
-                    ean=resolved_ean,
-                    product_name=resolved_item_name or "",
-                    subgroups=subgroups,
-                    operation=operation,
-                    execution_time=execution_time
-                )
-                
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"update_item error: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Failed to update item")
-
-
-
-def constructFetchUrlOpenfood(ean: str | int) -> str:
-    if isinstance(ean, int):
-        ean = str(ean)  
-    return f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=product_name"
-    
-async def getProduct(request: Request, ean: str, item_name: str, useDbDump: bool = False) -> tuple[str, str, bool]:
-    if useDbDump:
-        async with request.app.state.pool.acquire() as con:
-            if ean and not item_name:
-                # Fixed: reduced indentation
-                row = await con.fetchrow(
-                    "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
-                )
-                if row:
-                    resolved_item_name = row['item_name']
-                else:
-                    row = await con.fetchrow(
-                        "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
-                    )
-                    if row:
-                        resolved_item_name = row['product_name']
-                    else:
-                        raise HTTPException(status_code=404, detail=f"Item not found for EAN: {ean}")
-                            
-            existing = await con.fetchrow(
-                "SELECT count, timestamps FROM item_list WHERE item_name = $1",
-                resolved_item_name
-            )
-        return (ean, resolved_item_name, existing)
-    
-    else:
-        resp: requests.Response = requests.get(url=constructFetchUrlOpenfood(ean))
-        if resp.status_code == 200:
-            jsonResp = resp.json()
-            resolved_item_name: str = jsonResp["product"]["product_name"]
-            existing = True
-            print(f"api request yielded this json: {jsonResp}")  # Moved inside if block
-        else:
-            resolved_item_name = ""  # Provide default value
-            existing = False
-            
-        return (ean, resolved_item_name, existing)
-        
 @app.get("/api/items/update")
 async def update_item_endpoint(
     request: Request,
@@ -936,75 +994,31 @@ async def update_item_endpoint(
     Uses optimized database queries and reduced transaction overhead.
     For backwards compatibility, old endpoints remain available.
     """
-    useDataDump: bool = False
-    
-    # Validate input
     if not ean and not item_name:
         raise HTTPException(status_code=400, detail="Must supply ean or item_name")
     
-    count = safe_int(count, 1)
-    subgroups = sanitize_string(subgroups)
+    count_delta = safe_int(count, 1)
+    subgroups = sanitize_string(subgroups, "none")
+    is_wish_list_str = "true" if is_wish_list else "false"
+    
+    start_time = time.time()
     
     try:
         async with request.app.state.pool.acquire() as con:
             async with con.transaction():
-                # Resolve item_name from EAN if needed
-                resolved_item_name = item_name
-                resolved_ean = ean or "0"
-                is_wish_list_str = "true" if is_wish_list else "false"
-                count = count if count else 1
-                start_time = time.time()
-                subgroups = subgroups if subgroups else "none"
+                # Resolve item identity
+                resolved_ean, resolved_item_name = await resolve_item_identity(con, ean, item_name)
                 
-                resolved_ean, resolved_item_name, existing = getProductByEan(ean=ean, item_name=item_name)
-                
-                # Fast path: Single query for common operations
-                current_time = datetime.datetime.now().isoformat()
-                
-                
-                
-                if not existing:
-                    # Create new item
-                    timestamps = [current_time] * count if count > 0 else []
-                    await con.execute(
-                        """INSERT INTO item_list 
-                           (ean, item_name, subgroups, class, count, timestamps, iswished) 
-                           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-                        resolved_ean, resolved_item_name, subgroups, "", count,
-                        json.dumps(timestamps), is_wish_list_str
-                    )
-                    operation = "created"
-                else:
-                    # Update existing item
-                    existing_count = existing['count']
-                    existing_ts = json.loads(existing['timestamps'] or '[]')
-                    
-                    if count < 0:
-                        to_remove = min(abs(count), existing_count)
-                        new_ts = existing_ts[to_remove:]
-                        new_count = existing_count - to_remove
-                    else:
-                        new_ts = existing_ts + [current_time] * count
-                        new_count = existing_count + count
-                    
-                    if new_count <= 0:
-                        await con.execute(
-                            "DELETE FROM item_list WHERE item_name = $1",
-                            resolved_item_name
-                        )
-                        operation = "deleted"
-                    else:
-                        await con.execute(
-                            "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
-                            new_count, json.dumps(new_ts), resolved_item_name
-                        )
-                        operation = "updated"
+                # Perform operation
+                operation = await perform_item_operation(
+                    con, resolved_item_name, resolved_ean, count_delta, subgroups, is_wish_list_str
+                )
                 
                 execution_time = time.time() - start_time
                 
                 return ItemUpdateResponse(
                     ean=resolved_ean,
-                    product_name=resolved_item_name or "",
+                    product_name=resolved_item_name,
                     subgroups=subgroups,
                     operation=operation,
                     execution_time=execution_time
@@ -1039,45 +1053,13 @@ async def batch_update_items(
     try:
         async with request.app.state.pool.acquire() as con:
             async with con.transaction():
-                current_time = datetime.datetime.now().isoformat()
-                
                 for item in batch_request.items:
                     try:
-                        # Get existing item
-                        existing = await con.fetchrow(
-                            "SELECT count, timestamps FROM item_list WHERE item_name = $1",
-                            item.item_name
+                        operation = await perform_item_operation(
+                            con, item.item_name, count_delta=item.count_delta
                         )
-                        
-                        if not existing:
-                            errors.append(f"Item not found: {item.item_name}")
-                            failed += 1
-                            continue
-                        
-                        existing_count = existing['count']
-                        existing_ts = json.loads(existing['timestamps'] or '[]')
-                        
-                        if item.count_delta < 0:
-                            to_remove = min(abs(item.count_delta), existing_count)
-                            new_ts = existing_ts[to_remove:]
-                            new_count = existing_count - to_remove
-                        else:
-                            new_ts = existing_ts + [current_time] * item.count_delta
-                            new_count = existing_count + item.count_delta
-                        
-                        if new_count <= 0:
-                            await con.execute(
-                                "DELETE FROM item_list WHERE item_name = $1",
-                                item.item_name
-                            )
-                        else:
-                            await con.execute(
-                                "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
-                                new_count, json.dumps(new_ts), item.item_name
-                            )
-                        
-                        updated += 1
-                        
+                        if operation != "skipped":
+                            updated += 1
                     except Exception as e:
                         errors.append(f"{item.item_name}: {str(e)}")
                         failed += 1
@@ -1214,122 +1196,103 @@ async def fetch_items(
     logger.info(f"fetch_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list}")
     
     try:
-        query, params = build_fetch_query(subgroups, classnames, only_wish_list, onlyNotNull="true")
+        query, params = build_fetch_query(subgroups, classnames, only_wish_list)
         rows = await request.app.state.db.fetch_with_retry(query, *params)
         
         item_list = [
-            (
-                row['ean'],
-                row['item_name'],
-                row['subgroups'] or '',
-                row['class'] or '',
-                row['count'],
-                convert_timestamps_to_dates(row['timestamps'])
-            )
-            for row in rows
-        ]
-        
+                    {   
+                        "ean": row['ean'],
+                        "text": row['item_name'],
+                        "subgroups": row['subgroups'] or '',
+                        "classname": row['class'] or '',
+                        "count": row['count'],
+                        "perish_dates": convert_timestamps_to_dates(row['timestamps']),
+                        "imageUrl": row['image_url'] or '/public/none_available.png'
+                    }    
+                    for row in rows
+                ]
         logger.info(f"fetch_items returned {len(item_list)} items")
-        return {"item_list": item_list}
+        logger.info(str({'items': item_list}))
+        return {"items": item_list}
         
     except Exception as e:
         logger.error(f"fetch_items error: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to fetch items")
 
-
-@app.get("/add_ean_to_list/")
+@app.get("/rescan_for_image_urls")
+async def rescanImageUrls(request: Request):
+    """Rescan all items with empty image URLs and fetch them from OpenFoodFacts"""
+    try:
+        rows = await request.app.state.db.fetch_with_retry("select distinct(ean), image_url from item_list")
+        print(f"fetched rows for rescan: {rows}")
+        eansToMod = []
+        print(f"example: image_url: {rows[0]['image_url']}, ean: {rows[0]['ean']}")
+        
+        for row in rows:
+            if row['image_url'] == '' and row['ean'] not in ["-1", "0", "1"]:
+                eansToMod.append(row["ean"])
+                
+        print(f"eans to mod: {eansToMod}")
+        updated_count = 0
+        for ean in eansToMod:
+            image_url = getImageUrl(ean)
+            if image_url:
+                await request.app.state.db.execute_with_retry(
+                    "UPDATE item_list SET image_url = $1 WHERE ean = $2",
+                    image_url,
+                    ean
+                )
+                updated_count += 1
+        
+        logger.info(f"Updated {updated_count} image URLs out of {len(eansToMod)} empty entries")
+        return {"done": True, "updated": updated_count, "total_empty": len(eansToMod), "eansUpdated": str(eansToMod)}
+    
+    except Exception as e:
+        logger.error(f"Failed while rescanning image URLs: {e}")
+        logger.error(traceback.format_exc())
+        return {"done": False, "error": str(e)}
+    
+    
+@app.post("/add_ean_to_list/")
 async def add_ean_to_list(
     request: Request,
-    ean: Optional[str] = Query(None, min_length=8, max_length=14),
-    subgroups: Optional[str] = Query(None),
-    count: Optional[int] = Query(1),
-    item_name: Optional[str] = Query(None),
-    wish_list: Optional[str] = Query(None)
+    body: AddEanRequest
 ):
     """
-    Add item to list by EAN or name
+    Add item to list by EAN or name (POST)
     
     @deprecated Use /api/items/update instead for better performance
     This endpoint is maintained for backwards compatibility only.
     """
-    if not ean and not item_name:
+    if not body.ean and not body.item_name:
         raise HTTPException(status_code=400, detail="Must supply ean or item_name")
     
-    count = safe_int(count, 1)
-    subgroups = sanitize_string(subgroups)
-    wish_list = validate_wish_list(wish_list)
+    count_delta = safe_int(body.count, 1)
+    subgroups = sanitize_string(body.subgroups, "none")
+    wish_list = validate_wish_list(body.wish_list)
     
     try:
         async with request.app.state.pool.acquire() as con:
             async with con.transaction():
-                # Resolve item_name from EAN
-                if ean and not item_name:
-                    row = await con.fetchrow(
-                        "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
-                    )
-                    if row:
-                        item_name = row['item_name']
-                    else:
-                        row = await con.fetchrow(
-                            "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
-                        )
-                        if row:
-                            item_name = row['product_name']
-                        else:
-                            raise HTTPException(status_code=404, detail=f"Item not found for EAN: {ean}")
+                # Resolve item identity
+                resolved_ean, resolved_item_name = await resolve_item_identity(con, body.ean, body.item_name)
                 
-                # Resolve EAN from item_name
-                elif item_name and not ean:
-                    row = await con.fetchrow(
-                        "SELECT ean FROM item_list WHERE item_name = $1 LIMIT 1", item_name
-                    )
-                    ean = row['ean'] if row else "-1"
-                
-                # Process item addition/update
-                current_time = datetime.datetime.now().isoformat()
-                existing = await con.fetchrow(
-                    "SELECT count, timestamps FROM item_list WHERE item_name = $1", item_name
+                # Perform operation
+                await perform_item_operation(
+                    con, resolved_item_name, resolved_ean, count_delta, subgroups, wish_list
                 )
                 
-                if not existing:
-                    timestamps = [current_time] * count if count > 0 else []
-                    await con.execute(
-                        """INSERT INTO item_list 
-                           (ean, item_name, subgroups, class, count, timestamps, iswished) 
-                           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-                        ean, item_name, subgroups, "", count, json.dumps(timestamps), wish_list
-                    )
-                else:
-                    existing_count = existing['count']
-                    existing_ts = json.loads(existing['timestamps'] or '[]')
-                    
-                    if count < 0:
-                        to_remove = min(abs(count), existing_count)
-                        new_ts = existing_ts[to_remove:]
-                        new_count = existing_count - to_remove
-                    else:
-                        new_ts = existing_ts + [current_time] * count
-                        new_count = existing_count + count
-                    
-                    if new_count <= 0:
-                        await con.execute("DELETE FROM item_list WHERE item_name = $1", item_name)
-                    else:
-                        await con.execute(
-                            "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
-                            new_count, json.dumps(new_ts), item_name
-                        )
-                
-                # Get product name for response
+                # Get product name for response (for backwards compatibility)
                 product_row = await con.fetchrow(
-                    "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
+                    "SELECT product_name FROM food WHERE code = $1 LIMIT 1", resolved_ean
                 )
-                product_name = product_row['product_name'] if product_row else item_name
+                product_name = product_row['product_name'] if product_row else resolved_item_name
+                presentInDb = bool(product_name and product_name.strip().lower() not in ("null", ""))
                 
-                presentInDb: bool = True if product_name.strip().lower() != "null" and product_name.strip() != "" else False
                 return {
-                    "ean": ean,
-                    "product_name": product_name,
+                    "ean": resolved_ean,
+                    "product_name": product_name or resolved_item_name,
                     "done": True,
                     "subgroups": subgroups,
                     "present_in_database": presentInDb
@@ -1362,112 +1325,54 @@ async def add_ean_manual(
     
     logger.info(f"[{op_id}] add_ean_manual: ean={ean}, item_name={item_name}, count={count}")
     
-    # Input validation
-    count = safe_int(count, 1)
-    
+    # Input validation and sanitization
+    count_delta = safe_int(count, 1)
     if not ean and not item_name:
         raise HTTPException(status_code=400, detail="Must supply ean or item_name")
     
     is_wish_list = validate_wish_list(is_wish_list)
-    subgroups = sanitize_string(subgroups)
+    subgroups = sanitize_string(subgroups, "none")
     ean = sanitize_string(ean, "0")
     item_name = sanitize_string(item_name) if item_name else None
     
     try:
         async with request.app.state.pool.acquire() as con:
             async with con.transaction():
-                # Resolve item_name from EAN
-                if ean != "0" and not item_name:
-                    row = await con.fetchrow(
-                        "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
-                    )
-                    if row:
-                        item_name = row['item_name']
-                    else:
-                        row = await con.fetchrow(
-                            "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
-                        )
-                        if row:
-                            item_name = row['product_name']
-                        else:
-                            raise HTTPException(status_code=404, detail=f"Item not found for EAN: {ean}")
+                # Resolve item identity
+                resolved_ean, resolved_item_name = await resolve_item_identity(con, ean if ean != "0" else None, item_name)
                 
-                # Resolve EAN from item_name
-                elif item_name and ean == "0":
-                    row = await con.fetchrow(
-                        "SELECT ean FROM item_list WHERE item_name = $1 LIMIT 1", item_name
-                    )
-                    ean = row['ean'] if row else "0"
-                
-                # Check for new EAN entry
-                if item_name and ean != "0":
+                # Check for new EAN entry (special case for manual entry)
+                if resolved_item_name and resolved_ean != "0":
                     existing_by_ean = await con.fetchrow(
-                        "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
+                        "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", resolved_ean
                     )
                     
                     if not existing_by_ean:
-                        current_time = datetime.datetime.now().isoformat()
-                        timestamps = [current_time] * count if count > 0 else []
-                        
-                        await con.execute(
-                            """INSERT INTO item_list 
-                               (ean, item_name, subgroups, class, count, timestamps, iswished) 
-                               VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-                            ean, item_name, subgroups, "", count, json.dumps(timestamps), is_wish_list
+                        operation = await perform_item_operation(
+                            con, resolved_item_name, resolved_ean, count_delta, subgroups, is_wish_list
                         )
+                        execution_time = time.time() - start_time
                         
                         return {
-                            "ean": ean,
-                            "product_name": item_name,
+                            "ean": resolved_ean,
+                            "product_name": resolved_item_name,
                             "done": True,
                             "subgroups": subgroups,
                             "operation": "created_new",
-                            "execution_time": time.time() - start_time
+                            "execution_time": execution_time
                         }
                 
-                # Process existing item
-                current_time = datetime.datetime.now().isoformat()
-                existing = await con.fetchrow(
-                    "SELECT ean, count, timestamps FROM item_list WHERE item_name = $1", item_name
+                # Perform standard operation
+                operation = await perform_item_operation(
+                    con, resolved_item_name, resolved_ean, count_delta, subgroups, is_wish_list
                 )
-                
-                if not existing:
-                    timestamps = [current_time] * count if count > 0 else []
-                    await con.execute(
-                        """INSERT INTO item_list 
-                           (ean, item_name, subgroups, class, count, timestamps, iswished) 
-                           VALUES ($1, $2, $3, $4, $5, $6, $7)""",
-                        ean, item_name, subgroups, "", count, json.dumps(timestamps), is_wish_list
-                    )
-                    operation = "created"
-                else:
-                    existing_count = existing['count']
-                    existing_ts = json.loads(existing['timestamps'] or '[]')
-                    
-                    if count < 0:
-                        to_remove = min(abs(count), existing_count)
-                        new_ts = existing_ts[to_remove:]
-                        new_count = existing_count - to_remove
-                    else:
-                        new_ts = existing_ts + [current_time] * count
-                        new_count = existing_count + count
-                    
-                    if new_count <= 0:
-                        await con.execute("DELETE FROM item_list WHERE item_name = $1", item_name)
-                        operation = "deleted"
-                    else:
-                        await con.execute(
-                            "UPDATE item_list SET count = $1, timestamps = $2 WHERE item_name = $3",
-                            new_count, json.dumps(new_ts), item_name
-                        )
-                        operation = "updated"
                 
                 execution_time = time.time() - start_time
                 logger.info(f"[{op_id}] Completed in {execution_time:.2f}s, operation={operation}")
                 
                 return {
-                    "ean": ean,
-                    "product_name": item_name,
+                    "ean": resolved_ean,
+                    "product_name": resolved_item_name,
                     "done": True,
                     "subgroups": subgroups,
                     "operation": operation,
