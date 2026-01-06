@@ -686,7 +686,7 @@ async def perform_item_operation(
         await con.execute(
             """INSERT INTO item_list 
                (ean, item_name, subgroups, class, count, timestamps, iswished, image_url) 
-               VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
             ean, item_name, subgroups, "", count_delta, json.dumps(timestamps), is_wish_list, getImageUrl(ean)
         )
         return "created"
@@ -964,7 +964,7 @@ async def get_items(
                 count=row['count'] or 0,
                 perish_dates=convert_timestamps_to_dates(row['timestamps']),
                 is_wish_list=False,
-                imageUrl=row['image_url'] or '/public/none_available.png'
+                imageUrl=row['image_url'] or '/none_available.png'
             )
             for row in rows
         ]
@@ -1207,7 +1207,7 @@ async def fetch_items(
                         "classname": row['class'] or '',
                         "count": row['count'],
                         "perish_dates": convert_timestamps_to_dates(row['timestamps']),
-                        "imageUrl": row['image_url'] or '/public/none_available.png'
+                        "imageUrl": row['image_url'] or '/none_available.png'
                     }    
                     for row in rows
                 ]

@@ -1,7 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 
 import App from './App';
-import BarcodeScanner from './comp/Scanner';
+import BarcodeScanner from './comp/ImprovedScanner';
 import ImprovedScanner from './comp/ImprovedScanner';
 import MlScanner from './comp/MlScanner';
 import ManualAdd from './comp/ManualAdding';

@@ -3,8 +3,10 @@ import Container from './comp/Container';
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import ErrorContainer from './comp/ErrorContainer';
 import DropdownComp from './comp/Dropdown';
+import MergedDropdown from './comp/MergedDropdown';
 import { useNavigate } from 'react-router-dom';
-import StyledButton from './comp/StyledButton';
+//import StyledButton from './comp/StyledButton';
+import SplitButton from './comp/SplitButton';
 import { Bars3Icon } from '@heroicons/react/24/outline';
 import SidebarComp from "./comp/Sidebar";
 import InfoContainer from './comp/InfoContainer';
@@ -441,7 +443,7 @@ function App() {
   console.log("Rendering main UI - displayError:", displayError, "noItemsAvailable:", noItemsAvailable);
     
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="flex flex-col min-h-screen mt-3">
       {/* Sidebar - always rendered, visibility controlled by CSS transform */}
       <SidebarComp isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
       
@@ -454,33 +456,43 @@ function App() {
             {/* Sidebar Toggle */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-slate-700/50 transition-colors flex-shrink-0"
+              className="flex items-center justify-center w-15 h-15 rounded-lg hover:bg-slate-700/50 transition-colors flex-shrink-0"
             >
-              <Bars3Icon className="h-6 w-6 text-white" />
+              <Bars3Icon className="h-10 w-10 text-white" />
+              
             </button>
 
             {/* Dropdowns */}
-            <DropdownComp 
-              task="subgroups" 
-              text="subs" 
-              elements={subgroups} 
-              onClickElement={fetchItems} 
-              onClickReset={fetchItems} 
-              style="" 
-            />
-
-            {!isMobile && (
-              <DropdownComp 
-                task="classnames" 
-                text="class" 
-                elements={classnames} 
-                onClickElement={fetchItems} 
-                onClickReset={fetchItems} 
-                style="" 
-              />
+            { !isMobile && (
+            <div className='flex flex-col'>
+              
+              
+              <div className='m-1'>
+                <DropdownComp 
+                  task="subgroups" 
+                  text="subs" 
+                  elements={subgroups} 
+                  onClickElement={fetchItems} 
+                  onClickReset={fetchItems} 
+                  style="" 
+                />
+              </div>
+              <div className='m-1'>
+                {(
+                  <DropdownComp 
+                    task="classnames" 
+                    text="class" 
+                    elements={classnames} 
+                    onClickElement={fetchItems} 
+                    onClickReset={fetchItems} 
+                    style="" 
+                  />
+                )}
+              </div>
+            </div>
             )}
-
             {/* Add/Remove Buttons */}
+            {/*
             <div className="flex gap-2">
               <StyledButton 
                 text="+" 
@@ -493,7 +505,13 @@ function App() {
                 className="" 
               />
             </div>
+            */}
 
+            <SplitButton 
+            onClickUpper={() => navigateScanner(1)}
+            onClickBottom={() => navigateScanner(-1)}
+            
+             />
             {/* Recording Button */}
             <button
               onClick={handleRecording}
