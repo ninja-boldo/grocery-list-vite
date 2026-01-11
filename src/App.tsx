@@ -2,22 +2,23 @@ import './App.css';
 import Container from './comp/Container';
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import ErrorContainer from './comp/ErrorContainer';
-import DropdownComp from './comp/Dropdown';
+//import DropdownComp from './comp/Dropdown';
 import MergedDropdown from './comp/MergedDropdown';
 import { useNavigate } from 'react-router-dom';
 //import StyledButton from './comp/StyledButton';
 import SplitButton from './comp/SplitButton';
-import { Bars3Icon } from '@heroicons/react/24/outline';
 import SidebarComp from "./comp/Sidebar";
 import InfoContainer from './comp/InfoContainer';
 import AttributionNotice from './comp/AttributionNotice';
+import SearchBar from './comp/SearchBar';
+import VoiceRecorder from './comp/VoiceRecorder';
 
 console.log("========== APP.TSX MODULE LOADED ==========");
 
 // ============================================================================
 // Types
 // ============================================================================
-interface Item {
+export interface Item {
   text: string | null;
   subgroups: string | null;
   classname: string | null;
@@ -44,10 +45,7 @@ async function apiCall<T>(
   options?: RequestInit, 
   retries = RETRY_ATTEMPTS
 ): Promise<T> {
-  console.log(`========== API CALL START ==========`);
-  console.log("URL:", url);
-  console.log("Retries:", retries);
-  
+    
   let lastError: Error | null = null;
   
   for (let attempt = 0; attempt < retries; attempt++) {
@@ -63,13 +61,9 @@ async function apiCall<T>(
       
       // Get raw text first
       const rawText = await response.text();
-      console.log("Raw response (first 200 chars):", rawText.substring(0, 200));
       
       // Try to parse
       const parsed = JSON.parse(rawText);
-      console.log("Successfully parsed JSON");
-      console.log("Parsed data type:", typeof parsed);
-      console.log("Is array?", Array.isArray(parsed));
       
       return parsed;
       
@@ -80,7 +74,6 @@ async function apiCall<T>(
       
       if (attempt < retries - 1) {
         const delay = RETRY_DELAY * (attempt + 1);
-        console.log(`Waiting ${delay}ms before retry...`);
         await sleep(delay);
       }
     }
@@ -107,10 +100,7 @@ interface ApiResponse {
 }
 
 const transformItems = (data: ApiResponse): Item[] => {
-  console.log("========== TRANSFORM ITEMS ==========");
-  console.log("Input data:", data);
-  console.log("Has items property?", data && 'items' in data);
-  console.log("Items is array?", data?.items && Array.isArray(data.items));
+
   
   const transformed = data.items.map((item) => ({
     text: item.text,
@@ -129,7 +119,6 @@ const transformItems = (data: ApiResponse): Item[] => {
 // Main Component
 // ============================================================================
 function App() {
-  console.log("========== APP COMPONENT RENDER START ==========");
   
   const navigate = useNavigate();
   
@@ -147,7 +136,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<Item[]>([]);
   const [subgroups, setSubgroups] = useState<string[]>([]);
-  const [classnames, setClassnames] = useState<string[]>([]);
+  const [, setClassnames] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -161,20 +150,17 @@ function App() {
   const transcriptionTimer = useRef<NodeJS.Timeout | null>(null);
 
   // ========== Data Fetching ==========
-  const fetchItems = useCallback(async (subgroup?: string | null, classname?: string | null) => {
-    console.log("========== FETCH ITEMS CALLED ==========");
-    console.log("subgroup:", subgroup, "classname:", classname);
+  const fetchItems = useCallback(async (subgroup?: string | null, sortOrder?: string | null, classname?: string | null) => {
+    console.log("subgroup:", subgroup, "sortOrder:", sortOrder, "classname:", classname);
     
     setIsLoading(true);
-    console.log("Set isLoading = true");
     
     setError(null);
-    console.log("Set error = null");
     
     try {
-      console.log("Building query params...");
       const params = new URLSearchParams({ only_wish_list: 'false' });
       if (subgroup) params.set('subgroups', subgroup);
+      if (sortOrder) params.set('sortOrder', sortOrder);
       if (classname) params.set('classnames', classname);
       
       const url = `/api/fetch_items?${params}`;
@@ -182,10 +168,8 @@ function App() {
       
       const response = await apiCall<ApiResponse>(url);
       console.log("API call returned successfully");
-      console.log("Raw API response:", response);
       
       const items = transformItems(response);
-      console.log("Items transformed:", items);
       
       setData(items);
       console.log("Set data with", items.length, "items");
@@ -377,17 +361,9 @@ function App() {
     };
   }, []);
 
-  // ========== Memoized Components ==========
-  console.log("About to create itemList memo");
-  console.log("Current data:", data);
-  console.log("Data type:", typeof data);
-  console.log("Is array?", Array.isArray(data));
-  console.log("Data length:", data?.length);
+
 
   const itemList = useMemo(() => {
-    console.log("========== USEMEMO ITEMLIST EXECUTING ==========");
-    console.log("Data in useMemo:", data);
-    console.log("Data is array?", Array.isArray(data));
     
     if (!data || !Array.isArray(data)) {
       console.error("Data is not an array:", data);
@@ -456,41 +432,25 @@ function App() {
             {/* Sidebar Toggle */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex items-center justify-center w-15 h-15 rounded-lg hover:bg-slate-700/50 transition-colors flex-shrink-0"
+              className="flex items-center justify-center w-12 h-12 rounded-lg hover:bg-slate-700/50 transition-colors flex-shrink-0"
             >
-              <Bars3Icon className="h-10 w-10 text-white" />
-              
+              {/*<Bars3Icon className="h-10 w-10 text-white" />*/}
+              ≡
             </button>
 
             {/* Dropdowns */}
-            { !isMobile && (
             <div className='flex flex-col'>
               
               
               <div className='m-1'>
-                <DropdownComp 
-                  task="subgroups" 
-                  text="subs" 
-                  elements={subgroups} 
-                  onClickElement={fetchItems} 
-                  onClickReset={fetchItems} 
-                  style="" 
+                <MergedDropdown 
+                  subgroups={subgroups}
+                  sortOrder={["A-Z", "Z-A", "new-old", "old-new"]}
+                  onClickElement={fetchItems}
+                  onClickReset={fetchItems}
                 />
               </div>
-              <div className='m-1'>
-                {(
-                  <DropdownComp 
-                    task="classnames" 
-                    text="class" 
-                    elements={classnames} 
-                    onClickElement={fetchItems} 
-                    onClickReset={fetchItems} 
-                    style="" 
-                  />
-                )}
-              </div>
             </div>
-            )}
             {/* Add/Remove Buttons */}
             {/*
             <div className="flex gap-2">
@@ -512,34 +472,8 @@ function App() {
             onClickBottom={() => navigateScanner(-1)}
             
              />
-            {/* Recording Button */}
-            <button
-              onClick={handleRecording}
-              disabled={isLoading}
-              className={`px-3 sm:px-4 py-2 rounded-lg text-white font-medium text-sm transition-colors flex-shrink-0 ${
-                isRecording 
-                  ? 'bg-red-500 hover:bg-red-600 animate-pulse' 
-                  : 'bg-blue-500 hover:bg-blue-600'
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              {isLoading ? '...' : isRecording ? 'Stop' : 'Record'}
-            </button>
-
-            {/* Transcription result - inline on desktop, below on mobile */}
-            {transcription && (
-              <div className="hidden sm:block max-w-xs p-2 bg-green-100 border border-green-300 rounded text-xs">
-                <p className="text-green-700 truncate">{transcription}</p>
-              </div>
-            )}
+             <SearchBar placeholder="enter name" itemsToRender={data} setItemsToRender={setData} />
           </header>
-
-          {/* Mobile transcription result */}
-          {transcription && isMobile && (
-            <div className="mx-3 mt-2 p-2 bg-green-100 border border-green-300 rounded text-xs">
-              <p className="font-semibold text-green-800">Transcribed:</p>
-              <p className="text-green-700">{transcription}</p>
-            </div>
-          )}
 
           {/* Main Content */}
           <main className="flex-1 p-3 sm:p-4 md:p-6">
@@ -553,7 +487,31 @@ function App() {
           </main>
         </>
       )}
-      
+
+      {/* Voice Recorder */}
+      <div className='flex flex-row'>
+        <VoiceRecorder 
+          isRecording={isRecording}
+          isLoading={isLoading}
+          onRecordClick={handleRecording}
+        />
+
+        {/* Transcription result - inline on desktop, below on mobile */}
+        {transcription && (
+          <div className="hidden sm:block max-w-xs p-2 bg-green-100 border border-green-300 rounded text-xs">
+            <p className="text-green-700 truncate">{transcription}</p>
+          </div>
+        )}
+
+        {/* Mobile transcription result */}
+        {transcription && isMobile && (
+          <div className="mx-3 mt-2 p-2 bg-green-100 border border-green-300 rounded text-xs">
+            <p className="font-semibold text-green-800">Transcribed:</p>
+            <p className="text-green-700">{transcription}</p>
+          </div>
+        )}
+      </div>
+
       {/* Floating Attribution Notice */}
       <AttributionNotice floating />
     </div>

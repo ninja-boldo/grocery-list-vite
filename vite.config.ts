@@ -8,6 +8,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
 
   return {
+    base: '/',
     plugins: [react(), tailwindcss()],
     server: {
       host: true,
@@ -28,7 +29,7 @@ export default defineConfig(({ mode }) => {
       port: 4040,
       proxy: {
         '/api': {
-          target: 'http://localhost:3030', // In Docker, this will be the same container
+          target: 'http://localhost:3030', 
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api/, ''),
         },

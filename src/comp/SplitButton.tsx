@@ -7,10 +7,10 @@ interface Props {
 }
 
 const SplitButton = ({ onClickUpper, onClickBottom, disabled = false }: Props) => {
-    const btnClass = "flex items-center justify-center h-8.5 px-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 transition-colors";
+    const btnClass = "flex items-center justify-center h-6 px-3 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 transition-colors";
     
     return (
-        <div className="flex flex-col gap-px h-[70px] rounded-lg overflow-hidden border border-slate-600 bg-slate-600">
+        <div className="flex flex-col gap-px h-[50px] rounded-lg overflow-hidden border border-slate-600 bg-slate-600">
             <button 
                 className={btnClass}
                 onClick={onClickUpper}

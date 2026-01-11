@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
+import ShortPopup from './ShortPopUp';
 
+
+//TODO: implement jwt webtockens to e.g. savely let there be multiple users
+// + implement classification or general shortening of the names of the items
+// e.g. gut und guenstig joghurt becomes joghurt (perhaps just use langchain + ollama as background job)
 type ScanMode = 'auto' | 'manual';
 
 export default function ImprovedScanner() {
@@ -15,6 +20,7 @@ export default function ImprovedScanner() {
   const isWishList = queryParams.get('wishlist') === 'true';
 
   // State management
+  const [headline, setHeadline] = useState('');
   const [mode, setMode] = useState<ScanMode>('auto');
   const [ean, setEan] = useState('');
   const [manualEan, setManualEan] = useState('');
@@ -29,7 +35,8 @@ export default function ImprovedScanner() {
   const [scanCount, setScanCount] = useState(0);
   const [lastScanTime, setLastScanTime] = useState<string>('');
   const [scannedCode, setScannedCode] = useState<string>('');
-
+  
+  const scanLockRef = useRef(false);
   const lastSentRef = useRef<{ ean?: string; ts?: number }>({});
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const scannerIdRef = useRef('qr-reader');
@@ -43,59 +50,132 @@ export default function ImprovedScanner() {
     }
   }, [verbose]);
 
+
+
+  const hardStopCamera = async () => {
+  const qr = html5QrCodeRef.current;
+  if (!qr) return;
+
+  try {
+    if (qr.isScanning) {
+      await qr.stop();
+    }
+
+    // HARD KILL MEDIA STREAMS 
+    const videoElem = document.querySelector('video');
+    const stream = videoElem?.srcObject as MediaStream | null;
+
+    stream?.getTracks().forEach(track => {
+      track.stop();
+    });
+
+    if (videoElem) {
+      videoElem.srcObject = null;
+    }
+
+  } catch (e) {
+    console.warn('Hard stop failed:', e);
+  } finally {
+    html5QrCodeRef.current = null;
+  }
+};
+
+
+
   // Send EAN to server
-  const sendEan = useCallback(async (eanToSend: string, quantityToSend?: number) => {
-    const now = Date.now();
-    if (lastSentRef.current.ean === eanToSend && (now - (lastSentRef.current.ts || 0)) < 2000) {
-      log('Skipping duplicate send for', eanToSend);
-      return;
-    }
-    lastSentRef.current = { ean: eanToSend, ts: now };
+const sendEan = useCallback(async (eanToSend: string, quantityToSend?: number) => {
+  const now = Date.now();
+  
+  // Debounce/Duplicate logic
+  if (lastSentRef.current.ean === eanToSend && (now - (lastSentRef.current.ts || 0)) < 1000) {
+    log('Skipping duplicate send for', eanToSend);
+    return;
+  }
+  lastSentRef.current = { ean: eanToSend, ts: now };
 
-    const finalCount = quantityToSend || count;
-    const url = `/api/add_ean_to_list/?ean=${encodeURIComponent(eanToSend)}&subgroups=${encodeURIComponent(subgroups)}&count=${encodeURIComponent(finalCount)}&wish_list=${isWishList}`;
-
-    try {
-      log('Sending EAN to server', { ean: eanToSend, count: finalCount, url });
-      await fetch(url);
-      setShowSuccess(true);
-      
-      // Haptic feedback
-      if ('vibrate' in navigator) {
-        try { navigator.vibrate(200); } catch { /* ignore */ }
+  const finalCount = quantityToSend || count;
+  const url = "/api/add_ean_to_list/"; 
+  try {
+    
+    const resp = await fetch(url, {
+      method: "POST",
+      body: JSON.stringify({
+        ean: eanToSend,
+        count: finalCount,
+        subgroups: subgroups,
+        wish_list: String(isWishList)
+      }),
+      headers: {
+        "Content-type": "application/json; charset=UTF-8"
       }
+    });
 
+    if (resp.ok) {
+      
+      const data = await resp.json()
+
+      if (data.known_to_db && data.known_to_db === true && !( String(data.detail).toLowerCase() === "failed to add item")) {
+        console.log('Item recognized by database');
+        setShowSuccess(true)
+        setTimeout(() => {
+          setShowSuccess(false)
+        }, 2500);
+      }
+      else{
+        setError("ean not found")
+        setTimeout(() => {
+          setError("")
+        }, 2500);
+      }
+    } else {
+      setError("ean not found")
+      console.error('Server returned an error status:', resp.status);
       setTimeout(() => {
-        navHook('/');
-      }, 1200);
-    } catch (err) {
-      console.error('Error sending EAN:', err);
-      setError('Failed to add item');
+          setError("")
+        }, 2500);
     }
-  }, [subgroups, count, isWishList, log, navHook]);
+  } catch (err) {
+    setError("network error")
+    console.error('Network error or parsing error:', err);
+    setTimeout(() => {
+          setError("")
+        }, 2500);
+  }
+}, [subgroups, count, isWishList, log]);
 
   // Send item by name to server
   const sendByName = useCallback(async (itemName: string, quantityToSend: number) => {
-    const url = `/api/add_ean_to_list/?item_name=${encodeURIComponent(itemName)}&subgroups=${encodeURIComponent(subgroups)}&count=${encodeURIComponent(quantityToSend)}&wish_list=${isWishList}`;
 
     try {
-      log('Sending item by name to server', { itemName, count: quantityToSend, url });
-      await fetch(url);
-      setShowSuccess(true);
+      const url = "/api/add_ean_to_list/"
+      console.log('Sending item by name to server', { itemName, count: quantityToSend, url });
+      await fetch(url, {
+      method: "POST",
+      body: JSON.stringify({
+        item_name: itemName,
+        count: quantityToSend,
+        subgroups: subgroups,
+        wish_list: String(isWishList)
+      }),
+      headers: {
+        "Content-type": "application/json; charset=UTF-8"
+      }
+    }).catch(err => {
+      console.error('Error sending EAN:', err);
+    });
+      
       
       // Haptic feedback
       if ('vibrate' in navigator) {
         try { navigator.vibrate(200); } catch { /* ignore */ }
       }
 
-      setTimeout(() => {
-        navHook('/');
-      }, 1200);
+      
     } catch (err) {
       console.error('Error sending item:', err);
       setError('Failed to add item');
     }
-  }, [subgroups, isWishList, log, navHook]);
+  }, [subgroups, isWishList]);
 
   // Handle quantity change with auto-submit timer
   const handleQuantityChange = (delta: number, isScanner = false) => {
@@ -103,18 +183,6 @@ export default function ImprovedScanner() {
       const newQuantity = Math.max(1, scanQuantity + delta);
       setScanQuantity(newQuantity);
       
-      // Clear existing timeout
-      if (scanSubmitTimeoutRef.current) {
-        clearTimeout(scanSubmitTimeoutRef.current);
-      }
-      
-      // Set new timeout for auto-submit if we have a scanned code
-      if (scannedCode) {
-        scanSubmitTimeoutRef.current = setTimeout(() => {
-          log('Auto-submitting scanned code after 2s delay');
-          sendEan(scannedCode, newQuantity);
-        }, 2000);
-      }
     } else {
       const newQuantity = Math.max(1, manualQuantity + delta);
       setManualQuantity(newQuantity);
@@ -124,13 +192,7 @@ export default function ImprovedScanner() {
         clearTimeout(quantityTimeoutRef.current);
       }
       
-      // Set new timeout for auto-submit (only if we have input)
-      if ((inputMode === 'ean' && manualEan) || (inputMode === 'name' && manualName)) {
-        quantityTimeoutRef.current = setTimeout(() => {
-          log('Auto-submitting after 2s delay');
-          handleManualSubmit(new Event('submit') as unknown as React.FormEvent);
-        }, 2000);
-      }
+      
     }
   };
 
@@ -149,7 +211,7 @@ export default function ImprovedScanner() {
         sendEan(manualEan, manualQuantity);
       } else {
         setError('Please enter a valid barcode (8-14 digits)');
-        setTimeout(() => setError(''), 3000);
+        setTimeout(() => setError(''), 2500);
       }
     } else {
       if (manualName.trim()) {
@@ -176,6 +238,9 @@ export default function ImprovedScanner() {
 
   // Initialize HTML5 QR Code scanner (only in auto mode)
   useEffect(() => {
+    const deleteFrom = isWishList ? "wish" : "item"
+    const newHeadline = count === '1' ? `add ${deleteFrom}` : `delete ${deleteFrom}`;
+    setHeadline(newHeadline);
     if (mode !== 'auto') return;
 
     const startScanner = async () => {
@@ -194,20 +259,25 @@ export default function ImprovedScanner() {
           setScanCount(prev => prev + 1);
           setLastScanTime(new Date().toLocaleTimeString());
           log('Scan success', decodedText);
+          // This lives outside onScanSuccess
+
+            if (scanLockRef.current) return; // ignore if we're in cooldown
+
+            scanLockRef.current = true;  // lock scanning
+
+            console.log('Processing', decodedText);
+
 
           if (/^\d{8,14}$/.test(decodedText)) {
             setEan(decodedText);
             setScannedCode(decodedText);
             setScanning(false);
             
-            // Stop scanner after successful scan
-            html5QrCode.stop().catch((err: unknown) => log('Error stopping scanner', err));
-            
-            // Start auto-submit timer
-            scanSubmitTimeoutRef.current = setTimeout(() => {
-              log('Auto-submitting scanned code after 2s');
-              sendEan(decodedText, scanQuantity);
-            }, 2000);
+            setTimeout(() => {
+              scanLockRef.current = false;
+            }, 1000);
+
+            //sendEan(decodedText, scanQuantity)
           } else {
             log('Invalid barcode format', decodedText);
           }
@@ -273,7 +343,7 @@ export default function ImprovedScanner() {
   }, [mode, sendEan, log, verbose, scanQuantity]);
 
   return (
-    <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 overflow-hidden flex flex-col">
+    <div className="fixed inset-0 bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 overflow-hidden flex flex-col">
       {/* Compact Header */}
       <div className="bg-slate-900/95 backdrop-blur-sm border-b border-slate-700/50">
         <div className="max-w-4xl mx-auto px-3 py-2">
@@ -281,7 +351,19 @@ export default function ImprovedScanner() {
             {/* Left: Close + Title */}
             <div className="flex items-center gap-2">
               <button
-                onClick={() => navHook('/')}
+                onClick={async () => {
+                  if (html5QrCodeRef.current) {
+                    try {
+                      await hardStopCamera()
+                      setTimeout(() => {
+                        console.log("waiting for 2000ms")
+                      }, 2000);
+                    } catch (err) {
+                      console.warn('Failed to stop QR scanner:', err);
+                    }
+                  }
+                  navHook('/');
+                }}
                 className="p-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700/80 border border-slate-600/40 transition-all"
               >
                 <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -289,7 +371,7 @@ export default function ImprovedScanner() {
                 </svg>
               </button>
               <h1 className="text-sm sm:text-base font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
-                {isWishList ? 'Wish List' : 'Add Item'}
+                {headline}
               </h1>
             </div>
             
@@ -423,9 +505,7 @@ export default function ImprovedScanner() {
                       </svg>
                     </button>
                   </div>
-                  <p className="mt-2 text-xs text-emerald-400/80 text-center font-medium">
-                    Auto-submits in 2s or tap to adjust
-                  </p>
+                  
                   
                   {/* Manual Submit Button */}
                   <button
@@ -442,6 +522,15 @@ export default function ImprovedScanner() {
                   </button>
                 </div>
               )}
+
+              {(error !== "") && (
+                    <ShortPopup text={error} variant='error' />
+                  )}
+              {
+                showSuccess && (
+                  <ShortPopup text='mapped ean succesfully :)' variant='success' />
+                )
+              }
 
               {/* Tips */}
               <div className="p-3 bg-slate-900/40 rounded-xl border border-slate-700/30">
@@ -562,27 +651,17 @@ export default function ImprovedScanner() {
                         </svg>
                       </button>
                     </div>
-                    <p className="mt-2 text-xs text-slate-400 text-center">
-                      ⏱ Auto-submits after 2s
-                    </p>
+                    
                   </div>
 
-                  {error && (
-                    <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-3 animate-shake">
-                      <p className="text-rose-400 text-sm text-center">{error}</p>
-                    </div>
+                  {(error !== "") && (
+                    <ShortPopup text={error} variant='error' />
                   )}
-
-                  {showSuccess && (
-                    <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 animate-slideIn">
-                      <p className="text-emerald-400 text-sm text-center flex items-center justify-center gap-2">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        Added successfully!
-                      </p>
-                    </div>
-                  )}
+                  {
+                    showSuccess && (
+                      <ShortPopup text='mapped ean succesfully :)' variant='success' />
+                    )
+                  }
 
                   <button
                     type="submit"

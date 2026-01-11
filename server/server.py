@@ -563,11 +563,33 @@ def validate_wish_list(value: Optional[str]) -> str:
     return normalized if normalized in ("true", "false") else "false"
 
 
+def convertSortToSql(sortMode: str | None = None):
+    if not sortMode: 
+        sortMode = "new-old" 
+    
+    if sortMode not in ["a-z", "z-a", "new-old", "old-new"]:
+        logger.warning(f"the sort mode {sortMode} isnt supported. going back to a-z mode")
+        sortMode = "a-z" 
+        
+    if sortMode == "a-z":
+        return "order by item_name asc"
+
+    elif sortMode == "z-a":
+        return "order by item_name desc"
+
+    elif sortMode == "new-old":
+       return "ORDER BY (SELECT MAX(t)FROM jsonb_array_elements_text(timestamps) AS t) desc;"
+
+    elif sortMode == "old-new":   
+        return "ORDER BY (SELECT MAX(t)FROM jsonb_array_elements_text(timestamps) AS t) asc;"
+    
+    
 def build_fetch_query(
     subgroups: Optional[str] = None,
     classnames: Optional[str] = None,
     only_wish_list: Optional[str] = None,
-    onlyNotNull: Optional[str] = "true"
+    onlyNotNull: Optional[str] = "true",
+    sortOrder: Optional[str] = None
 ) -> tuple[str, list]:
     """Build optimized SQL query for fetching items with filters"""
     conditions = []
@@ -596,7 +618,8 @@ def build_fetch_query(
     limit_clause = "" if any([subgroups, classnames, only_wish_list]) else " LIMIT 1000"
     
     return (
-        f"SELECT ean, item_name, subgroups, class, count, timestamps, image_url FROM item_list{where_clause} ORDER BY item_name{limit_clause}",
+        f"""SELECT ean, item_name, subgroups, class, count, timestamps, image_url
+        FROM item_list{where_clause} {convertSortToSql(sortMode=sortOrder)}{limit_clause}""",
         params
     )
 
@@ -616,11 +639,17 @@ async def resolve_item_identity(
     
     # Case 2: Only EAN provided
     if ean and not item_name:
+        '''
         row = await con.fetchrow(
             "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
         )
         if row:
             return (ean, row['item_name'])
+        '''
+        res = requests.get(f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=product_name")
+        json = res.json()
+        if json["status_verbose"]:
+            return (ean, json["product"]["product_name"])
         
         # Fallback to food database
         row = await con.fetchrow(
@@ -629,7 +658,8 @@ async def resolve_item_identity(
         if row:
             return (ean, row['product_name'])
         
-        raise HTTPException(status_code=404, detail=f"Item not found for EAN: {ean}")
+        # Return generic name instead of raising 404
+        return (ean, "none")
     
     # Case 3: Only item_name provided
     if item_name and not ean:
@@ -1185,7 +1215,8 @@ async def fetch_items(
     request: Request,
     subgroups: Optional[str] = Query(None),
     classnames: Optional[str] = Query(None),
-    only_wish_list: Optional[str] = Query(None)
+    only_wish_list: Optional[str] = Query(None),
+    sortOrder: Optional[str] = Query(None)
 ):
     """
     Fetch items with optional filters
@@ -1193,10 +1224,11 @@ async def fetch_items(
     @deprecated Use /api/items instead for better performance and cleaner response
     This endpoint is maintained for backwards compatibility only.
     """
-    logger.info(f"fetch_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list}")
+    sortOrder = sortOrder.lower() if sortOrder else sortOrder
+    logger.info(f"fetch_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list}, sortOrder={sortOrder}")
     
     try:
-        query, params = build_fetch_query(subgroups, classnames, only_wish_list)
+        query, params = build_fetch_query(subgroups, classnames, only_wish_list, sortOrder=sortOrder)
         rows = await request.app.state.db.fetch_with_retry(query, *params)
         
         item_list = [
@@ -1212,7 +1244,7 @@ async def fetch_items(
                     for row in rows
                 ]
         logger.info(f"fetch_items returned {len(item_list)} items")
-        logger.info(str({'items': item_list}))
+        
         return {"items": item_list}
         
     except Exception as e:
@@ -1225,15 +1257,12 @@ async def rescanImageUrls(request: Request):
     """Rescan all items with empty image URLs and fetch them from OpenFoodFacts"""
     try:
         rows = await request.app.state.db.fetch_with_retry("select distinct(ean), image_url from item_list")
-        print(f"fetched rows for rescan: {rows}")
         eansToMod = []
-        print(f"example: image_url: {rows[0]['image_url']}, ean: {rows[0]['ean']}")
         
         for row in rows:
             if row['image_url'] == '' and row['ean'] not in ["-1", "0", "1"]:
                 eansToMod.append(row["ean"])
                 
-        print(f"eans to mod: {eansToMod}")
         updated_count = 0
         for ean in eansToMod:
             image_url = getImageUrl(ean)
@@ -1272,6 +1301,8 @@ async def add_ean_to_list(
     subgroups = sanitize_string(body.subgroups, "none")
     wish_list = validate_wish_list(body.wish_list)
     
+    logger.info(f"got ean={body.ean},count_delta={count_delta}, subgroups={subgroups}, wish_list={wish_list}, item_name={body.item_name if body.item_name else ''},")
+    print(f"got ean={body.ean},count_delta={count_delta}, subgroups={subgroups}, wish_list={wish_list}, item_name={body.item_name if body.item_name else ''},")
     try:
         async with request.app.state.pool.acquire() as con:
             async with con.transaction():
@@ -1288,14 +1319,15 @@ async def add_ean_to_list(
                     "SELECT product_name FROM food WHERE code = $1 LIMIT 1", resolved_ean
                 )
                 product_name = product_row['product_name'] if product_row else resolved_item_name
-                presentInDb = bool(product_name and product_name.strip().lower() not in ("null", ""))
+                gotMapped = product_name != "none"
                 
                 return {
                     "ean": resolved_ean,
-                    "product_name": product_name or resolved_item_name,
-                    "done": True,
+                    "product_name": product_name,
+                    "done": gotMapped,
                     "subgroups": subgroups,
-                    "present_in_database": presentInDb
+                    "known_to_db": gotMapped
+                    
                 }
                 
     except HTTPException:
@@ -1436,7 +1468,7 @@ async def transcribe_endpoint(request: Request, ListTypesInput: Optional[str] = 
             listType = ListTypes.itemList
         else:
             listType = ListTypes.itemList # let the listType stay with the default
-            print(f"stood with the default list type value: {listType}")
+            logger.info(f"stood with the default list type value: {listType}")
             
         # Read and validate file
         contents = await file.read()
@@ -1477,41 +1509,51 @@ async def transcribe_endpoint(request: Request, ListTypesInput: Optional[str] = 
         action_retrieved = classified["action"]
         
         # Update item count
-        print(f"action retrieved: {action_retrieved}")
+        logger.info(f"action retrieved: {action_retrieved}")
         async with request.app.state.pool.acquire() as con:
             async with con.transaction():
+                
                 
                 if action_retrieved == "remove":
                     numberToAdd = "- 1"
                 elif action_retrieved == "add":
                     numberToAdd: str = "+ 1"
+                
                 else:
-                    pass # if action is unknown just go on for now
-                    
-                # only go after those in the item list
-                if listType == ListTypes.itemList:
-                    await con.execute(
-                        f"UPDATE item_list SET count = count {numberToAdd} WHERE item_name = $1",
-                        class_retrieved
-                    )
-                    await con.execute("DELETE FROM item_list WHERE count <= 0")
-                # only go after those in the wish list
-                elif listType == ListTypes.wishList:
-                    
-                    await con.execute(
-                        f"UPDATE item_list SET count = count {numberToAdd} WHERE item_name = $1 and iswished = 'true' ", 
-                        class_retrieved
-                    )
-                    await con.execute("DELETE FROM item_list WHERE count <= 0")
+                    numberToAdd: str = "0"
+                
+                if numberToAdd != "0":    
+                    # only go after those in the item list
+                    if listType == ListTypes.itemList:
+                        await con.execute(
+                            f"UPDATE item_list SET count = count {numberToAdd} WHERE item_name = $1",
+                            class_retrieved
+                        )
+                        await con.execute("DELETE FROM item_list WHERE count <= 0")
+                    # only go after those in the wish list
+                    elif listType == ListTypes.wishList:
+                        
+                        await con.execute(
+                            f"UPDATE item_list SET count = count {numberToAdd} WHERE item_name = $1 and iswished = 'true' ", 
+                            class_retrieved
+                        )
+                        await con.execute("DELETE FROM item_list WHERE count <= 0")
+                    else:
+                        logger.info("executing nothing")
                 else:
-                    print("executing nothing")
-                    
-        return {
+                    logger.info("couldnt retrieve action out of this => do nothing")
+        
+        response = {
             "transcribed_text": transcribed_text,
             "class_retrieved": class_retrieved,
             "size": len(contents),
-            "filename": os.path.basename(file_path)
+            "filename": os.path.basename(file_path),
+            "numberToAdd": numberToAdd,
+            "action_retrieved": action_retrieved
         }
+        
+        logger.info(f"returning: {response}")   
+        return response
         
     except HTTPException:
         raise

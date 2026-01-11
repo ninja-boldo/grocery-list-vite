@@ -2,14 +2,14 @@ import { useState, useRef, useEffect } from 'react';
 
 interface Props {
   subgroups: string[];
-  classnames: string[];
-  onClickElement: (subgroup: string | null, classname: string | null) => void;
-  onClickReset: (subgroup: null, classname: null) => void;
+  sortOrder: string[];
+  onClickElement: (subgroup: string | null, sortOrder: string | null) => void;
+  onClickReset: (subgroup: null, sortOrder: null) => void;
 }
 
-const MergedDropdown = ({ subgroups, classnames, onClickElement, onClickReset }: Props) => {
+const MergedDropdown = ({ subgroups, sortOrder, onClickElement, onClickReset }: Props) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'subs' | 'class'>('subs');
+  const [activeTab, setActiveTab] = useState<'subs' | 'sortOrder'>('subs');
   const [mainHover, setMainHover] = useState(false);
   const [toggleHover, setToggleHover] = useState(false);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -27,14 +27,14 @@ const MergedDropdown = ({ subgroups, classnames, onClickElement, onClickReset }:
 
   const handleElementClick = (element: string) => {
     if (activeTab === 'subs') {
-      onClickElement(element, null);
+      onClickElement(element, null, );
     } else {
       onClickElement(null, element);
     }
     setIsOpen(false);
   };
 
-  const currentElements = activeTab === 'subs' ? subgroups : classnames;
+  const currentElements = activeTab === 'subs' ? subgroups : sortOrder;
 
   return (
     <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
@@ -138,7 +138,7 @@ const MergedDropdown = ({ subgroups, classnames, onClickElement, onClickReset }:
               subs
             </button>
             <button
-              onClick={() => setActiveTab('class')}
+              onClick={() => setActiveTab('sortOrder')}
               style={{
                 all: 'unset',
                 boxSizing: 'border-box',
@@ -148,12 +148,12 @@ const MergedDropdown = ({ subgroups, classnames, onClickElement, onClickReset }:
                 cursor: 'pointer',
                 fontSize: '13px',
                 fontWeight: '500',
-                color: activeTab === 'class' ? '#ffffff' : '#9ca3af',
-                backgroundColor: activeTab === 'class' ? '#4b5563' : 'transparent',
+                color: activeTab === 'sortOrder' ? '#ffffff' : '#9ca3af',
+                backgroundColor: activeTab === 'sortOrder' ? '#4b5563' : 'transparent',
                 transition: 'all 0.15s ease'
               }}
             >
-              class
+              sortOrder
             </button>
           </div>
 
