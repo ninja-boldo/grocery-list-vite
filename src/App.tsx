@@ -87,6 +87,7 @@ async function apiCall<T>(
 // Data Transformers
 // ============================================================================
 interface ApiItem {
+  ean: string;
   text: string;
   subgroups: string | null;
   classname: string | null;
@@ -103,6 +104,7 @@ const transformItems = (data: ApiResponse): Item[] => {
 
   
   const transformed = data.items.map((item) => ({
+    ean: item.ean,
     text: item.text,
     subgroups: item.subgroups,
     classname: item.classname,
@@ -383,6 +385,7 @@ function App() {
           classname={item.classname}
           perish_dates={item.perish_dates}
           imageUrl={item.imageUrl}
+          ean={item.ean}
           onClickIncrease={increaseItem}
           onClickDecrease={decreaseItem}
           style=""

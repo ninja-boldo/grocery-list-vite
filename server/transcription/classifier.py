@@ -58,6 +58,46 @@ class FullClassification(BaseModel):
     action: Literal["add", "remove", "unknown"]
     action_confidence: float = Field(ge=0.0, le=1.0)
 
+
+SHORTEN_TMPL = """
+Shorten and normalize product name: "{input}"
+
+RULES:
+1. Remove marketing words: Bio, Extra, Stark, Natives, Natur, Ohne Zucker, Classic, Griechisches
+2. Keep brand names (Chipsfrisch, Nutella, etc.)
+3. Keep or ADD product type ONLY if you are absolutely certain:
+   - Menthol/Ricola/Fisherman's Friend → clearly Bonbons
+   - Chipsfrisch → clearly Chips (but keep brand)
+   - Tea/Thé varieties → keep type
+   - If product type is already present, keep it
+   - If product type is missing but OBVIOUS from context, add it
+4. For branded products, keep brand + remove unnecessary flavor details
+5. NEVER correct spellings (Coucous stays Coucous)
+6. When uncertain about product type, DON'T add it
+7. Also remove something like a trailing 'the' from name if it isnt strictly part of the name
+
+Examples:
+'Thé Earl Grey Classic' → Earl Grey
+'Menthol Extra Stark Ohne Zucker' → Menthol Bonbons
+'Chipsfrisch Ungarisch' → Chipsfrisch
+'Ricola Kräuter Bonbons' → Ricola Bonbons
+'Aprikose' → Aprikose
+'Extra Aprikose' → Aprikose
+'Holler Zwetschken Konfitüre' → Zwetschken Marmelade
+'Griechisches Natives Olivenöl Extra' → Olivenöl
+'Bio Apfel Essig' → Apfel Essig
+'Balsamico-Creme' → Balsamico
+'Coucous' → Coucous
+'milk' → milk
+'cookies' → cookies
+
+Return EXACTLY one JSON object:
+{{"shortenedText":"result here"}}
+
+CRITICAL: Only add product types when 100% certain. Never correct spellings.
+"""
+
+
 PROMPT_TMPL = """
 Find the item in the text: "{input}"
 
@@ -220,6 +260,24 @@ def classify(
     }
 
 
+def shortenText(inputText: str) -> str:
+    llm = _get_llm()
+    
+    prompt = ChatPromptTemplate.from_template(SHORTEN_TMPL)
+    chain = prompt | llm
+
+    try:
+        result = chain.invoke({"input": inputText})
+        
+        # Extract the text content from the response
+        text_content: str = result.content if hasattr(result, 'content') else str(result)
+        out = _extract_json(text_content)
+    except Exception as e:
+        print(f"Error during category classification: {e}")
+        return inputText.strip()
+
+    return out.get("shortenedText", inputText.strip())
+    
 # Backwards-compatible wrapper for existing code that only expects category
 def classify_category_only(
     input_text: str, 

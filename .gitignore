@@ -50,3 +50,4 @@ tmp_pack_QoeAVX
 *.db
 .env
 backup.json
+server/transcription/uploads

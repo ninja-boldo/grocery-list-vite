@@ -15,7 +15,7 @@ import json
 import shutil
 from typing import Optional, Union, Any
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, File, Query, Request, UploadFile, HTTPException
+from fastapi import FastAPI, File, Query, Request, UploadFile, HTTPException, BackgroundTasks
 import uvicorn
 
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -572,16 +572,16 @@ def convertSortToSql(sortMode: str | None = None):
         sortMode = "a-z" 
         
     if sortMode == "a-z":
-        return "order by item_name asc"
+        return "order by item_name asc "
 
     elif sortMode == "z-a":
-        return "order by item_name desc"
+        return "order by item_name desc "
 
     elif sortMode == "new-old":
-       return "ORDER BY (SELECT MAX(t)FROM jsonb_array_elements_text(timestamps) AS t) desc;"
+       return "ORDER BY (SELECT MAX(t)FROM jsonb_array_elements_text(timestamps) AS t) desc "
 
     elif sortMode == "old-new":   
-        return "ORDER BY (SELECT MAX(t)FROM jsonb_array_elements_text(timestamps) AS t) asc;"
+        return "ORDER BY (SELECT MAX(t)FROM jsonb_array_elements_text(timestamps) AS t) asc "
     
     
 def build_fetch_query(
@@ -841,6 +841,7 @@ class BatchUpdateResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle manager with self-healing initialization"""
+    daemon_task = None
     try:
         # Initialize database pool with retry
         for attempt in range(Config.DB_RETRY_ATTEMPTS):
@@ -878,6 +879,10 @@ async def lifespan(app: FastAPI):
         elif Config.ENABLE_WHISPER_MODEL_CLOUD:
             logger.info("Whisper cloud mode enabled")
         
+        # Start background daemon task (run once at startup)
+        daemon_task = asyncio.create_task(shortenItemNamesDaemon(app.state.pool))
+        logger.info("✓ Started item name shortening daemon")
+        
         # Initialize ML model (conditional)
         app.state.net = None
         if Config.ENABLE_ML_MODEL:
@@ -899,6 +904,14 @@ async def lifespan(app: FastAPI):
         yield
         
     finally:
+        # cancel daemon task on shutdown
+        if daemon_task and not daemon_task.done():
+            daemon_task.cancel()
+            try:
+                await daemon_task
+            except asyncio.CancelledError:
+                logger.info("Daemon task cancelled")
+        
         if hasattr(app.state, 'pool') and app.state.pool:
             await app.state.pool.close()
             logger.info("Database pool closed")
@@ -1252,6 +1265,76 @@ async def fetch_items(
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to fetch items")
 
+
+
+@app.get("/shorten_item_names")
+async def shortenNames(request: Request):
+    """Rescan all items with empty image URLs and fetch them from OpenFoodFacts"""
+    try:
+        rows = await request.app.state.db.fetch_with_retry("select distinct(item_name), class from item_list")
+        itemNamesToClassify = []
+        
+        for row in rows:
+            if row['class'] == '' and row['item_name'].lower() not in ['', 'none']:
+                itemNamesToClassify.append(row["item_name"])
+                
+        updated_count = 0
+        for item in itemNamesToClassify:
+            item = item.strip()
+            shortenedName = classifier.shortenText(item)
+            if shortenedName:
+                await request.app.state.db.execute_with_retry(
+                    "UPDATE item_list SET class = $1 WHERE item_name = $2",
+                    shortenedName,
+                    item
+                )
+                updated_count += 1
+        
+        logger.info(f"Updated {updated_count} item names out of {len(itemNamesToClassify)} empty entries")
+        return {"done": True, "updated": updated_count, "total_empty": len(itemNamesToClassify), "namesUpdated": str(itemNamesToClassify)}
+    
+    except Exception as e:
+        logger.error(f"Failed while rescanning image URLs: {e}")
+        logger.error(traceback.format_exc())
+        return {"done": False, "error": str(e)}
+    
+    
+    
+    
+async def shortenItemNamesDaemon(pool: asyncpg.Pool):
+    """Rescan all items with empty image URLs and fetch them from OpenFoodFacts"""
+    try:
+        async with pool.acquire() as con:
+            rows = await con.fetch("select distinct(item_name), class from item_list")
+            itemNamesToClassify = []
+            
+            for row in rows:
+                if row['class'] == '' and row['item_name'].lower() not in ['', 'none']:
+                    itemNamesToClassify.append(row["item_name"])
+                    
+            updated_count = 0
+            for item in itemNamesToClassify:
+                item = item.strip()
+                shortenedName = classifier.shortenText(item)
+                if shortenedName:
+                    await con.fetchrow(
+                        "UPDATE item_list SET class = $1 WHERE item_name = $2",
+                        shortenedName,
+                        item
+                    )
+                    updated_count += 1
+            
+            logger.info(f"Updated {updated_count} item names out of {len(itemNamesToClassify)} empty entries")
+            return {"done": True, "updated": updated_count, "total_empty": len(itemNamesToClassify), "namesUpdated": str(itemNamesToClassify)}
+        
+    except Exception as e:
+        logger.error(f"Failed while rescanning image URLs: {e}")
+        logger.error(traceback.format_exc())
+        return {"done": False, "error": str(e)}
+    
+    
+    
+    
 @app.get("/rescan_for_image_urls")
 async def rescanImageUrls(request: Request):
     """Rescan all items with empty image URLs and fetch them from OpenFoodFacts"""
@@ -1283,10 +1366,31 @@ async def rescanImageUrls(request: Request):
         return {"done": False, "error": str(e)}
     
     
+async def shorten_item_names_task(pool: asyncpg.Pool, item_name: str):
+    """Background task to shorten a specific item name"""
+    try:
+        async with pool.acquire() as con:
+            row = await con.fetchrow(
+                "SELECT class FROM item_list WHERE item_name = $1 LIMIT 1", item_name
+            )
+            if row and row['class'] == '' and item_name.lower() not in ['', 'none']:
+                shortened_name = classifier.shortenText(item_name.strip())
+                if shortened_name:
+                    await con.execute(
+                        "UPDATE item_list SET class = $1 WHERE item_name = $2",
+                        shortened_name,
+                        item_name
+                    )
+                    logger.info(f"Background task: Shortened item name '{item_name}' to '{shortened_name}'")
+    except Exception as e:
+        logger.error(f"Background task error shortening item name: {e}")
+
+
 @app.post("/add_ean_to_list/")
 async def add_ean_to_list(
     request: Request,
-    body: AddEanRequest
+    body: AddEanRequest,
+    background_tasks: BackgroundTasks
 ):
     """
     Add item to list by EAN or name (POST)
@@ -1302,7 +1406,7 @@ async def add_ean_to_list(
     wish_list = validate_wish_list(body.wish_list)
     
     logger.info(f"got ean={body.ean},count_delta={count_delta}, subgroups={subgroups}, wish_list={wish_list}, item_name={body.item_name if body.item_name else ''},")
-    print(f"got ean={body.ean},count_delta={count_delta}, subgroups={subgroups}, wish_list={wish_list}, item_name={body.item_name if body.item_name else ''},")
+    
     try:
         async with request.app.state.pool.acquire() as con:
             async with con.transaction():
@@ -1310,24 +1414,23 @@ async def add_ean_to_list(
                 resolved_ean, resolved_item_name = await resolve_item_identity(con, body.ean, body.item_name)
                 
                 # Perform operation
-                await perform_item_operation(
+                operation = await perform_item_operation(
                     con, resolved_item_name, resolved_ean, count_delta, subgroups, wish_list
                 )
                 
-                # Get product name for response (for backwards compatibility)
-                product_row = await con.fetchrow(
-                    "SELECT product_name FROM food WHERE code = $1 LIMIT 1", resolved_ean
-                )
-                product_name = product_row['product_name'] if product_row else resolved_item_name
-                gotMapped = product_name != "none"
+                is_known = resolved_item_name != "none" and resolved_ean not in ("0", "-1")
+                
+                # Schedule background task to shorten item name if needed
+                if operation == "created" and resolved_item_name:
+                    background_tasks.add_task(shorten_item_names_task, request.app.state.pool, resolved_item_name)
                 
                 return {
                     "ean": resolved_ean,
-                    "product_name": product_name,
-                    "done": gotMapped,
+                    "product_name": resolved_item_name,
+                    "done": is_known,
                     "subgroups": subgroups,
-                    "known_to_db": gotMapped
-                    
+                    "known_to_db": is_known,
+                    "operation": operation  # Added for clarity: 'created', 'updated', 'deleted'
                 }
                 
     except HTTPException:
