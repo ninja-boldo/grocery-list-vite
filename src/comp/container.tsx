@@ -144,9 +144,9 @@ const Container = ({
           {/* Left side - Item name with enhanced typography */}
           <div className="flex-1 min-w-0 mr-4">
             <p className="text-cyan-100 font-medium text-base truncate group-hover:text-cyan-50 transition-colors duration-300 relative">
-              {classname ? classname : text}
+              {classname && classname !== "none" ? classname : text}
               {/* Subtle text glow effect */}
-              <span className="absolute inset-0 text-cyan-400/20 blur-sm transition-opacity duration-300 group-hover:opacity-100 opacity-0">{classname ? classname : text}</span>
+              <span className="absolute inset-0 text-cyan-400/20 blur-sm transition-opacity duration-300 group-hover:opacity-100 opacity-0">{classname && classname !== "none"}</span>
             </p>
           </div>
 

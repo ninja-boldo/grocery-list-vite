@@ -1,17 +1,18 @@
 import '../App.css';
-import Container from './Container';
+import Container from './../comp/Container';
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import ErrorContainer from './ErrorContainer';
+import ErrorContainer from './../comp/ErrorContainer';
 import { useNavigate } from 'react-router-dom';
-import StyledButton from './StyledButton';
+import StyledButton from './../comp/StyledButton';
 import { Bars3Icon } from '@heroicons/react/24/outline';
-import SidebarComp from './Sidebar';
-import InfoContainer from './InfoContainer';
+import SidebarComp from './../comp/Sidebar';
+import InfoContainer from './../comp/InfoContainer';
 
 // ============================================================================
 // TYPES
 // ============================================================================
 interface ItemProps {
+  ean: string;
   text: string | null;
   subgroups: string | null;
   style?: string;
@@ -24,6 +25,7 @@ interface ItemProps {
 }
 
 interface ApiItem {
+  ean: string;
   text: string;
   subgroups: string | null;
   classname: string | null;
@@ -289,6 +291,7 @@ function WishList() {
     try {
       const response = await apiCall<ApiResponse>('/api/fetch_items?only_wish_list=true');
       const items: ItemProps[] = response.items.map((item) => ({
+        ean: item.ean,
         text: item.text,
         subgroups: item.subgroups,
         style: '',
@@ -316,6 +319,7 @@ function WishList() {
       data.map((item, idx) => (
         <Container
           key={`${item.text}-${idx}`}
+          ean={item.ean}
           text={item.text}
           subgroups={item.subgroups}
           count={item.count}
@@ -371,9 +375,9 @@ function WishList() {
               {/* Sidebar Toggle */}
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-slate-700/50 transition-colors flex-shrink-0"
+                className="flex items-center justify-center w-12 h-12 rounded-lg hover:bg-slate-700/50 transition-colors shrink-0"
               >
-                <Bars3Icon className="h-6 w-6 text-white" />
+                ☰
               </button>
 
               {/* Add/Remove Buttons */}

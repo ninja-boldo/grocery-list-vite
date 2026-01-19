@@ -5,7 +5,8 @@ import BarcodeScanner from './comp/ImprovedScanner';
 import ImprovedScanner from './comp/ImprovedScanner';
 import MlScanner from './comp/MlScanner';
 import ManualAdd from './comp/ManualAdding';
-import WishList from './comp/WishList';
+import WishList from './sites/WishList';
+import GroupedItems from './sites/GroupedItems';
 
 export default function AppRouter() {
   return (
@@ -16,6 +17,7 @@ export default function AppRouter() {
       <Route path='/scanner/ml' element={<MlScanner />} />
       <Route path='/scanner/manual' element={<ManualAdd />} />
       <Route path='/wish_list' element={<WishList />} />
+      <Route path='/matched_items' element={<GroupedItems />} />
     </Routes>
   );
 }

@@ -19,6 +19,7 @@ console.log("========== APP.TSX MODULE LOADED ==========");
 // Types
 // ============================================================================
 export interface Item {
+  ean: string,
   text: string | null;
   subgroups: string | null;
   classname: string | null;
@@ -435,7 +436,7 @@ function App() {
             {/* Sidebar Toggle */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex items-center justify-center w-12 h-12 rounded-lg hover:bg-slate-700/50 transition-colors flex-shrink-0"
+              className="flex items-center justify-center w-12 h-12 rounded-lg hover:bg-slate-700/50 transition-colors shrink-0"
             >
               {/*<Bars3Icon className="h-10 w-10 text-white" />*/}
               ≡
