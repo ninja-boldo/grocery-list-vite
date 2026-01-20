@@ -847,6 +847,7 @@ def convertSortToSql(sortMode: str | None = None):
         return "ORDER BY (SELECT MAX(t)FROM jsonb_array_elements_text(timestamps) AS t) asc "
 
 
+@lru_cache(maxsize=Config.LRU_CACHE_SIZE)
 def build_fetch_query(
     subgroups: Optional[str] = None,
     classnames: Optional[str] = None,
@@ -1275,7 +1276,7 @@ async def request_middleware(request: Request, call_next):
 # ============================================================================
 
 
-@app.get("/api/items")
+@app.get("/items")
 async def get_items(
     request: Request,
     subgroups: Optional[str] = Query(None),
@@ -1547,6 +1548,9 @@ async def fetch_grouped(
     tagToInlcude: Optional[str] = Query(None),
 ):
     logger.info(f"fetch_grouped_items received these params: tagToInlcude={tagToInlcude}")
+    if not tagToInlcude or tagToInlcude.lower() == "none":
+        tagToInlcude = None
+        
     rows = await request.app.state.db.fetch_with_retry("""select ttn.tags as tags, ttn.inferred_name as short_name,
             il.item_name as long_name, il.count as count
             from tagging_to_name ttn join item_list il on il.tags = ttn.tags""")
@@ -1554,19 +1558,19 @@ async def fetch_grouped(
     for row in rows:
         
         if row["short_name"] in resp.keys():
-            resp[row["short_name"]]["sub_items"].append({
+            resp[row["short_name"]]["subItems"].append({
                     "name": row["long_name"],
                     "count": row["count"]
                     })
         else:
             resp[row["short_name"]] = {
-                "sub_items": [{
+                "subItems": [{
                     "name": row["long_name"],
                     "count": row["count"]
                     }] ,
                 "tags": row["tags"]
             }
-        
+
         
     return resp
     
@@ -1615,7 +1619,6 @@ async def fetch_items(
         logger.error(f"fetch_items error: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to fetch items")
-
 
 def classify_shortened_names(
     shortened_names: list[str],
@@ -1907,7 +1910,7 @@ async def shorten_item_name_task(pool: asyncpg.Pool, item_name: str):
     try:
         async with pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT class, categories FROM item_list WHERE item_name = $1 LIMIT 1 and class = '' ", item_name
+                "SELECT class, categories FROM item_list WHERE item_name = $1 AND class = '' LIMIT 1", item_name
             )
             if row and row["class"] == "" and item_name.lower() not in ["", "none"]:
                 stripped_name = shortenWithTable(item_name)

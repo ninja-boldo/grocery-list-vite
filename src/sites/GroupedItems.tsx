@@ -1,40 +1,71 @@
 import { memo, useEffect, useState } from "react";
-import ContainerTagGrouped from "../comp/ContainerTagGrouped"
+import ContainerTagGrouped from "../comp/grouped/ContainerTagGrouped";
+import SidebarComp from "../comp/Sidebar";
+
+
+interface SubItem {
+  name: string;
+  count: number;
+}
+
+interface ApiItem {
+  subItems: SubItem[];
+  tags: string;
+}
+
+interface ApiItems {
+  [groupedName: string]: ApiItem;
+}
 
 const GroupedItems = () => {
+    const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [parsedItems, setParsedItems] = useState<ApiItems>({});
 
-    const [items, setItems]: CompositeItems[] = useState([
-        { name: "vinegar", count: 1 },
-        { name: "apple", count: 2 },
-        { name: "liquid", count: 3 },
-        ]);
+  const fetchGrouped = async () => {
+    const params = new URLSearchParams({ only_wish_list: 'false' });
+    const response = await fetch(`/api/fetch_grouped_items?${params}`);
 
-    const fetchGrouped = async ()  => {
-        const params = new URLSearchParams({ only_wish_list: 'false' });
-        //params.set('tagToInlcude', "none");
-
-        const response = await fetch(`/api/fetch_grouped_items?${params}`)
-        console.log("Fetch completed, status:", response.status, response.statusText);
-        
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        
-        // Get raw text first
-        const rawText = await response.text();
-        
-        // Try to parse
-        const parsed = JSON.parse(rawText);
-        return parsed
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
-    useEffect( () => {
-        
-    }, [])
-    return (
-        <div className="flex flex-col justify-center items-center">
-            <ContainerTagGrouped name="cidar" tags="vinegar, apple, liquid" subItems={ items } />
+
+    const rawText = await response.text();
+    setParsedItems(JSON.parse(rawText));
+  };
+
+  useEffect(() => {
+    fetchGrouped();
+  }, []);
+
+  return (
+
+    <div className="flex flex-col min-h-screen mt-3 ">
+        <div className="flex flex-row m-2">
+            <SidebarComp isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+            {/* Sidebar Toggle */}
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="flex items-center justify-center w-12 h-12 rounded-lg hover:bg-slate-700/50 transition-colors shrink-0"
+            >
+              {/*<Bars3Icon className="h-10 w-10 text-white" />*/}
+              ≡
+            </button>
+
         </div>
-    )
-}
+
+        <div className="flex flex-col justify-center items-center">
+
+        {Object.entries(parsedItems).map(([groupedName, item]) => (
+            <ContainerTagGrouped
+            key={groupedName}
+            name={groupedName}
+            tags={item.tags}
+            subItems={item.subItems}
+            />
+        ))}
+        </div>
+    </div>
+  );
+};
 
 export default memo(GroupedItems);

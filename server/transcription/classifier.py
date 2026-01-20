@@ -178,7 +178,7 @@ BASE_TAGS = [
     "pretzels",
     "granola bar",
     "protein bar",
-    "bonbons",
+    "fruit spread",
     # Beverages
     "water",
     "juice",
@@ -201,10 +201,7 @@ BASE_TAGS = [
     "hot sauce",
     "bbq sauce",
     "salad dressing",
-    "jam",
-    "honey",
     "syrup",
-    "peanut butter",
     "nutella",
     "pesto",
     "salsa",
@@ -228,7 +225,7 @@ BASE_TAGS = [
     "soup",
     "canned beans",
     "canned tomatoes",
-    # Household (if you track these)
+    # Household
     "dish soap",
     "laundry detergent",
     "paper towels",
@@ -242,51 +239,28 @@ FLAVOR_TAGS = [
     "none",
     "plain",
     "original",
-    # Fruit flavors
-    "apple",
-    "banana",
-    "orange",
-    "lemon",
-    "lime",
+    # Only these mainstream fruit flavors are allowed for marmalades/jams:
     "strawberry",
+    "apricot",
     "raspberry",
     "blueberry",
     "cherry",
-    "grape",
-    "peach",
-    "mango",
-    "pineapple",
-    "coconut",
-    "watermelon",
-    "pear",
-    "apricot",
-    "blackberry",
-    "cranberry",
-    # Savory flavors
-    "salt",
+    # Non-fruit flavors
     "sea salt",
-    "cheese",
     "cheddar",
-    "sour cream",
     "bbq",
     "barbecue",
     "salt and vinegar",
     "paprika",
-    "onion",
-    "garlic",
     "herbs",
-    "pepper",
     "chili",
     "spicy",
     "jalapeño",
     "buffalo",
     "ranch",
     "bacon",
-    # Sweet flavors
     "vanilla",
-    "chocolate",
     "caramel",
-    "honey",
     "cinnamon",
     "mint",
     "hazelnut",
@@ -294,14 +268,12 @@ FLAVOR_TAGS = [
     "peanut",
     "coffee",
     "mocha",
-    # Candy/confection specific
+    "honey",
     "menthol",
     "eucalyptus",
     "licorice",
-    "fruit mix",
     "cola",
     "bubblegum",
-    # Tea/coffee varieties
     "earl grey",
     "green tea",
     "black tea",
@@ -313,14 +285,12 @@ FLAVOR_TAGS = [
     "espresso",
     "arabica",
     "robusta",
-    # Meat preparations
     "smoked",
     "grilled",
     "fried",
     "roasted",
     "ground",
     "sliced",
-    # Dietary
     "organic",
     "whole wheat",
     "multigrain",
@@ -331,7 +301,6 @@ FLAVOR_TAGS = [
     "lactose free",
     "vegan",
     "vegetarian",
-    # Regional/Style
     "italian",
     "mexican",
     "asian",
@@ -339,7 +308,6 @@ FLAVOR_TAGS = [
     "thai",
     "greek",
     "french",
-    # General descriptors
     "extra virgin",
     "aged",
     "fresh",
@@ -356,7 +324,6 @@ FLAVOR_TAGS = [
 # Form/Physical state tags
 FORM_TAGS = [
     "none",
-    # States
     "liquid",
     "solid",
     "powder",
@@ -364,7 +331,6 @@ FORM_TAGS = [
     "paste",
     "cream",
     "foam",
-    # Food-specific forms
     "grain",
     "flakes",
     "leaves",
@@ -383,7 +349,6 @@ FORM_TAGS = [
     "jarred",
     "bagged",
     "boxed",
-    # Candy/snack forms
     "tablet",
     "lozenge",
     "gummy",
@@ -392,14 +357,10 @@ FORM_TAGS = [
     "crunchy",
     "soft",
     "crispy",
-    # Prepared forms
     "ready to eat",
     "ready to cook",
     "instant",
     "concentrate",
-    # Packaging-related (if relevant)
-    "carbonated",
-    "still",
     "aerosol",
     "spray",
 ]
@@ -465,7 +426,8 @@ Tag combinations (format: "base, flavor, form"):
 
 Return ONLY valid JSON, no explanations."""
 
-TAG_ASSIGNMENT_BATCH_PROMPT = """You are a grocery product classifier.
+TAG_ASSIGNMENT_BATCH_PROMPT = """
+You are a grocery product classifier.
 
 Your task:
 For EACH database row, independently assign semantic tags that describe the product.
@@ -484,7 +446,7 @@ Base tags: {base_tags}
 Flavor/Subtype tags: {flavor_tags}
 Form tags: {form_tags}
 
-Normalization rules:
+NORMALIZATION RULES:
 - lowercase
 - singular nouns where it makes sense
 - no brand names in tags (brands go in shortened name, not tags)
@@ -496,21 +458,29 @@ Normalization rules:
 - use 'unknown' for base only if product type is completely unclear
 
 MATCHING STRATEGY:
-1. First try to find EXACT or VERY CLOSE match in allowed tags
-2. If no close match, pick the most GENERAL category that fits
-   - Example: "Chipsfrisch Ungarisch" → base="chips" (not "potato chips" or "snack")
-   - Example: "Fisherman's Friend" → base="candy" (general), flavor="menthol", form="solid"
-3. For flavors: match the actual flavor/variety, use "none" if plain/unflavored
-4. For forms: liquid, solid, powder, gel, paste, leaves, grain, tablet, etc.
+1. For fruit-based spreads (jam, marmalade, marmelade, confiture, konfitüre, gelée, etc.):
+   - ALWAYS use base="fruit spread".
+   - Check if the fruit flavor is in the ALLOWED mainstream list: strawberry, apricot, raspberry, blueberry, cherry.
+   - If the flavor IS in the allowed list, assign it (e.g., flavor="apricot").
+   - If the flavor is NOT in the allowed list (peach, plum, blackberry, orange, etc.), set flavor="none" (consolidate as generic fruit spread).
+   - NEVER use non-mainstream flavors - only the 5 allowed ones.
+   - ALWAYS use form="jarred" for all jams/marmalades/spreads - they are always in jars.
 
-Rules:
+2. For all other products:
+   - First try to find EXACT or VERY CLOSE match in allowed tags.
+   - If no close match, pick the most GENERAL category that fits.
+   - For flavors: match the actual flavor/variety, use "none" if plain/unflavored.
+   - For forms: use the most appropriate and CONSISTENT form for grouping (liquid, solid, powder, gel, paste, leaves, grain, jarred, tablet, etc.)
+   - Prefer consistency: same product types should use same form tags for proper grouping.
+
+RULES:
 1. Use the shortened name ('class') as the PRIMARY signal.
 2. Only use original name or categories as clarification.
-3. Prefer matching to general categories over 'unknown'
+3. Prefer matching to general categories over 'unknown'.
 4. Categories are weak hints from Open Food Facts; only guide disambiguation.
-5. If completely unclear after checking all options, use: base='unknown', flavor='none', form='none'
+5. If completely unclear after checking all options, use: base='unknown', flavor='none', form='none'.
 6. Do NOT translate.
-7. Be generous with matching - "bonbons" matches "candy", "thé" matches "tea", etc.
+7. Be generous with matching - though things that are different shall not be grouped, but jam and marmalade are e.g. quite similar -> fruit spread.
 
 OUTPUT FORMAT:
 Return EXACTLY one valid JSON object.
@@ -518,16 +488,38 @@ Each key is the ORIGINAL item name.
 Each value has this structure:
 {{
   "base": "<base product tag>",
-  "flavor": "<flavor/subtype tag or 'none'>",
+  "flavor": "<flavor/subtype tag or '' if not in allowed fruit flavors>",
   "form": "<form tag or 'none'>"
 }}
 
-Examples:
-{{"Coucous": {{"base": "couscous", "flavor": "none", "form": "grain"}}}},
-{{"Menthol Extra Stark Ohne Zucker": {{"base": "candy", "flavor": "menthol", "form": "solid"}}}},
-{{"Thé Earl Grey Classic": {{"base": "tea", "flavor": "earl grey", "form": "leaves"}}}},
-{{"milk": {{"base": "milk", "flavor": "none", "form": "liquid"}}}},
-{{"Chipsfrisch Ungarisch": {{"base": "chips", "flavor": "paprika", "form": "solid"}}}}
+EXAMPLES:
+{{
+  "Coucous": {{"base": "couscous", "flavor": "none", "form": "grain"}},
+  "Menthol Extra Stark Ohne Zucker": {{"base": "candy", "flavor": "menthol", "form": "solid"}},
+  "Thé Earl Grey Classic": {{"base": "tea", "flavor": "earl grey", "form": "leaves"}},
+  "milk": {{"base": "milk", "flavor": "none", "form": "liquid"}},
+  "Chipsfrisch Ungarisch": {{"base": "chips", "flavor": "paprika", "form": "solid"}},
+  "Bonne Maman - Apricot and Peach French Jam, 13oz (370g) Jar": {{
+    "base": "fruit spread",
+    "flavor": "apricot",
+    "form": "jarred"
+  }},
+  "Samt Aprikose ohne Stücke weniger Zucker": {{
+    "base": "fruit spread",
+    "flavor": "apricot",
+    "form": "jarred"
+  }},
+  "Peach Marmalade": {{
+    "base": "fruit spread",
+    "flavor": "none",
+    "form": "jarred"
+  }},
+  "Strawberry Jam": {{
+    "base": "fruit spread",
+    "flavor": "strawberry",
+    "form": "jarred"
+  }}
+}}
 
 Now classify the following rows (use ORIGINAL item names as keys):
 
@@ -540,53 +532,46 @@ class (shortened names, same order):
 categories (list of categories, same order; may be empty):
 {categories}
 
-Return ONLY valid JSON, no explanations."""
+Return ONLY valid JSON, no explanations.
+"""
 
-SHORTEN_BATCH_TMPL = """You are a product name normalizer. Shorten and normalize product names into a concise, recognizable format while maintaining brand identity.
+SHORTEN_BATCH_TMPL = """
+You are a product name normalizer. Shorten and normalize product names into a concise, recognizable format.
 
 RULES:
-
-REMOVE MARKETING WORDS: Bio, Extra, Stark, Natives, Natur, Ohne Zucker, Classic, Griechisches, etc.
-
-KEEP BRAND NAMES: They help people identify products (Nutella, Chipsfrisch, Ricola, Lindt, etc.).
-
-HINTS: Categories are provided as hints, but PREFER keeping recognizable brand names.
-
-EDGE CASES: If a brand is not iconic, you MAY use "Category + Flavor" for clarity.
-
-NEVER TRANSLATE: Keep the original language (French stays French, Spanish stays Spanish, etc.).
-
-PRODUCT TYPE: Only add if 100% certain it adds necessary clarity.
-
-FLAVOR: Keep flavor/variant details that help identify specific products.
-
-SPELLING: Correct minor typos (e.g., Coucous -> Couscous).
-
-CLEANUP: Remove trailing words like "the" if not part of the name.
-
-UNCERTAINTY: If unsure, keep the original name.
-
-OUTPUT FORMAT: Return EXACTLY one JSON object. No extra text. {{"original_item_name": "shortenedText"}}
+1. AGGRESSIVELY REMOVE MARKETING TEXT: French Jam, ohne Stücke, weniger Zucker, Classic, Bio, Extra, Stark, Natur, measurements (13oz, 370g), etc.
+2. FOR JAMS/MARMALADES/SPREADS/CONFITURE:
+   - REMOVE brand names (Bonne Maman, Samt, Hero, etc.)
+   - Keep flavor + product type: "Aprikosen Marmelade", "Strawberry Jam", "Apricot Marmelade"
+   - Use product type from input language: Marmelade (German), Jam (English), Confiture (French)
+   - For multi-fruit, use first/main fruit mentioned
+3. FOR OTHER BRANDED PRODUCTS:
+   - Keep brand + variant if distinctive: "Chips Ungarisch"
+   - Or just brand if product type is clear: "Nutella"
+4. FOR NON-BRANDED PRODUCTS:
+   - Keep descriptive product type + flavor if relevant
+   - Examples: "Menthol Bonbons", "Earl Grey", "Couscous"
+5. NEVER TRANSLATE: Keep the original language (e.g., "Aprikose" stays "Aprikose", "Marmelade" stays "Marmelade").
+6. CORRECT MINOR TYPOS: e.g., Coucous -> Couscous.
+7. NO PARENTHETICAL INFO: Remove (weniger Zucker), (370g), etc.
 
 EXAMPLES:
+- "Bonne Maman - Apricot and Peach French Jam, 13oz (370g) Jar" → "Apricot Marmelade"
+- "Samt Aprikose ohne Stücke weniger Zucker" → "Aprikosen Marmelade"
+- "Hero Erdbeer Konfitüre Extra" → "Erdbeer Marmelade"
+- "Strawberry Jam" → "Strawberry Jam"
+- "Thé Earl Grey Classic" → "Earl Grey"
+- "Coucous" → "Couscous"
+- "Menthol Extra Stark Ohne Zucker" → "Menthol Bonbons"
+- "Bonbons Honig" → "Honig Bonbons"
+- "Nutella Brotaufstrich" → "Nutella"
 
-"Thé Earl Grey Classic": "Earl Grey"
+INPUT DATA:
+Items: {items_list}
+Categories: {category_list}
 
-"Menthol Extra Stark Ohne Zucker": "Menthol Bonbons"
-
-"Chipsfrisch Ungarisch": "Chips Ungarisch"
-
-"Ricola Kräuter Bonbons": "Ricola Bonbons"
-
-"Nutella Brotaufstrich": "Nutella"
-
-"Griechisches Natives Olivenöl Extra": "Olivenöl"
-
-"Extra Stark Ricola": "Ricola Bonbons"
-
-"Bonne Maman Confiture": "Bonne Maman"
-
-INPUT DATA: Items: {items_list} Categories: {category_list}
+OUTPUT FORMAT: Return EXACTLY one JSON object. No extra text.
+{{"original_item_name": "shortened_name"}}
 """
 
 SHORTEN_TMPL = """
@@ -594,44 +579,38 @@ Shorten and normalize product name: "{input}"
 Categories (use as hints only): "{categories}"
 
 RULES:
-1. Remove marketing words: Bio, Extra, Stark, Natives, Natur, Ohne Zucker, Classic, Griechisches
-2. KEEP BRAND NAMES - they help people identify products (Nutella, Chipsfrisch, Lindt, Ricola, etc.)
-3. Categories are hints - still PREFER keeping recognizable brand names
-4. Only in narrow edge cases where brand is not iconic, you MAY use category + flavor if clearer
-5. NEVER TRANSLATE - maintain input language (German→German, French→French, Spanish→Spanish, etc.)
-6. Keep or ADD product type ONLY if you are absolutely certain:
-   - Menthol/Ricola/Fisherman's Friend → clearly Bonbons
-   - Tea/Thé varieties → keep type
-   - If product type is already present, keep it
-   - If product type is missing but OBVIOUS from context, add it
-7. For branded products, keep brand (maybe + variant/flavor if distinctive)
-8. When uncertain about product type, DON'T add it
-9. Remove trailing 'the' if not part of the product name
-10. If it makes sense you can correct spelling like you could with e.g. Coucous -> Couscous
-11. Goal: be descriptive so people easily understand what it is
+1. AGGRESSIVELY REMOVE: Bio, Extra, Stark, Natives, Natur, Ohne Zucker, weniger Zucker, Classic, measurements, French Jam, ohne Stücke, etc.
+2. FOR JAMS/MARMALADES/SPREADS/CONFITURE:
+   - REMOVE brand names (Bonne Maman, Samt, Hero, etc.)
+   - Keep flavor + product type: "Aprikosen Marmelade", "Strawberry Jam", "Apricot Marmelade"
+   - Use product type from input language: Marmelade (German), Jam (English), Confiture (French)
+   - For multi-fruit, use first/main fruit
+3. FOR OTHER BRANDED PRODUCTS: Keep brand + distinctive variant if needed ("Chips Ungarisch") or just brand ("Nutella")
+4. FOR NON-BRANDED: Keep descriptive type + flavor ("Menthol Bonbons", "Earl Grey")
+5. NEVER TRANSLATE - maintain input language
+6. NO PARENTHETICAL INFO: Remove (weniger Zucker), (370g), etc.
+7. Correct spelling: Coucous → Couscous
 
 Examples:
+'Samt Aprikose ohne Stücke weniger Zucker' → Aprikosen Marmelade
+'Bonne Maman Apricot and Peach French Jam' → Apricot Marmelade
+'Hero Erdbeer Konfitüre Extra' → Erdbeer Marmelade
+'Aprikose Marmelade' → Aprikosen Marmelade
+'Strawberry Jam' → Strawberry Jam
 'Thé Earl Grey Classic' → Earl Grey
 'Menthol Extra Stark Ohne Zucker' → Menthol Bonbons
 'Chipsfrisch Ungarisch' → Chips Ungarisch
 'Ricola Kräuter Bonbons' → Ricola Bonbons
 'Nutella Brotaufstrich' → Nutella
-'Lindt Schokolade Nuss' → Lindt Nuss
-'Aprikose' → Aprikose
-'Extra Aprikose' → Aprikose
-'Holler Zwetschken Konfitüre' → Zwetschken Marmelade
 'Griechisches Natives Olivenöl Extra' → Olivenöl
-'Bio Apfel Essig' → Apfel Essig
-'Balsamico-Creme' → Balsamico
 'Coucous' → Couscous
 'milk' → milk
 'cookies' → cookies
-'Bonne Maman Confiture' → Bonne Maman
 
 Return EXACTLY one JSON object:
 {{"shortenedText":"result here"}}
 
-CRITICAL: Keep brand names, never translate, only add types when 100% certain.
+CRITICAL: For jams/marmalades, use descriptive flavor + product type, NO brand names.
 """
 
 PROMPT_TMPL = """
@@ -816,7 +795,7 @@ def shortenText(inputText: str, categories: str | list[str]) -> str:
         # Extract the text content from the response
         text_content: str = (
             result.content if hasattr(result, "content") else str(result)
-        ) # type: ignore
+        )  # type: ignore
         out = extract_batch_json(text_content)
     except Exception as e:
         print(f"Error during category classification: {e}")
@@ -1032,4 +1011,3 @@ def classify_category_only(
     """
     classes_list = _normalize_classes(classes)
     return _classify_category(input_text, classes_list)
-

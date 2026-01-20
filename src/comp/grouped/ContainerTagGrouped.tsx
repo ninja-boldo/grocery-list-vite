@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
-import GroupHeader from "./grouped/GroupHeader";
-import TagBadge from "./grouped/TagBadge";
-import SubItemCard from "./grouped/SubItemCard";
+import GroupHeader from "./GroupHeader";
+import TagBadge from "./TagBadge";
+import SubItemCard from "./SubItemCard";
 
 interface CompositeItems {
   name: string;

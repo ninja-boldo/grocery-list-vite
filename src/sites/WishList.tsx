@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import ErrorContainer from './../comp/ErrorContainer';
 import { useNavigate } from 'react-router-dom';
 import StyledButton from './../comp/StyledButton';
-import { Bars3Icon } from '@heroicons/react/24/outline';
 import SidebarComp from './../comp/Sidebar';
 import InfoContainer from './../comp/InfoContainer';
 
