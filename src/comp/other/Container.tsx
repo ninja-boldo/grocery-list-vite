@@ -124,7 +124,7 @@ const Container = ({
           hover:border-cyan-400/50
           hover:from-slate-800/95 hover:to-slate-700/95
           hover:scale-[1.02] hover:-translate-y-1
-          w-full
+          w-full mt-2
           backdrop-blur-md
           ${open ? 'shadow-xl shadow-cyan-400/25 border-cyan-400/60 scale-[1.02] -translate-y-1' : ''}
           ${style || ""}

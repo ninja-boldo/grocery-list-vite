@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
-import ShortPopup from './ShortPopUp';
+import ShortPopup from '../utils/ShortPopUp';
 
 
 //TODO: implement jwt webtockens to e.g. savely let there be multiple users

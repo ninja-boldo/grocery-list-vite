@@ -3,18 +3,15 @@ from pathlib import Path
 import re
 import shlex
 import traceback
-import urllib.parse
-
+from utils.dbManager import DatabaseManager
 from enum import Enum
-import httpx
 import requests
 from dotenv import load_dotenv
-
+from utils.lookup import WORD_STRIP, PHRASE_STRIP
 os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 
 import datetime
 import json
-import shutil
 from typing import Optional, Union, Any
 from contextlib import asynccontextmanager
 from fastapi import (
@@ -28,7 +25,7 @@ from fastapi import (
 )
 import uvicorn
 
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 
@@ -211,342 +208,6 @@ def setup_logging() -> tuple[QueueListener, logging.Logger]:
 queue_listener, logger = setup_logging()
 atexit.register(lambda: queue_listener.stop() if queue_listener else None)
 
-
-# ============================================================================
-# DATABASE UTILITIES
-# ============================================================================
-class DatabaseManager:
-    """Centralized database operations with retry logic and self-healing"""
-
-    def __init__(self, pool: asyncpg.Pool):
-        self.pool = pool
-
-    async def execute_with_retry(
-        self,
-        query: str,
-        *args,
-        retries: int = Config.DB_RETRY_ATTEMPTS,
-        delay: float = Config.DB_RETRY_DELAY,
-    ) -> Any:
-        """Execute query with automatic retry on transient failures"""
-        last_error = None
-
-        for attempt in range(retries):
-            try:
-                async with self.pool.acquire() as con:
-                    return await con.execute(query, *args)
-            except (asyncpg.PostgresConnectionError, asyncpg.InterfaceError) as e:
-                last_error = e
-                logger.warning(
-                    f"DB connection error (attempt {attempt + 1}/{retries}): {e}"
-                )
-                if attempt < retries - 1:
-                    await asyncio.sleep(delay * (attempt + 1))
-            except Exception as e:
-                raise e
-
-        raise last_error
-
-    async def fetch_with_retry(
-        self, query: str, *args, retries: int = Config.DB_RETRY_ATTEMPTS
-    ) -> list:
-        """Fetch rows with automatic retry"""
-        last_error = None
-
-        for attempt in range(retries):
-            try:
-                async with self.pool.acquire() as con:
-                    return await con.fetch(query, *args)
-            except (asyncpg.PostgresConnectionError, asyncpg.InterfaceError) as e:
-                last_error = e
-                logger.warning(f"DB fetch error (attempt {attempt + 1}/{retries}): {e}")
-                if attempt < retries - 1:
-                    await asyncio.sleep(Config.DB_RETRY_DELAY * (attempt + 1))
-            except Exception as e:
-                raise e
-
-        raise last_error
-
-    async def fetchrow_with_retry(self, query: str, *args) -> Optional[asyncpg.Record]:
-        """Fetch single row with retry"""
-        for attempt in range(Config.DB_RETRY_ATTEMPTS):
-            try:
-                async with self.pool.acquire() as con:
-                    return await con.fetchrow(query, *args)
-            except (asyncpg.PostgresConnectionError, asyncpg.InterfaceError) as e:
-                logger.warning(f"DB fetchrow error (attempt {attempt + 1}): {e}")
-                if attempt < Config.DB_RETRY_ATTEMPTS - 1:
-                    await asyncio.sleep(Config.DB_RETRY_DELAY * (attempt + 1))
-        return None
-
-    async def fetchval_with_retry(self, query: str, *args) -> Any:
-        """Fetch single value with retry"""
-        for attempt in range(Config.DB_RETRY_ATTEMPTS):
-            try:
-                async with self.pool.acquire() as con:
-                    return await con.fetchval(query, *args)
-            except (asyncpg.PostgresConnectionError, asyncpg.InterfaceError) as e:
-                logger.warning(f"DB fetchval error (attempt {attempt + 1}): {e}")
-                if attempt < Config.DB_RETRY_ATTEMPTS - 1:
-                    await asyncio.sleep(Config.DB_RETRY_DELAY * (attempt + 1))
-        return None
-
-
-def parse_db_url(
-    db_url: str,
-) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str], dict]:
-    """Parse database URL into components"""
-    p = urllib.parse.urlparse(db_url)
-    user = urllib.parse.unquote(p.username) if p.username else None
-    password = urllib.parse.unquote(p.password) if p.password else None
-    host = p.hostname
-    port = str(p.port) if p.port else None
-    dbname = p.path.lstrip("/") if p.path else None
-    env = dict(os.environ)
-    if password:
-        env["PGPASSWORD"] = password
-    return user, host, port, dbname, env
-
-
-async def run_psql_command(
-    cmd_args: list[str], env: Optional[dict] = None
-) -> tuple[int, str, str]:
-    """Execute psql command asynchronously"""
-    proc = await asyncio.create_subprocess_exec(
-        *cmd_args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-    )
-    out, err = await proc.communicate()
-    return proc.returncode, out.decode(errors="ignore"), err.decode(errors="ignore")
-
-
-def get_script_path(level: int = 0) -> str:
-    """Get script directory path, optionally going up levels"""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    if level < 0:
-        parts = script_dir.split(os.sep)
-        parts = parts[: (len(parts) + level)]
-        script_dir = os.sep.join(parts) or os.sep
-    return script_dir
-
-
-# ============================================================================
-# Lookup table for item name denoising
-# ============================================================================
-WORD_STRIP = {
-    # ====================
-    # ENGLISH
-    # ====================
-    # marketing / quality
-    "the": "",
-    "premium": "",
-    "superior": "",
-    "finest": "",
-    "best": "",
-    "selected": "",
-    "carefully selected": "",
-    "special": "",
-    "exclusive": "",
-    "authentic": "",
-    "traditional": "",
-    "classic": "",
-    "original": "",
-    "signature": "",
-    "artisan": "",
-    "artisanal": "",
-    "handcrafted": "",
-    "homemade": "",
-    "homestyle": "",
-    "gourmet": "",
-    "deluxe": "",
-    # texture / experience
-    "crispy": "",
-    "crunchy": "",
-    "smooth": "",
-    "creamy": "",
-    "soft": "",
-    "tender": "",
-    "juicy": "",
-    "rich": "",
-    # preparation / processing
-    "ready to eat": "",
-    "ready-to-eat": "",
-    "easy to prepare": "",
-    "quick cook": "",
-    "instant": "",
-    "microwaveable": "",
-    "oven ready": "",
-    "pre cooked": "",
-    "pre-cooked": "",
-    "slow cooked": "",
-    "stone baked": "",
-    # dietary / claims
-    "organic": "",
-    "bio": "",
-    "natural": "",
-    "no additives": "",
-    "no preservatives": "",
-    "no artificial colors": "",
-    "no artificial flavours": "",
-    "non gmo": "",
-    "gmo free": "",
-    "gluten free": "",
-    "gluten-free": "",
-    "lactose free": "",
-    "lactose-free": "",
-    "vegan": "",
-    "vegetarian": "",
-    "plant based": "",
-    "plant-based": "",
-    "low fat": "",
-    "reduced fat": "",
-    "low sugar": "",
-    "sugar free": "",
-    "sugar-free": "",
-    "high protein": "",
-    "protein rich": "",
-    # vague flavor phrasing
-    "stark": "",
-    "extra": "",
-    "ohne": "",
-    "flavoured": "",
-    "flavored": "",
-    "with flavor": "",
-    "taste of": "",
-    "hint of": "",
-    "touch of": "",
-    "style": "",
-    # convenience / pack
-    "family pack": "",
-    "value pack": "",
-    "multipack": "",
-    "portion": "",
-    "single serve": "",
-    "snack size": "",
-    "beste": "",
-    "feinste": "",
-    "ausgewählt": "",
-    "besondere": "",
-    "exklusiv": "",
-    "authentisch": "",
-    "traditionell": "",
-    "klassisch": "",
-    "hausgemacht": "",
-    "handgemacht": "",
-    "manufaktur": "",
-    "delikat": "",
-    # texture / experience
-    "knusprig": "",
-    "kross": "",
-    "cremig": "",
-    "zart": "",
-    "saftig": "",
-    "reichhaltig": "",
-    # preparation / processing
-    "verzehrfertig": "",
-    "schnell zubereitet": "",
-    "fix und fertig": "",
-    "mikrowellengeeignet": "",
-    "ofenfertig": "",
-    "vorgegart": "",
-    "langsam gegart": "",
-    "steinofen": "",
-    # dietary / claims
-    "natürlich": "",
-    "ohne zusatzstoffe": "",
-    "ohne konservierungsstoffe": "",
-    "ohne farbstoffe": "",
-    "ohne geschmacksverstärker": "",
-    "gentechnikfrei": "",
-    "glutenfrei": "",
-    "laktosefrei": "",
-    "vegetarisch": "",
-    "pflanzlich": "",
-    "fettarm": "",
-    "fettreduziert": "",
-    "zuckerarm": "",
-    "zuckerfrei": "",
-    "eiweißreich": "",
-    # vague flavor phrasing
-    "aromatisiert": "",
-    "geschmack": "",
-    "geschmack von": "",
-    "nach art": "",
-    "art": "",
-    "husten": "",
-    # convenience / pack
-    "familienpackung": "",
-    "vorteilspack": "",
-    "mehrpack": "",
-    "portioniert": "",
-    "einzelportion": "",
-    "snackgröße": "",
-    # ====================
-    # FRENCH
-    # ====================
-    "qualité supérieure": "",
-    "traditionnel": "",
-    "classique": "",
-    "authentique": "",
-    "fait maison": "",
-    "croustillant": "",
-    "crémeux": "",
-    "prêt à consommer": "",
-    "naturel": "",
-    "sans additifs": "",
-    "sans conservateurs": "",
-    "sans gluten": "",
-    "sans lactose": "",
-    "végan": "",
-    "végétarien": "",
-    "aromatisé": "",
-    "saveur": "",
-    "au goût de": "",
-    "format familial": "",
-    # ====================
-    # SPANISH
-    # ====================
-    "calidad superior": "",
-    "tradicional": "",
-    "clásico": "",
-    "auténtico": "",
-    "casero": "",
-    "crujiente": "",
-    "cremoso": "",
-    "listo para comer": "",
-    "sin aditivos": "",
-    "sin conservantes": "",
-    "sin gluten": "",
-    "sin lactosa": "",
-    "vegano": "",
-    "vegetariano": "",
-    "aromatizado": "",
-    "sabor": "",
-    "al gusto de": "",
-    "formato familiar": "",
-}
-
-PHRASE_STRIP = [
-    "ready to eat",
-    "ready-to-eat",
-    "gluten free",
-    "gluten-free",
-    "lactose free",
-    "lactose-free",
-    "sans gluten",
-    "sans lactose",
-    "sin gluten",
-    "sin lactosa",
-    "au goût de",
-    "nach art",
-    "ungarische art",
-    "format familial",
-    "family pack",
-    "value pack",
-]
-
 # ============================================================================
 # DATABASE SCHEMA DEFINITION (Single Source of Truth)
 # ============================================================================
@@ -580,7 +241,7 @@ DATABASE_SCHEMA = {
             ("image_url", "TEXT DEFAULT '' "),
             ("categories", "TEXT DEFAULT '' "),
             ("categories_short", "TEXT DEFAULT '' "),
-            ("tags", "TEXT DEFAULT '' ")
+            ("tags", "TEXT DEFAULT '' "),
         ],
         "indexes": [
             ("idx_item_list_ean", "ean"),
@@ -588,7 +249,7 @@ DATABASE_SCHEMA = {
             ("idx_item_list_subgroups", "subgroups"),
             ("idx_item_list_class", "class"),
             ("idx_item_list_iswished", "iswished"),
-            ("idx_item_list_tags", "tags")
+            ("idx_item_list_tags", "tags"),
         ],
     },
     "tagging_to_name": {
@@ -599,8 +260,8 @@ DATABASE_SCHEMA = {
         "indexes": [
             ("idx_tags", "tags"),
             ("idx_inferred_name", "inferred_name"),
-        ]
-    }
+        ],
+    },
 }
 
 
@@ -610,6 +271,14 @@ async def ensure_schema_compliance(pool: asyncpg.Pool) -> None:
     Creates missing tables, adds missing columns, and creates indexes.
     This is idempotent and safe to run multiple times.
     """
+
+    logger.info(
+        f"ensuring schema compliance for these items of the schema dict: {DATABASE_SCHEMA.items()}"
+    )
+    logger.info(
+        f"ensuring schema compliance for these keys of the schema dict: {DATABASE_SCHEMA.keys()}"
+    )
+
     async with pool.acquire() as con:
         for table_name, schema in DATABASE_SCHEMA.items():
             logger.info(f"Ensuring schema compliance for table: {table_name}")
@@ -686,12 +355,12 @@ async def load_data_from_sources(pool: asyncpg.Pool) -> None:
     dump_path_variants = [
         f"/app/{dump_path}",
         f"/server/{dump_path}",
-        f"{get_script_path(0)}/{dump_path}",
-        f"{get_script_path(-1)}/{dump_path}",
-        f"{get_script_path(-2)}/{dump_path}",
+        f"{app.state.db.get_script_path(0)}/{dump_path}",
+        f"{app.state.db.get_script_path(-1)}/{dump_path}",
+        f"{app.state.db.get_script_path(-2)}/{dump_path}",
     ]
 
-    user, host, port, dbname, env = parse_db_url(Config.get_database_url())
+    user, host, port, dbname, env = app.state.db.parse_db_url(Config.get_database_url())
 
     async with pool.acquire() as con:
         food_count = await con.fetchval("SELECT COUNT(*) FROM food") or 0
@@ -712,7 +381,7 @@ async def load_data_from_sources(pool: asyncpg.Pool) -> None:
             if port:
                 cmd[1:1] = ["-p", port]
 
-            rc, out, err = await run_psql_command(cmd, env)
+            rc, out, err = await app.state.db.run_psql_command(cmd, env)
             if rc == 0:
                 logger.info("✓ Successfully loaded data from SQL dump")
                 return
@@ -733,13 +402,13 @@ async def load_data_from_sources(pool: asyncpg.Pool) -> None:
         if port:
             cmd[1:1] = ["-p", port]
 
-        rc, out, err = await run_psql_command(cmd, env)
+        rc, out, err = await app.state.db.run_psql_command(cmd, env)
         if rc == 0:
             logger.info("✓ Successfully loaded data from CSV")
         else:
             logger.error(f"CSV load failed: {err}")
     else:
-        logger.warning(f"No data sources found. Food table will remain empty.")
+        logger.warning("No data sources found. Food table will remain empty.")
         logger.info("Application will continue with empty food database")
 
 
@@ -756,16 +425,16 @@ async def init_database(pool: asyncpg.Pool, dump_path: str = "maindb.sql"):
     try:
         logger.info("Starting database initialization...")
 
-        # Step 1: Ensure schema compliance (always runs)
-        await ensure_schema_compliance(pool)
-        logger.info("✓ Schema compliance verified")
-
-        # Step 2: Load data if needed (optional, won't fail startup)
+        # Step 1: Load data if needed (optional, won't fail startup)
         try:
             await load_data_from_sources(pool)
         except Exception as e:
             logger.warning(f"Data loading failed (non-critical): {e}")
             logger.info("Application will continue without pre-loaded food data")
+
+        # Step 2: Ensure schema compliance (always runs)
+        await ensure_schema_compliance(pool)
+        logger.info("✓ Schema compliance verified")
 
         # Step 3: Final status report
         async with pool.acquire() as con:
@@ -797,7 +466,8 @@ def convert_timestamps_to_dates(timestamps_json: str) -> list[str]:
     try:
         timestamps = json.loads(timestamps_json or "[]")
         return [
-            datetime.datetime.fromisoformat(t).date().strftime("%d.%m.%Y") for t in timestamps
+            datetime.datetime.fromisoformat(t).date().strftime("%d.%m.%Y")
+            for t in timestamps
         ]
     except (json.JSONDecodeError, ValueError):
         return []
@@ -854,6 +524,8 @@ def build_fetch_query(
     only_wish_list: Optional[str] = None,
     onlyNotNull: Optional[str] = "true",
     sortOrder: Optional[str] = None,
+    skip: Optional[int] = Query(None),
+    limit: Optional[int] = Query(None),
 ) -> tuple[str, list]:
     """Build optimized SQL query for fetching items with filters"""
     conditions = []
@@ -881,11 +553,12 @@ def build_fetch_query(
         )
 
     where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    limit_clause = "" if any([subgroups, classnames, only_wish_list]) else " LIMIT 1000"
+    limit_clause = f"limit {limit}" if limit else "LIMIT 1000"
+    offset_clause = f"offset {skip}" if skip else ""
 
     return (
         f"""SELECT ean, item_name, subgroups, class, count, timestamps, image_url
-        FROM item_list{where_clause} {convertSortToSql(sortMode=sortOrder)}{limit_clause}""",
+        FROM item_list{where_clause} {convertSortToSql(sortMode=sortOrder)} {limit_clause} {offset_clause}""",
         params,
     )
 
@@ -1057,8 +730,6 @@ class GroceryItem(BaseModel):
     perish_dates: list[str] = []
     is_wish_list: bool = False
     imageUrl: str
-
-
 class ItemUpdateRequest(BaseModel):
     """Request model for item updates"""
 
@@ -1067,8 +738,6 @@ class ItemUpdateRequest(BaseModel):
     subgroups: Optional[str] = None
     count: Optional[int] = 1
     is_wish_list: Optional[bool] = False
-
-
 class AddEanRequest(BaseModel):
     """Request model for add_ean_to_list endpoint (legacy)"""
 
@@ -1077,8 +746,6 @@ class AddEanRequest(BaseModel):
     subgroups: Optional[str] = None
     count: Optional[int] = 1
     wish_list: Optional[str] = None
-
-
 class ItemUpdateResponse(BaseModel):
     """Response model for item updates"""
 
@@ -1087,35 +754,25 @@ class ItemUpdateResponse(BaseModel):
     subgroups: str = ""
     operation: str  # 'created', 'updated', 'deleted', 'created_new'
     execution_time: Optional[float] = None
-
-
 class ItemListResponse(BaseModel):
     """Response model for item list"""
 
     items: list[GroceryItem]
     total: int
-
-
 class MetadataResponse(BaseModel):
     """Response model for metadata"""
 
     subgroups: list[str]
     classnames: list[str]
-
-
 class BatchUpdateItem(BaseModel):
     """Single item in batch update"""
 
     item_name: str
     count_delta: int
-
-
 class BatchUpdateRequest(BaseModel):
     """Request model for batch updates"""
 
     items: list[BatchUpdateItem]
-
-
 class BatchUpdateResponse(BaseModel):
     """Response model for batch updates"""
 
@@ -1154,7 +811,7 @@ async def lifespan(app: FastAPI):
                     raise
 
         # Initialize database manager
-        app.state.db = DatabaseManager(app.state.pool)
+        app.state.db = DatabaseManager(app.state.pool, logger)
 
         # Initialize database schema
         await init_database(app.state.pool)
@@ -1169,18 +826,20 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Whisper initialization failed: {e}")
         elif Config.ENABLE_WHISPER_MODEL_CLOUD:
             logger.info("Whisper cloud mode enabled")
+        
 
         # Start background daemon tasks (run once at startup)
-        daemon_tasks.append( asyncio.create_task(shortenItemNamesDaemon(app.state.pool)) )
+        daemon_tasks.append(asyncio.create_task(shortenItemNamesDaemon(app.state.pool)))
         logger.info("✓ Started item name shortening daemon")
-        
+
         # schedule tag assignment for item grouping
-        daemon_tasks.append(  asyncio.create_task(assignTagsTask(app.state.pool)) )
+        daemon_tasks.append(asyncio.create_task(assignTagsTask(app.state.pool)))
         logger.info("✓ Started tag assignment daemon")
-        
-        daemon_tasks.append(  asyncio.create_task(assignShorthandNameToTags(app.state.pool)) )
+
+        daemon_tasks.append(
+            asyncio.create_task(assignShorthandNameToTags(app.state.pool))
+        )
         logger.info("✓ Started shorthand name assignment")
-        
 
         # Initialize ML model (conditional)
         app.state.net = None
@@ -1209,7 +868,7 @@ async def lifespan(app: FastAPI):
                 try:
                     await daemon
                 except asyncio.CancelledError:
-                    logger.info(f"{idx +1}. Daemon task cancelled")
+                    logger.info(f"{idx + 1}. Daemon task cancelled")
 
         if hasattr(app.state, "pool") and app.state.pool:
             await app.state.pool.close()
@@ -1276,162 +935,6 @@ async def request_middleware(request: Request, call_next):
 # ============================================================================
 
 
-@app.get("/items")
-async def get_items(
-    request: Request,
-    subgroups: Optional[str] = Query(None),
-    classnames: Optional[str] = Query(None),
-    only_wish_list: Optional[bool] = Query(None),
-) -> ItemListResponse:
-    """
-    Fetch items with optional filters (NEW optimized endpoint)
-
-    This endpoint uses a cleaner response format and improved performance.
-    For backwards compatibility, the old /fetch_items endpoint is still available.
-    """
-    logger.info(
-        f"get_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list}"
-    )
-
-    try:
-        # Convert boolean to string for build_fetch_query
-        wish_list_str = (
-            "true"
-            if only_wish_list is True
-            else "false"
-            if only_wish_list is False
-            else None
-        )
-
-        query, params = build_fetch_query(subgroups, classnames, wish_list_str)
-        rows = await request.app.state.db.fetch_with_retry(query, *params)
-
-        items = [
-            GroceryItem(
-                ean=row["ean"] or "",
-                item_name=row["item_name"] or "",
-                subgroups=row["subgroups"] or "",
-                class_name=row["class"] or "",
-                count=row["count"] or 0,
-                perish_dates=convert_timestamps_to_dates(row["timestamps"]),
-                is_wish_list=False,
-                imageUrl=row["image_url"] or "/none_available.png",
-            )
-            for row in rows
-        ]
-
-        logger.info(f"get_items returned {len(items)} items")
-        return ItemListResponse(items=items, total=len(items))
-
-    except Exception as e:
-        logger.error(f"get_items error: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Failed to fetch items")
-
-
-@app.get("/api/items/update")
-async def update_item_endpoint(
-    request: Request,
-    ean: Optional[str] = Query(None),
-    item_name: Optional[str] = Query(None),
-    subgroups: Optional[str] = Query(None),
-    count: Optional[int] = Query(1),
-    is_wish_list: Optional[bool] = Query(False),
-) -> ItemUpdateResponse:
-    """
-    Update item (NEW optimized endpoint)
-
-    This endpoint provides faster performance for high-frequency operations.
-    Uses optimized database queries and reduced transaction overhead.
-    For backwards compatibility, old endpoints remain available.
-    """
-    if not ean and not item_name:
-        raise HTTPException(status_code=400, detail="Must supply ean or item_name")
-
-    count_delta = safe_int(count, 1)
-    subgroups = sanitize_string(subgroups, "none")
-    is_wish_list_str = "true" if is_wish_list else "false"
-
-    start_time = time.time()
-
-    try:
-        async with request.app.state.pool.acquire() as con:
-            async with con.transaction():
-                # Resolve item identity
-                resolved_ean, resolved_item_name = await resolve_item_identity(
-                    con, ean, item_name
-                )
-
-                # Perform operation
-                operation = await perform_item_operation(
-                    con,
-                    resolved_item_name,
-                    resolved_ean,
-                    count_delta,
-                    subgroups,
-                    is_wish_list_str,
-                )
-
-                execution_time = time.time() - start_time
-
-                return ItemUpdateResponse(
-                    ean=resolved_ean,
-                    product_name=resolved_item_name,
-                    subgroups=subgroups,
-                    operation=operation,
-                    execution_time=execution_time,
-                )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"update_item error: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Failed to update item")
-
-
-@app.post("/api/items/batch")
-async def batch_update_items(
-    request: Request, batch_request: BatchUpdateRequest
-) -> BatchUpdateResponse:
-    """
-    Batch update multiple items (NEW optimized endpoint for heavy hitters)
-
-    This endpoint is optimized for updating multiple items in a single request,
-    reducing network overhead and improving performance for bulk operations.
-    """
-    start_time = time.time()
-    updated = 0
-    failed = 0
-    errors = []
-
-    try:
-        async with request.app.state.pool.acquire() as con:
-            async with con.transaction():
-                for item in batch_request.items:
-                    try:
-                        operation = await perform_item_operation(
-                            con, item.item_name, count_delta=item.count_delta
-                        )
-                        if operation != "skipped":
-                            updated += 1
-                    except Exception as e:
-                        errors.append(f"{item.item_name}: {str(e)}")
-                        failed += 1
-
-        execution_time = time.time() - start_time
-        logger.info(
-            f"batch_update completed in {execution_time:.2f}s: {updated} updated, {failed} failed"
-        )
-
-        return BatchUpdateResponse(updated=updated, failed=failed, errors=errors)
-
-    except Exception as e:
-        logger.error(f"batch_update error: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail="Batch update failed")
-
-
 @app.get("/api/metadata")
 async def get_metadata(request: Request) -> MetadataResponse:
     """
@@ -1480,11 +983,6 @@ async def get_classnames(request: Request):
         raise HTTPException(status_code=500, detail="Failed to fetch classnames")
 
 
-# ============================================================================
-# LEGACY API ENDPOINTS (Backwards Compatibility - Deprecated)
-# ============================================================================
-
-
 @app.get("/fetch_subgroups")
 async def fetch_subgroups(request: Request):
     """
@@ -1519,6 +1017,7 @@ async def fetch_classnames(request: Request):
         raise HTTPException(status_code=500, detail="Failed to fetch classnames")
 
 
+'''
 @app.get("/fetch_all_metadata")
 async def fetch_all_metadata(request: Request):
     """
@@ -1540,40 +1039,72 @@ async def fetch_all_metadata(request: Request):
     except Exception as e:
         logger.error(f"fetch_all_metadata error: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch metadata")
+'''
 
 
 @app.get("/fetch_grouped_items")
 async def fetch_grouped(
     request: Request,
     tagToInlcude: Optional[str] = Query(None),
+    skip: Optional[int] = Query(None),
+    limit: Optional[int] = Query(None),
 ):
-    logger.info(f"fetch_grouped_items received these params: tagToInlcude={tagToInlcude}")
-    if not tagToInlcude or tagToInlcude.lower() == "none":
-        tagToInlcude = None
-        
-    rows = await request.app.state.db.fetch_with_retry("""select ttn.tags as tags, ttn.inferred_name as short_name,
-            il.item_name as long_name, il.count as count
-            from tagging_to_name ttn join item_list il on il.tags = ttn.tags""")
-    resp: dict[str, dict[str, list[ dict[str, str] ] ] ] = {}
-    for row in rows:
-        
-        if row["short_name"] in resp.keys():
-            resp[row["short_name"]]["subItems"].append({
-                    "name": row["long_name"],
-                    "count": row["count"]
-                    })
-        else:
-            resp[row["short_name"]] = {
-                "subItems": [{
-                    "name": row["long_name"],
-                    "count": row["count"]
-                    }] ,
-                "tags": row["tags"]
-            }
+    try:
+        logger.info(
+            f"fetch_grouped_items received these params: tagToInlcude={tagToInlcude}, skip={skip}, limit={limit}"
+        )
 
-        
-    return resp
-    
+        if skip and skip < 0:
+            skip = 0
+        if limit and limit < 0:
+            limit = 0
+
+        query = """
+            SELECT 
+                ttn.inferred_name as short_name,
+                ttn.tags,
+                jsonb_agg(
+                    jsonb_build_object(
+                        'name', il.item_name,
+                        'count', il.count
+                    )
+                ) as sub_items
+            FROM tagging_to_name ttn 
+            JOIN item_list il ON il.tags = ttn.tags
+        """
+
+        params = []
+        if tagToInlcude and tagToInlcude.lower() != "none":
+            params.append(tagToInlcude)
+            query += f" WHERE ttn.tags = ${len(params)}"
+
+        query += " GROUP BY ttn.inferred_name, ttn.tags ORDER BY ttn.inferred_name"
+
+        if limit:
+            params.append(limit)
+            query += f" LIMIT ${len(params)}"
+        if skip:
+            params.append(skip)
+            query += f" OFFSET ${len(params)}"
+
+        rows = await request.app.state.db.fetch_with_retry(query, *params)
+
+        # Convert to response format - parse JSONB to Python list
+        resp = {
+            row["short_name"]: {
+                "subItems": json.loads(row["sub_items"])
+                if isinstance(row["sub_items"], str)
+                else row["sub_items"],
+                "tags": row["tags"],
+            }
+            for row in rows
+        }
+
+        return {"items": resp, "count": len(resp)}
+    except Exception as e:
+        logger.error(f"the fetch_grouped api call failed with this error: {e}")
+
+
 @app.get("/fetch_items")
 async def fetch_items(
     request: Request,
@@ -1581,6 +1112,8 @@ async def fetch_items(
     classnames: Optional[str] = Query(None),
     only_wish_list: Optional[str] = Query(None),
     sortOrder: Optional[str] = Query(None),
+    skip: Optional[int] = Query(None),
+    limit: Optional[int] = Query(None),
 ):
     """
     Fetch items with optional filters
@@ -1590,12 +1123,24 @@ async def fetch_items(
     """
     sortOrder = sortOrder.lower() if sortOrder else sortOrder
     logger.info(
-        f"fetch_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list}, sortOrder={sortOrder}"
+        f"""fetch_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list},
+            sortOrder={sortOrder}, skip={skip}, limit={limit}"""
     )
 
     try:
+        if skip and skip < 0:
+            skip = 0
+
+        if limit and limit < 0:
+            limit = 0
+
         query, params = build_fetch_query(
-            subgroups, classnames, only_wish_list, sortOrder=sortOrder
+            subgroups,
+            classnames,
+            only_wish_list,
+            sortOrder=sortOrder,
+            skip=skip,
+            limit=limit,
         )
         rows = await request.app.state.db.fetch_with_retry(query, *params)
 
@@ -1613,12 +1158,13 @@ async def fetch_items(
         ]
         logger.info(f"fetch_items returned {len(item_list)} items")
 
-        return {"items": item_list}
+        return {"items": item_list, "count": len(item_list)}
 
     except Exception as e:
         logger.error(f"fetch_items error: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to fetch items")
+
 
 def classify_shortened_names(
     shortened_names: list[str],
@@ -1626,7 +1172,9 @@ def classify_shortened_names(
     useBatch: bool = True,
 ) -> list[str]:
     if useBatch:
-        mapping: dict[str, str] | None = classifier.shortenTextBatch(shortened_names, categories)
+        mapping: dict[str, str] | None = classifier.shortenTextBatch(
+            shortened_names, categories
+        )
         if mapping:
             return list(mapping.values())
         else:
@@ -1639,6 +1187,113 @@ def classify_shortened_names(
 def normalizeSeparators(s: str) -> str:
     return re.sub(r"[_\-/·,]+", " ", s)
 
+
+@app.get("/get_supermarkets_close")
+async def get_supermarkets_close(
+    lat: Optional[float] = Query(None),
+    lon: Optional[float] = Query(None),
+    radius_meters: int = Query(2000, ge=100, le=50000), 
+    chains: Optional[list[str]] = Query(None)  
+) -> dict:
+    """
+    Get supermarkets near given coordinates using Overpass API.
+    """
+    
+    # Validate required parameters
+    if lat is None:
+        raise HTTPException(status_code=400, detail="Missing required parameter: lat")
+    if lon is None:
+        raise HTTPException(status_code=400, detail="Missing required parameter: lon")
+    
+    # Validate coordinate ranges
+    if not -90 <= lat <= 90:
+        raise HTTPException(status_code=400, detail="Latitude must be between -90 and 90")
+    if not -180 <= lon <= 180:
+        raise HTTPException(status_code=400, detail="Longitude must be between -180 and 180")
+    
+    print(f"Searching: lat={lat}, lon={lon}, radius={radius_meters}m, chains={chains}")
+    
+    overpass_url = "https://overpass-api.de/api/interpreter"
+    
+    # Build chain filter if provided
+    chain_filter = ""
+    if chains:
+        chain_pattern = "|".join(chains)
+        chain_filter = f'["name"~"^({chain_pattern})$",i]'
+    
+    # Overpass QL query
+    overpass_query = f"""
+    [out:json][timeout:25];
+    (
+      node["shop"="supermarket"]{chain_filter}(around:{radius_meters},{lat},{lon});
+      way["shop"="supermarket"]{chain_filter}(around:{radius_meters},{lat},{lon});
+    );
+    out center tags;
+    """
+    
+    try:
+        response = requests.get(
+            overpass_url, 
+            params={'data': overpass_query}, 
+            timeout=30,
+            headers={'User-Agent': 'SupermarketFinder/1.0'}
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        results = []
+        for element in data.get('elements', []):
+            # Get coordinates
+            if element['type'] == 'node':
+                element_lat = element['lat']
+                element_lon = element['lon']
+            else:  # way
+                element_lat = element.get('center', {}).get('lat')
+                element_lon = element.get('center', {}).get('lon')
+            
+            # Extract useful info
+            tags = element.get('tags', {})
+            results.append({
+                'name': tags.get('name', 'Unknown'),
+                'lat': element_lat,
+                'lon': element_lon,
+                'street': tags.get('addr:street'),
+                'housenumber': tags.get('addr:housenumber'),
+                'postcode': tags.get('addr:postcode'),
+                'city': tags.get('addr:city'),
+                'opening_hours': tags.get('opening_hours'),
+                'phone': tags.get('phone'),
+                'website': tags.get('website'),
+                'brand': tags.get('brand'),
+            })
+        
+        return {
+            "results": results,
+            "count": len(results)
+        }
+        
+    except requests.exceptions.Timeout:
+        raise HTTPException(
+            status_code=504,
+            detail="Overpass API request timed out. Please try again."
+        )
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 429:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests to Overpass API. Please wait and try again."
+            )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Overpass API error: {str(e)}"
+        )
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Error communicating with Overpass API"
+        )
+
 def getCategories(ean: str):
     try:
         res = requests.get(
@@ -1646,16 +1301,17 @@ def getCategories(ean: str):
         )
         json = res.json()
         categories: dict[str, str] = json["product"]["categories_tags"]
-        
+
         if not categories or len(categories) == 0:
             logger.warning(f"failed to get the categories for ean: {ean} ")
-        
+
         return categories
 
     except Exception as e:
         logger.warning(
             f"failed to do the category fetching for this ean: {ean}. error: {e} "
         )
+
 
 def shortenWithTable(itemName: str) -> str:
     itemName = normalizeSeparators(itemName.lower()).strip()
@@ -1684,11 +1340,8 @@ async def shortenNames(request: Request, useBatch: bool = True):
             for row in rows
             if row["class"] == "" and row["item_name"].lower() not in ("", "none")
         ]
-        
-        categories = [
-            row["categories"]
-            for row in rows
-        ]
+
+        categories = [row["categories"] for row in rows]
 
         shortened_deterministic = [shortenWithTable(name) for name in original_names]
 
@@ -1724,9 +1377,11 @@ async def shortenNames(request: Request, useBatch: bool = True):
 
 async def shortenItemNamesDaemon(pool: asyncpg.Pool, useBatch: bool = True):
     try:
-        await rescanCategoriesProcess(pool=pool) # fill up categories if possible first
+        await rescanCategoriesProcess(pool=pool)  # fill up categories if possible first
         async with pool.acquire() as con:
-            rows = await con.fetch("SELECT DISTINCT item_name, class, categories FROM item_list where not class = 'none' ")
+            rows = await con.fetch(
+                "SELECT DISTINCT item_name, class, categories FROM item_list where not class = 'none' "
+            )
 
             original_names = [
                 row["item_name"]
@@ -1737,28 +1392,21 @@ async def shortenItemNamesDaemon(pool: asyncpg.Pool, useBatch: bool = True):
             shortened_deterministic = [
                 shortenWithTable(name) for name in original_names
             ]
-            
-            categories = [
-                row["categories"]
-                for row in rows
-            ]
+
+            categories = [row["categories"] for row in rows]
 
             updated_count = 0
             if original_names:
                 shortened_deterministic = [
                     shortenWithTable(name) for name in original_names
                 ]
-                
-                categories = [
-                    row["categories"]
-                    for row in rows
-                ]
+
+                categories = [row["categories"] for row in rows]
 
                 classified = classify_shortened_names(
                     shortened_deterministic, categories, useBatch=useBatch
                 )
 
-            
                 for orig, cls in zip(original_names, classified):
                     if cls:
                         await con.execute(
@@ -1785,71 +1433,79 @@ async def shortenItemNamesDaemon(pool: asyncpg.Pool, useBatch: bool = True):
 
 
 async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 60.0):
-    
     updatedCount = 0
     while True:
-        try: 
+        try:
             async with pool.acquire() as con:
-                rows = await con.fetch("select ean, item_name, class, categories from item_list where tags = '' ")
-                itemsToProcess: list[ dict[str, str] ] = []
-                
-                
+                rows = await con.fetch(
+                    "select ean, item_name, class, categories from item_list where tags = '' "
+                )
+                itemsToProcess: list[dict[str, str]] = []
+
                 for row in rows:
                     if row["ean"] not in ["-1", "0", "1"]:
-                        itemsToProcess.append({
-                        "item_name": row["item_name"],
-                        "shortened_name": row["class"],
-                        "categories": row["categories"]
-                        })
-                        
-                logger.info(f"processing these items for tag assignment: {itemsToProcess}")
-                
-                tagMapping: dict[ str, dict[str, str] ] = classifier.tagAssignmentBatch(items=itemsToProcess, batch_size=100)
-                
-                #logger.info(f"send this input for tag assignment: {itemsToProcess} and got this result: {tagMapping}")
-                
-                
+                        itemsToProcess.append(
+                            {
+                                "item_name": row["item_name"],
+                                "shortened_name": row["class"],
+                                "categories": row["categories"],
+                            }
+                        )
+
+                logger.info(
+                    f"processing these items for tag assignment: {itemsToProcess}"
+                )
+
+                tagMapping: dict[str, dict[str, str]] = classifier.tagAssignmentBatch(
+                    items=itemsToProcess, batch_size=100
+                )
+
+                # logger.info(f"send this input for tag assignment: {itemsToProcess} and got this result: {tagMapping}")
+
                 for item in itemsToProcess:
-                    
                     try:
                         itemName = item["item_name"]
                         tagsDict: dict[str, str] = tagMapping[itemName]
                         tags: str = f"{tagsDict['base']}, {tagsDict['flavor']}, {tagsDict['form']}"
-                        
-                        await con.execute("update item_list set tags = $1 where item_name = $2 ", tags, itemName)
+
+                        await con.execute(
+                            "update item_list set tags = $1 where item_name = $2 ",
+                            tags,
+                            itemName,
+                        )
                         updatedCount += 1
-                        
+
                     except Exception as e:
-                        raise Exception(f"got an error for this tags dict: {tagsDict} with this being the error: {e}")
-                
-                #logger.info(f"Updated {updatedCount} tag assignments out of {len(itemsToProcess)} empty entries")
-                
+                        raise Exception(
+                            f"got an error for this tags dict: {tagsDict} with this being the error: {e}"
+                        )
+
+                # logger.info(f"Updated {updatedCount} tag assignments out of {len(itemsToProcess)} empty entries")
+
             await asyncio.sleep(waitingTime)
 
-            '''return {
+            """return {
                 "done": True,
                 "updated": updatedCount,
                 "total_empty": len(itemsToProcess),
-            }'''
-                        
+            }"""
+
         except Exception as e:
             logger.error(f"Daemon for tag assignment failed: {e}")
             logger.error(traceback.format_exc())
             return {"done": False, "error": str(e)}
-        
-        
-  
-  
+
+
 async def assignShorthandNameToTags(pool: asyncpg.Pool, waitingTime: float = 10.0):
     updatedCount = 0
     logger.info("started assignShorthandNameToTags")
-    
+
     try:
         while True:
             try:
                 async with pool.acquire() as con:
                     logger.info("acquired pool in assignShorthandNameToTags")
-                    
+
                     # Optimized query - avoid TRIM in WHERE clause
                     rows = await con.fetch("""
                         SELECT DISTINCT il.tags as original_tags
@@ -1860,61 +1516,76 @@ async def assignShorthandNameToTags(pool: asyncpg.Pool, waitingTime: float = 10.
                               SELECT tags FROM tagging_to_name
                           );
                     """)
-                    
+
                     logger.info(f"Fetched {len(rows)} rows to process")
-                    
+
                     if not rows:
                         logger.info("No tags to process")
                     else:
-                        tagsToInferList: list[str] = [row["original_tags"].strip() for row in rows]
+                        tagsToInferList: list[str] = [
+                            row["original_tags"].strip() for row in rows
+                        ]
                         # Filter out empty strings after trim
                         tagsToInferList = [t for t in tagsToInferList if t]
-                        
+
                         if not tagsToInferList:
                             logger.info("No valid tags after filtering")
                         else:
-                            tagToNameMapping: dict[str, str] | None = classifier.tagToNameBatch(tagsToInferList)
-                            
+                            tagToNameMapping: dict[str, str] | None = (
+                                classifier.tagToNameBatch(tagsToInferList)
+                            )
+
                             if tagToNameMapping:
                                 for tag, name in tagToNameMapping.items():
                                     await con.execute(
                                         """INSERT INTO tagging_to_name (tags, inferred_name) 
                                            VALUES ($1, $2) 
                                            ON CONFLICT (tags) DO NOTHING""",
-                                        tag, name
+                                        tag,
+                                        name,
                                     )
                                     updatedCount += 1
-                            
-                            logger.info(f"Assigned {updatedCount} short names for tags total")
-                
+
+                            logger.info(
+                                f"Assigned {updatedCount} short names for tags total"
+                            )
+
                 await asyncio.sleep(waitingTime)
-                
+
             except asyncio.CancelledError:
                 logger.info("assignShorthandNameToTags received cancellation signal")
                 raise
             except asyncio.TimeoutError:
-                logger.error("Query timeout in assignShorthandNameToTags - table might be too large or indexes missing")
+                logger.error(
+                    "Query timeout in assignShorthandNameToTags - table might be too large or indexes missing"
+                )
                 await asyncio.sleep(waitingTime)
             except Exception as e:
                 logger.error(f"Error in assignShorthandNameToTags: {e}")
                 logger.error(traceback.format_exc())
                 await asyncio.sleep(waitingTime)
-    
+
     except asyncio.CancelledError:
         logger.info("assignShorthandNameToTags shutting down gracefully")
     finally:
-        logger.info(f"assignShorthandNameToTags finished with {updatedCount} total updates")   
-          
+        logger.info(
+            f"assignShorthandNameToTags finished with {updatedCount} total updates"
+        )
+
+
 async def shorten_item_name_task(pool: asyncpg.Pool, item_name: str):
     """Background task to shorten a specific item name"""
     try:
         async with pool.acquire() as con:
             row = await con.fetchrow(
-                "SELECT class, categories FROM item_list WHERE item_name = $1 AND class = '' LIMIT 1", item_name
+                "SELECT class, categories FROM item_list WHERE item_name = $1 AND class = '' LIMIT 1",
+                item_name,
             )
             if row and row["class"] == "" and item_name.lower() not in ["", "none"]:
                 stripped_name = shortenWithTable(item_name)
-                shortened_name = classifier.shortenText(stripped_name, row["categories"])
+                shortened_name = classifier.shortenText(
+                    stripped_name, row["categories"]
+                )
                 if shortened_name:
                     await con.execute(
                         "UPDATE item_list SET class = $1 WHERE item_name = $2",
@@ -1933,14 +1604,12 @@ async def shorten_item_name_task(pool: asyncpg.Pool, item_name: str):
                     logger.info(
                         f"Background task: Shortened item name '{item_name}' to 'none' "
                     )
-                    
-                    
+
     except Exception as e:
         logger.error(f"Background task error shortening item name: {e}")
 
 
 def processTagRuleBased(tag: str) -> str:
-    
     tagList = tag.split(",")
     # structure is [base, flavour, form]
     base, flavour, _ = tagList[0], tagList[1], tagList[2]
@@ -1948,72 +1617,90 @@ def processTagRuleBased(tag: str) -> str:
         processedName = "none"
     else:
         if flavour:
-            processedName =  f"{base} {flavour}"
+            processedName = f"{base} {flavour}"
         else:
             processedName = base
-    
-    return processedName  
+
+    return processedName
 
 
 def processTagAiBatch(tagList: list[str]) -> dict[str, str]:
-    
     if len(tagList) == 0 or not tagList:
         return {}
-    
+
     tagToNameMapping = classifier.tagToNameBatch(tagList)
     if tagToNameMapping:
         return tagToNameMapping
     else:
         return {tag: tag for tag in tagList}
-    
-        
-async def taggingToNameBatch(pool: asyncpg.Pool, tagsList: list[str], useAi: bool = True) -> dict[str, str]:
-    
-    if len(tagsList) == 0:
-        return {}
-    
-    for idx, tag in enumerate(tagsList):
-        
-        tagsLexikographic = ",".join(sorted(tag.split(",")))
-        tagsList[idx] = tagsLexikographic
-    
-    tagNameMapping: dict[str, str] = {}
-    async with pool.acquire() as con:    
-        
-        rows = con.fetch("select tags, inferred_name from tagging_to_name where tags in ($1) ", tuple(tagsList))
 
-        for row in rows:
-            tags = row["tags"]
-            inferred_name = row["inferred_name"]
-            
-            tagsList.remove(tags) 
-            tagNameMapping[tags] = inferred_name
-        
-        if not useAi:
-            for tag in tagsList:
-                processedName = processTagRuleBased(tag)
-                
-                row = await con.fetch("select tags from tagging_to_name where tags = $1 ", tag)
-                if row:
-                    await con.execute("update tagging_to_name set inferred_name = $1 where tags = $2", processedName, tag)
-                else:
-                    await con.execute("insert into tagging_to_name (inferred_name, tags) values ($1, $2) ", processedName, tag)
-                        
-                tagNameMapping[tag] = processedName
-        else:
-            differentialMapping = processTagAiBatch(tagsList)
-            for tag in differentialMapping.keys():
-                tagNameMapping[tag] = differentialMapping[tag]
-                await con.execute("insert into tagging_to_name (inferred_name, tags) values ($1, $2) ", differentialMapping[tag], tag)
-        
-    return tagNameMapping
-    
-    
+
+async def taggingToNameBatch(
+    pool: asyncpg.Pool, tagsList: list[str], useAi: bool = True
+) -> dict[str, str] | None:
+    try:
+        if len(tagsList) == 0:
+            return {}
+
+        for idx, tag in enumerate(tagsList):
+            tagsLexikographic = ",".join(sorted(tag.split(",")))
+            tagsList[idx] = tagsLexikographic
+
+        tagNameMapping: dict[str, str] = {}
+        async with pool.acquire() as con:
+            rows = con.fetch(
+                "select tags, inferred_name from tagging_to_name where tags in ($1) ",
+                tuple(tagsList),
+            )
+
+            for row in rows:
+                tags = row["tags"]
+                inferred_name = row["inferred_name"]
+
+                tagsList.remove(tags)
+                tagNameMapping[tags] = inferred_name
+
+            if not useAi:
+                for tag in tagsList:
+                    processedName = processTagRuleBased(tag)
+
+                    row = await con.fetch(
+                        "select tags from tagging_to_name where tags = $1 ", tag
+                    )
+                    if row:
+                        await con.execute(
+                            "update tagging_to_name set inferred_name = $1 where tags = $2",
+                            processedName,
+                            tag,
+                        )
+                    else:
+                        await con.execute(
+                            "insert into tagging_to_name (inferred_name, tags) values ($1, $2) ",
+                            processedName,
+                            tag,
+                        )
+
+                    tagNameMapping[tag] = processedName
+            else:
+                differentialMapping = processTagAiBatch(tagsList)
+                for tag in differentialMapping.keys():
+                    tagNameMapping[tag] = differentialMapping[tag]
+                    await con.execute(
+                        "insert into tagging_to_name (inferred_name, tags) values ($1, $2) ",
+                        differentialMapping[tag],
+                        tag,
+                    )
+
+        return tagNameMapping
+    except Exception as e:
+        logger.error(
+            f"the taggingToNameBatch function failed with tagsList = {tagsList}, useAi = {useAi} and this error {e}"
+        )
+
+
 async def rescanCategoriesProcess(pool: asyncpg.Pool):
     try:
-        rows = await pool.fetch(
-            "select distinct(ean), categories from item_list"
-        )
+        rows = await pool.fetch("select distinct(ean), categories from item_list")
         eansToMod = []
 
         for row in rows:
@@ -2025,7 +1712,9 @@ async def rescanCategoriesProcess(pool: asyncpg.Pool):
             categories = getCategories(ean)
             if categories:
                 await pool.fetch(
-                    "UPDATE item_list SET categories = $1 WHERE ean = $2", str(categories), ean
+                    "UPDATE item_list SET categories = $1 WHERE ean = $2",
+                    str(categories),
+                    ean,
                 )
                 updated_count += 1
             else:
@@ -2036,20 +1725,22 @@ async def rescanCategoriesProcess(pool: asyncpg.Pool):
         logger.info(
             f"Updated {updated_count} category entries out of {len(eansToMod)} empty entries"
         )
-        
+
         return {
             "done": True,
             "updated": updated_count,
             "total_empty": len(eansToMod),
             "eansUpdated": str(eansToMod),
         }
-    
+
     except Exception as e:
-        logger.error(f"Failed while rescanning categories in rescanCategoriesProcess: {e}")
+        logger.error(
+            f"Failed while rescanning categories in rescanCategoriesProcess: {e}"
+        )
         logger.error(traceback.format_exc())
         return {"done": False, "error": str(e)}
-    
-    
+
+
 @app.get("/rescan_for_categories")
 async def rescanCategories(request: Request):
     """Rescan all items with empty categories and fetch them from OpenFoodFacts"""
@@ -2068,7 +1759,9 @@ async def rescanCategories(request: Request):
             categories = getCategories(ean)
             if categories:
                 await request.app.state.db.execute_with_retry(
-                    "UPDATE item_list SET categories = $1 WHERE ean = $2", categories, ean
+                    "UPDATE item_list SET categories = $1 WHERE ean = $2",
+                    categories,
+                    ean,
                 )
                 updated_count += 1
             else:
@@ -2079,14 +1772,14 @@ async def rescanCategories(request: Request):
         logger.info(
             f"Updated {updated_count} category entries out of {len(eansToMod)} empty entries"
         )
-        
+
         return {
             "done": True,
             "updated": updated_count,
             "total_empty": len(eansToMod),
             "eansUpdated": str(eansToMod),
         }
-    
+
     except Exception as e:
         logger.error(f"Failed while rescanning categories in rescanCategories: {e}")
         logger.error(traceback.format_exc())
@@ -2301,37 +1994,6 @@ async def add_ean_manual(
         raise HTTPException(status_code=500, detail="Failed to add item")
 
 
-@app.post("/send_inference_image")
-async def send_inference_image(request: Request, image: UploadFile | None = None):
-    """Process image for food classification"""
-    if not image:
-        return {"message": "No upload file sent"}
-
-    if not Config.ENABLE_ML_MODEL or not request.app.state.net:
-        raise HTTPException(status_code=503, detail="ML model not available")
-
-    temp_path = None
-    try:
-        temp_path = f"/tmp/temp_image_{time.time()}.jpg"
-        with open(temp_path, "wb") as f:
-            shutil.copyfileobj(image.file, f)
-
-        probability, prediction = food_classifier.run_inference(
-            temp_path, request.app.state.net
-        )
-        return {"prediction": prediction, "probability": probability}
-
-    except Exception as e:
-        logger.error(f"Image inference error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to process image")
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-
-
 @app.post("/transcribe")
 async def transcribe_endpoint(
     request: Request,
@@ -2451,6 +2113,7 @@ async def transcribe_endpoint(
         purge_folder("uploads")
 
 
+'''
 @app.api_route("/transcribe/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy(request: Request, path: str):
     """Proxy requests to backend"""
@@ -2466,7 +2129,7 @@ async def proxy(request: Request, path: str):
         )
         return StreamingResponse(
             resp.aiter_raw(), status_code=resp.status_code, headers=resp.headers
-        )
+        )'''
 
 
 @app.get("/health")

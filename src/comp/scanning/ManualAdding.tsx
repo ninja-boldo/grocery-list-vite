@@ -1,6 +1,6 @@
 
 import { useState } from "react";
-import ErrorContainer from "./ErrorContainer";
+import ErrorContainer from "../utils/ErrorContainer";
 import { useLocation, useNavigate } from "react-router-dom";
 
 const ManualAdd = () => {

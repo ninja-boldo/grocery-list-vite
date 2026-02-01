@@ -1,11 +1,11 @@
 import '../App.css';
-import Container from './../comp/Container';
+import Container from './../comp/other/Container';
 import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import ErrorContainer from './../comp/ErrorContainer';
+import ErrorContainer from './../comp/utils/ErrorContainer';
 import { useNavigate } from 'react-router-dom';
-import StyledButton from './../comp/StyledButton';
-import SidebarComp from './../comp/Sidebar';
-import InfoContainer from './../comp/InfoContainer';
+import StyledButton from '../comp/utils/StyledButton';
+import SidebarComp from './../comp/other/Sidebar';
+import InfoContainer from '../comp/utils/InfoContainer';
 
 // ============================================================================
 // TYPES

@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 interface Props {
   subgroups: string[];
   sortOrder: string[];
-  onClickElement: (subgroup: string | null, sortOrder: string | null) => void;
+  onClickElement: (subgroup: string | null, sortOrder: string | undefined) => void;
   onClickReset: (subgroup: null, sortOrder: null) => void;
 }
 
@@ -27,7 +27,7 @@ const MergedDropdown = ({ subgroups, sortOrder, onClickElement, onClickReset }: 
 
   const handleElementClick = (element: string) => {
     if (activeTab === 'subs') {
-      onClickElement(element, null, );
+      onClickElement(element, undefined, );
     } else {
       onClickElement(null, element);
     }

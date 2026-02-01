@@ -1,19 +1,20 @@
 import './App.css';
-import Container from './comp/Container';
-import { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import ErrorContainer from './comp/ErrorContainer';
+import Container from './comp/other/Container';
+import { useCallback, useEffect, useState, useRef } from 'react';
+import ErrorContainer from './comp/utils/ErrorContainer';
 //import DropdownComp from './comp/Dropdown';
-import MergedDropdown from './comp/MergedDropdown';
+import MergedDropdown from './comp/other/MergedDropdown';
 import { useNavigate } from 'react-router-dom';
 //import StyledButton from './comp/StyledButton';
-import SplitButton from './comp/SplitButton';
-import SidebarComp from "./comp/Sidebar";
-import InfoContainer from './comp/InfoContainer';
-import AttributionNotice from './comp/AttributionNotice';
-import SearchBar from './comp/SearchBar';
-import VoiceRecorder from './comp/VoiceRecorder';
+import SplitButton from './comp/other/SplitButton';
+import SidebarComp from "./comp/other/Sidebar";
+import InfoContainer from './comp/utils/InfoContainer';
+import AttributionNotice from './comp/utils/AttributionNotice';
+import SearchBar from './comp/other/SearchBar';
+import VoiceRecorder from './comp/utils/VoiceRecorder';
+import { Virtuoso } from 'react-virtuoso'
+import GetCoordPosition from './comp/geo/GetCoordPosition';
 
-console.log("========== APP.TSX MODULE LOADED ==========");
 
 // ============================================================================
 // Types
@@ -144,8 +145,16 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [transcription, setTranscription] = useState<string | null>(null);
+  const [, setCurrentItemCount] = useState<number>(0);
+  const [hasMoreData, setHasMoreData] = useState<boolean>(true);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [sortOrder, setSortOrder] = useState<string>("new-old")
+  const [subgroupsToSearch, setSubgroupsToSearch] = useState<string>("");
   
-  console.log("Current state - data:", data, "error:", error, "isLoading:", isLoading);
+  const skipCountRef = useRef(0);
+  const newItemsPerFetch = 30;
+  const hasInitialFetchedRef = useRef(false);
+
   
   // Refs for audio recording
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -153,56 +162,115 @@ function App() {
   const transcriptionTimer = useRef<NodeJS.Timeout | null>(null);
 
   // ========== Data Fetching ==========
-  const fetchItems = useCallback(async (subgroup?: string | null, sortOrder?: string | null, classname?: string | null) => {
-    console.log("subgroup:", subgroup, "sortOrder:", sortOrder, "classname:", classname);
-    
-    setIsLoading(true);
-    
-    setError(null);
-    
-    try {
-      const params = new URLSearchParams({ only_wish_list: 'false' });
-      if (subgroup) params.set('subgroups', subgroup);
-      if (sortOrder) params.set('sortOrder', sortOrder);
-      if (classname) params.set('classnames', classname);
-      
-      const url = `/api/fetch_items?${params}`;
-      console.log("Calling API with URL:", url);
-      
-      const response = await apiCall<ApiResponse>(url);
-      console.log("API call returned successfully");
-      
-      const items = transformItems(response);
-      
-      setData(items);
-      console.log("Set data with", items.length, "items");
-      
-      if (items.length === 0) {
-        console.log("No items returned");
-      }
-    } catch (err) {
-      console.error("========== FETCH ITEMS ERROR ==========");
-      console.error("Error caught:", err);
-      const errorMessage = err instanceof Error ? err.message : 'Failed to fetch items';
-      console.error("Setting error message:", errorMessage);
-      setError(errorMessage);
-    } finally {
-      console.log("========== FETCH ITEMS FINALLY ==========");
-      setIsLoading(false);
-      console.log("Set isLoading = false");
+  const filterFetchItems = async(subgroupFilter: string | null, sortOrderFilter: string | undefined) => {
+    // Update state for future fetches
+    if(subgroupFilter){
+      setSubgroupsToSearch(subgroupFilter)
     }
-  }, []);
+    if(sortOrderFilter){
+      setSortOrder(sortOrderFilter)
+    }
+    
+    // Reset data and fetch with NEW values immediately
+    setData([])
+    skipCountRef.current = 0
+    setHasMoreData(true)
+    
+    // Pass values directly instead of waiting for state update
+    fetchItemsWithParams(subgroupFilter || subgroupsToSearch, sortOrderFilter)
+  }
+const fetchItemsWithParams = useCallback(async (subgroupsParam?: string, sortOrderParam?: string) => {
+  // Prevent concurrent fetches
+  if (isLoading) {
+    console.log("Fetch already in progress, skipping");
+    return;
+  }
+  
+  setIsLoading(true);
+  setError(null);
+  
+  try {
+    const params = new URLSearchParams({ only_wish_list: 'false' });
+    
+    // Use parameters if provided, otherwise fall back to state
+    const subgroupsToUse = subgroupsParam !== undefined ? subgroupsParam : subgroupsToSearch;
+    const sortOrderToUse = sortOrderParam !== undefined ? sortOrderParam : sortOrder;
+    
+    if (subgroupsToUse) params.set('subgroups', subgroupsToUse);
+    if (sortOrderToUse) params.set('sortOrder', sortOrderToUse);
+    
+    // Use ref instead of state
+    params.set('skip', skipCountRef.current.toString());
+    params.set('limit', newItemsPerFetch.toString());
+    
+    const url = `/api/fetch_items?${params}`;
+    console.log("Calling API with URL:", url, "Skip:", skipCountRef.current);
+    
+    const response = await apiCall<ApiResponse>(url);
+    console.log("API returned items:", response.items.length);
+    
+    if(response.items.length === 0){
+      setHasMoreData(false);
+      console.log("No more items available");
+    } else {
+      // Update ref
+      skipCountRef.current += response.items.length;
+      console.log("New skip count:", skipCountRef.current);
+      
+      const newItems = transformItems(response);
+      
+      // Deduplicate based on EAN when appending
+      setData(prev => {
+        const combined = [...prev, ...newItems];
+        const seen = new Set<string>();
+        return combined.filter(item => {
+          // Create a unique key combining EAN and text
+          const uniqueKey = `${item.ean}-${item.text}`;
+          
+          if (seen.has(uniqueKey)) {
+            console.log("Duplicate detected:", uniqueKey);
+            return false;
+          }
+          seen.add(uniqueKey);
+          return true;
+        });
+      });
+      
+      setCurrentItemCount(prev => prev + response.items.length);
+    }
+  } catch (err) {
+    console.error("========== FETCH ITEMS ERROR ==========");
+    console.error("Error caught:", err);
+    const errorMessage = err instanceof Error ? err.message : 'Failed to fetch items';
+    console.error("Setting error message:", errorMessage);
+    setError(errorMessage);
+  } finally {
+    setIsLoading(false);
+    setIsInitialLoad(false);
+  }
+}, [isLoading, subgroupsToSearch, sortOrder]);
+
+const fetchItems = useCallback(async () => {
+  return fetchItemsWithParams();
+}, [fetchItemsWithParams]); // Add isLoading as dependency
+
+  const loadMoreItems = useCallback(() => {
+    console.log("loading more items")
+    // Only allow loadMore AFTER initial load is complete and not currently loading
+    if (!isInitialLoad && !isLoading) {
+      console.log("loadMoreItems called");
+      fetchItems();
+    } else {
+      console.log("loadMoreItems skipped - initial load:", isInitialLoad, "isLoading:", isLoading);
+    }
+  }, [fetchItems, isInitialLoad, isLoading]);
 
   const fetchMetadata = useCallback(async () => {
-    console.log("========== FETCH METADATA CALLED ==========");
     
     const [subRes, classRes] = await Promise.allSettled([
       apiCall<{ subgroups: string[] }>('/api/fetch_subgroups'),
       apiCall<{ classnames: string[] }>('/api/fetch_classnames')
     ]);
-    
-    console.log("Subgroups result:", subRes);
-    console.log("Classnames result:", classRes);
     
     if (subRes.status === 'fulfilled') setSubgroups(subRes.value.subgroups);
     if (classRes.status === 'fulfilled') setClassnames(classRes.value.classnames);
@@ -347,12 +415,12 @@ function App() {
 
   // ========== Effects ==========
   useEffect(() => {
-    console.log("========== INITIAL USEEFFECT RUNNING ==========");
-    console.log("About to call fetchItems()");
-    fetchItems();
-    console.log("About to call fetchMetadata()");
-    fetchMetadata();
-    console.log("========== INITIAL USEEFFECT COMPLETE ==========");
+    if (!hasInitialFetchedRef.current) {
+      hasInitialFetchedRef.current = true;
+      fetchItems(); 
+      fetchMetadata();
+      console.log("========== INITIAL USEEFFECT COMPLETE ==========");
+    }
   }, [fetchItems, fetchMetadata]);
 
   useEffect(() => {
@@ -364,45 +432,9 @@ function App() {
     };
   }, []);
 
-
-
-  const itemList = useMemo(() => {
-    
-    if (!data || !Array.isArray(data)) {
-      console.error("Data is not an array:", data);
-      return [];
-    }
-    
-    console.log(`Mapping ${data.length} items to Container components`);
-    
-    const containers = data.map((item, idx) => {
-      console.log(`Creating container ${idx} for item:`, item.text);
-      return (
-        <Container
-          key={`${item.text}-${idx}`}
-          text={item.text}
-          subgroups={item.subgroups}
-          count={item.count}
-          classname={item.classname}
-          perish_dates={item.perish_dates}
-          imageUrl={item.imageUrl}
-          ean={item.ean}
-          onClickIncrease={increaseItem}
-          onClickDecrease={decreaseItem}
-          style=""
-        />
-      );
-    });
-    
-    console.log(`Created ${containers.length} container components`);
-    return containers;
-  }, [data, increaseItem, decreaseItem]);
-
   // ========== Render ==========
-  console.log("Render decision - isLoading:", isLoading, "data.length:", data.length);
   
   if (isLoading && data.length === 0) {
-    console.log("Rendering loading state");
     return (
       <div className="flex justify-center items-center min-h-screen">
         <div className="text-cyan-400 text-lg">Loading...</div>
@@ -423,103 +455,111 @@ function App() {
   console.log("Rendering main UI - displayError:", displayError, "noItemsAvailable:", noItemsAvailable);
     
   return (
-    <div className="flex flex-col min-h-screen mt-3">
-      {/* Sidebar - always rendered, visibility controlled by CSS transform */}
-      <SidebarComp isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      
-      {displayError ? (
-        <ErrorContainer text={displayError} />
-      ) : (
-        <>
-          {/* Header Bar - transparent background */}
-          <header className="flex items-center h-14 sm:h-16 px-3 sm:px-6 gap-3 sm:gap-4">
+  <div className='min-h-screen '>
+    {/* Sidebar - always rendered, visibility controlled by CSS transform */}
+    <SidebarComp isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+    
+    {displayError ? (
+      <ErrorContainer text={displayError} />
+    ) : (
+      <div className="min-h-screen">
+        <div className='w-full flex justify-center items-center sticky top-1  z-50 '>
+          {/* Header Bar - fixed */}
+          <header className="flex items-center justify-center max-w-fit h-14 sm:h-16 px-3 sm:px-6 gap-3 sm:gap-4 border border-emerald-500/30
+                            rounded-2xl bg-slate-900/95 relative">
             {/* Sidebar Toggle */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="flex items-center justify-center w-12 h-12 rounded-lg hover:bg-slate-700/50 transition-colors shrink-0"
             >
-              {/*<Bars3Icon className="h-10 w-10 text-white" />*/}
               ≡
             </button>
 
             {/* Dropdowns */}
             <div className='flex flex-col'>
-              
-              
               <div className='m-1'>
                 <MergedDropdown 
                   subgroups={subgroups}
                   sortOrder={["A-Z", "Z-A", "new-old", "old-new"]}
-                  onClickElement={fetchItems}
+                  onClickElement={filterFetchItems}
                   onClickReset={fetchItems}
                 />
               </div>
             </div>
-            {/* Add/Remove Buttons */}
-            {/*
-            <div className="flex gap-2">
-              <StyledButton 
-                text="+" 
-                onClick={() => navigateScanner(1)} 
-                className="" 
-              />
-              <StyledButton 
-                text="-" 
-                onClick={() => navigateScanner(-1)} 
-                className="" 
-              />
-            </div>
-            */}
-
-            <SplitButton 
-            onClickUpper={() => navigateScanner(1)}
-            onClickBottom={() => navigateScanner(-1)}
             
-             />
-             <SearchBar placeholder="enter name" itemsToRender={data} setItemsToRender={setData} />
+            <SplitButton 
+              onClickUpper={() => navigateScanner(1)}
+              onClickBottom={() => navigateScanner(-1)}
+            />
+            <SearchBar placeholder="enter name" itemsToRender={data} setItemsToRender={setData} />
           </header>
+        </div>
 
-          {/* Main Content */}
-          <main className="flex-1 p-3 sm:p-4 md:p-6">
-            <div className="max-w-4xl mx-auto">
-              {noItemsAvailable ? (
-                <InfoContainer text={"No items available in the database.\nSo perhaps add one."} />
-              ) : (
-                itemList
-              )}
-            </div>
-          </main>
-        </>
+        {/* Main Content with top padding */}
+        <div className=" flex-1 p-3 sm:p-4 md:p-6 ">
+          <div className="max-w-4xl mx-auto ">
+            {noItemsAvailable ? (
+              <InfoContainer text={"No items available in the database.\nSo perhaps add one."} />
+            ) : (
+              <Virtuoso
+                style={{ height: '100vh' }}
+                data={data}
+                endReached={() => {
+                  if (hasMoreData && !isLoading) {
+                    loadMoreItems();
+                  }
+                }}
+                itemContent={(idx, item) => (
+                  <Container
+                    key={`${item.text}-${idx}`}
+                    text={item.text}
+                    subgroups={item.subgroups}
+                    count={item.count}
+                    classname={item.classname}
+                    perish_dates={item.perish_dates}
+                    imageUrl={item.imageUrl}
+                    ean={item.ean}
+                    onClickIncrease={increaseItem}
+                    onClickDecrease={decreaseItem}
+                    style=""
+                  />
+                )}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* Voice Recorder */}
+    <div className='flex flex-row'>
+      <VoiceRecorder 
+        isRecording={isRecording}
+        isLoading={isLoading}
+        onRecordClick={handleRecording}
+      />
+
+      {/* Transcription result - inline on desktop, below on mobile */}
+      {transcription && (
+        <div className="hidden sm:block max-w-xs p-2 bg-green-100 border border-green-300 rounded text-xs">
+          <p className="text-green-700 truncate">{transcription}</p>
+        </div>
       )}
 
-      {/* Voice Recorder */}
-      <div className='flex flex-row'>
-        <VoiceRecorder 
-          isRecording={isRecording}
-          isLoading={isLoading}
-          onRecordClick={handleRecording}
-        />
-
-        {/* Transcription result - inline on desktop, below on mobile */}
-        {transcription && (
-          <div className="hidden sm:block max-w-xs p-2 bg-green-100 border border-green-300 rounded text-xs">
-            <p className="text-green-700 truncate">{transcription}</p>
-          </div>
-        )}
-
-        {/* Mobile transcription result */}
-        {transcription && isMobile && (
-          <div className="mx-3 mt-2 p-2 bg-green-100 border border-green-300 rounded text-xs">
-            <p className="font-semibold text-green-800">Transcribed:</p>
-            <p className="text-green-700">{transcription}</p>
-          </div>
-        )}
-      </div>
-
-      {/* Floating Attribution Notice */}
-      <AttributionNotice floating />
+      {/* Mobile transcription result */}
+      {transcription && isMobile && (
+        <div className="mx-3 mt-2 p-2 bg-green-100 border border-green-300 rounded text-xs">
+          <p className="font-semibold text-green-800">Transcribed:</p>
+          <p className="text-green-700">{transcription}</p>
+        </div>
+      )}
     </div>
-  );
+
+    {/* Floating Attribution Notice */}
+    <AttributionNotice floating />
+
+  </div>
+);
 }
 
 export default App;

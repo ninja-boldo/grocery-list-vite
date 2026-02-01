@@ -1,12 +1,11 @@
 import { memo } from 'react';
-import { XMarkIcon } from '@heroicons/react/24/outline';
 
 interface SidebarCompProps {
     isOpen: boolean;
     onClose: () => void;
 }
 
-const SidebarComp = ({ isOpen, onClose }: SidebarCompProps) => {
+const SidebarComp = ({ isOpen }: SidebarCompProps) => {
     return (
         <div className={`
             fixed top-0 left-0 h-full w-64 bg-gradient-to-b from-gray-800 to-gray-900 z-50 
@@ -16,13 +15,8 @@ const SidebarComp = ({ isOpen, onClose }: SidebarCompProps) => {
         `}>
             {/* Header with close button */}
             <div className="flex items-center justify-between p-6 border-b border-gray-700">
-                <h2 className="text-lg font-semibold text-white">Menu</h2>
-                <button 
-                    onClick={onClose}
-                    className="p-2 hover:bg-gray-700 rounded-lg transition-colors duration-200 group"
-                >
-                    <XMarkIcon className="h-5 w-5 text-gray-400 group-hover:text-white transition-colors" />
-                </button>
+                {/* perhaps add something here in future */}
+                
             </div>
             
             {/* Menu items */}
@@ -49,6 +43,15 @@ const SidebarComp = ({ isOpen, onClose }: SidebarCompProps) => {
                     <span className="w-2 h-2 bg-red-500 rounded-full mr-3 group-hover:scale-125 transition-transform"></span>
                     grouped items
                 </a>
+
+                <a 
+                    href="/market_mapping" 
+                    className="flex items-center px-4 py-3 text-gray-300 hover:text-white hover:bg-gray-700 hover:bg-opacity-50 rounded-lg transition-all duration-200 group border-l-2 border-transparent hover:border-yellow-500"
+                >
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full mr-3 group-hover:scale-125 transition-transform"></span>
+                    close supermarkets
+                </a>
+
                 <a 
                     href="/settings" 
                     className="flex items-center px-4 py-3 text-gray-300 hover:text-white hover:bg-gray-700 hover:bg-opacity-50 rounded-lg transition-all duration-200 group border-l-2 border-transparent hover:border-purple-500"
