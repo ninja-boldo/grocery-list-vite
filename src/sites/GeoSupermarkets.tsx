@@ -7,8 +7,8 @@ const GeoSupermarketSite = () => {
     const [markedPositions, setMarkedPositions] = useState<Position[]>([]);
     return (
         <div>
-            <GetCoordPosition setMarkedPos={setMarkedPositions} setCenterPos={setUserPos} radius={5000} />
-            <Map heightNum={400} widthNum={0} zoom={12} centerPos={userPos} markedPositions={markedPositions} />
+            <GetCoordPosition setMarkedPos={setMarkedPositions} setCenterPos={setUserPos} radius={3000} />
+            <Map heightNum={400}  zoom={12} centerPos={userPos} markedPositions={markedPositions} />
         </div>
     )
 }
