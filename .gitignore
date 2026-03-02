@@ -51,3 +51,7 @@ tmp_pack_QoeAVX
 .env
 backup.json
 server/transcription/uploads
+
+examples/
+fine_tuning/
+last_run_prepared/

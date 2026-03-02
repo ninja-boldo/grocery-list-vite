@@ -4,8 +4,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
 from rich import print
 
-INSTRUCTION = "extract this into one of these categories('meat_fish', 'fruit_veg', 'bread_bakery', 'grains_pasta', 'pantry_staples', 'spices_seasoning', 'snacks', 'drinks', 'frozen', 'household', 'canned_jars', 'dairy_eggs')"
-
+INSTRUCTION = "extract this into one of these categories: ('meat_fish', 'fruit_veg', 'bread_bakery', 'grains_pasta', 'condiments_sauces', 'spices_seasoning', 'snacks', 'drinks', 'frozen', 'household', 'personal_care', 'dairy_eggs')"
 class GroceryClassifier:
     def __init__(self):
         base_model = "NousResearch/Llama-3.2-1B"

@@ -2,7 +2,6 @@ import { Routes, Route } from 'react-router-dom';
 import React, { Suspense } from 'react';
 import App from './App';
 
-const GroupedItems    = React.lazy(() => import("./sites/GroupedItems")); 
 const WishList        = React.lazy(() => import("./sites/WishList")); 
 const ManualAdd       = React.lazy(() => import("./comp/scanning/ManualAdding")); 
 const GeoSupermarkets = React.lazy(() => import("./sites/GeoSupermarkets")); 
@@ -15,7 +14,6 @@ export default function AppRouter() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/"               element={<App />} />
-        <Route path='/matched_items'  element={<GroupedItems />} />
         <Route path='/wish_list'      element={<WishList />} />
         <Route path='/scanner/manual' element={<ManualAdd />} />
         <Route path='/market_mapping' element={<GeoSupermarkets />} />

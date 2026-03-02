@@ -9,8 +9,8 @@ import AttributionNotice from './comp/utils/AttributionNotice';
 import VoiceRecorder from './comp/utils/VoiceRecorder';
 import { Virtuoso } from 'react-virtuoso'
 import TopBar from './comp/other/TopBar';
-
-
+import { transformItems } from './lib/utils';
+import { PageModes, type ApiResponse } from './lib/utils';
 // ============================================================================
 // Types
 // ============================================================================
@@ -22,7 +22,7 @@ export interface Item {
   count: number;
   perish_dates: string[] | null;
   imageUrl: string;
-  tags: string[];
+  tags: string[] | null;
 }
 
 // ============================================================================
@@ -81,40 +81,6 @@ async function apiCall<T>(
   throw lastError;
 }
 
-// ============================================================================
-// Data Transformers
-// ============================================================================
-interface ApiItem {
-  ean: string;
-  text: string;
-  subgroups: string | null;
-  classname: string | null;
-  count: number;
-  perish_dates: string[] | null;
-  imageUrl: string;
-  tags: string;
-}
-
-interface ApiResponse {
-  items: ApiItem[];
-}
-
-const transformItems = (data: ApiResponse): Item[] => {
-  console.log("item.tags:", data.items[0].tags);
-  const transformed = data.items.map((item) => ({
-    ean: item.ean,
-    text: item.text,
-    subgroups: item.subgroups,
-    classname: item.classname,
-    count: item.count,
-    perish_dates: item.perish_dates ?? [],
-    imageUrl: item.imageUrl,
-    tags: item.tags.toString().split(","),
-  }));
-  
-  console.log("item.tags:", transformed[0].tags);
-  return transformed;
-};
 
 // ============================================================================
 // Main Component
@@ -493,6 +459,7 @@ const fetchItems = useCallback(async () => {
           onScanDecrease={() => navigateScanner(-1)}
           items={data}
           setItems={setData}
+          mode={PageModes.HomePage}
         />
 
         {/* Main Content with top padding */}
@@ -521,7 +488,7 @@ const fetchItems = useCallback(async () => {
                     ean={item.ean}
                     onClickIncrease={increaseItem}
                     onClickDecrease={decreaseItem}
-                    badgeTexts={item.tags}
+                    tags={item.tags}
                     style=""
                   />
                 )}

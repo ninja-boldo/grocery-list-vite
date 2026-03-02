@@ -1514,8 +1514,8 @@ async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 60.0):
                     f"processing {len(itemsToProcess)} items for tag assignment"
                 )
 
-                tagMapping: dict[str, dict[str, str]] = classifier.tagAssignmentBatch(
-                    items=itemsToProcess, batch_size=100
+                tagMapping: dict[str, dict[str, str]] = await classifier.tagAssignmentBatch(
+                    items=itemsToProcess
                 )
 
                 for item in itemsToProcess:
@@ -1921,7 +1921,7 @@ async def migrate_tags(request: Request):
             ]
 
             tag_mapping = classifier.tagAssignmentBatch(
-                items=items_to_process, batch_size=100
+                items=items_to_process
             )
 
             migrated = 0

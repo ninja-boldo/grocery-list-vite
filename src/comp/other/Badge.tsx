@@ -11,8 +11,8 @@ export type BadgeType = typeof BadgeType[keyof typeof BadgeType];
 interface Props{
     text_or_dates: string | string[],
     type: BadgeType | null,
-    Color_1: string | null,
-    Color_2: string | null
+    Color_1: string | undefined,
+    Color_2: string | undefined
 }
 
 

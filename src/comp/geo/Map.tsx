@@ -1,72 +1,88 @@
-import { memo, useEffect } from "react";
-import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet'
-import 'leaflet/dist/leaflet.css';
-
+import { memo, useCallback, useState } from "react";
+import Map, { Marker } from "react-map-gl/maplibre";
+import "maplibre-gl/dist/maplibre-gl.css";
+import "../../styles/geo.css";
 
 export interface Position {
-    lat: number;
-    lon: number;
-    text?: string;
-    valid?: boolean;
+  lat: number;
+  lon: number;
+  text?: string;
+  valid?: boolean;
 }
 
 interface Props {
-    heightNum?: number;
-    widthNum?: number;
-    zoom: number;
-    centerPos?: Position;
-    markedPositions: Position[];
+  zoom: number;
+  centerPos?: Position;
+  markedPositions: Position[];
+  heightNum?: number;
+  widthNum?: number;
 }
 
-const Map = ( {heightNum, widthNum, zoom, centerPos, markedPositions}: Props ) => {
+const tileStyle = () => ({
+  version: 8,
+  sources: { osm: { type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], tileSize: 256 } },
+  layers: [{ id: "osm", type: "raster", source: "osm", minzoom: 0, maxzoom: 20,
+    paint: { "raster-saturation": -0.55, "raster-brightness-max": 0.65, "raster-contrast": 0.1 },
+  }],
+});
 
-    const widthString: string = widthNum ? `${widthNum}px` : "80%"
-    const heightString: string = heightNum ? `${heightNum}px` : "400px"
+const mapsUrl = ({ lat, lon }: Position) =>
+  /iPhone|iPad|MacIntel/.test(navigator.platform)
+    ? `maps://maps.google.com/maps?daddr=${lat},${lon}&ll=`
+    : `https://maps.google.com/maps?daddr=${lat},${lon}&ll=`;
 
-    useEffect(() => {
-        console.log(`widthNum=${widthNum}, heightNum=${heightNum}, zoom=${zoom}, centerPos=${JSON.stringify(centerPos)}, markedPositions=${JSON.stringify(markedPositions)}`)
-    }, [widthNum, heightNum, zoom, centerPos, markedPositions])
-   
+const Pin = ({ active }: { active?: boolean }) => (
+  <div className={`geo-pin${active ? " geo-pin--active" : ""}`} />
+);
 
-    const mapsSelector = (pos: Position): string => {
-        /* iOS => open Apple Maps */
-        if(
-            (navigator.platform.indexOf("iPhone") != -1) || 
-            (navigator.platform.indexOf("iPad") != -1) ||
-            (navigator.platform.indexOf("MacIntel") != -1)
-        )
-            return `maps://maps.google.com/maps?daddr=${pos.lat},${pos.lon}&amp;ll=`;
-        else /* else => Google Maps */
-            return `https://maps.google.com/maps?daddr=${pos.lat},${pos.lon}&amp;ll=`;
-        }
+const BottomSheet = ({ pos, onClose }: { pos: Position; onClose: () => void }) => (
+  <>
+    <div onClick={onClose} style={{ position: "absolute", inset: 0, zIndex: 10 }} />
+    <div className="geo-sheet">
+      <div className="geo-sheet__handle" />
+      <p className="geo-sheet__title">{pos.text}</p>
+      <div className="geo-sheet__actions">
+        <a href={mapsUrl(pos)} target="_blank" rel="noopener noreferrer" className="geo-sheet__btn geo-sheet__btn--primary">
+          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a2 2 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Directions
+        </a>
+        <button onClick={onClose} className="geo-sheet__btn geo-sheet__btn--ghost">Close</button>
+      </div>
+    </div>
+  </>
+);
 
-    return (
-        <div className="flex justify-center align-items rounded-2xl">
-        {(centerPos?.valid && markedPositions.length > 0) && (
-            
-                <MapContainer 
-                    center={[centerPos.lat, centerPos.lon] as [number, number]}                    
-                    zoom={zoom} 
-                    scrollWheelZoom={false}
-                    style={{ height: heightString, width: widthString }}
-                    >
-                    <TileLayer
-                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                    />
-                    {markedPositions.map((pos: Position, idx: number) => (
-                        <Marker key={idx} position={[pos.lat, pos.lon]}>
-                            {pos.text && (
-                                <Popup>
-                                    <a href={mapsSelector(pos)}>{pos.text}</a>
-                                </Popup>
-                            )}
-                        </Marker>
-                    ))}
-                </MapContainer>
-        )}
-        </div>
-    )
-}
+const MapComponent = ({ zoom, centerPos, markedPositions, heightNum, widthNum }: Props) => {
+  const [activePopup, setActivePopup] = useState<Position | null>(null);
+  const handleMarkerClick = useCallback((pos: Position) => setActivePopup(p => p === pos ? null : pos), []);
 
-export default memo(Map);
+  if (!centerPos?.valid) return null;
+
+  return (
+    <div className="geo-map" style={{ height: heightNum ? `${heightNum}px` : "100dvh", maxWidth: widthNum ? `${widthNum}px` : undefined }}>
+      <Map
+        initialViewState={{ longitude: centerPos.lon, latitude: centerPos.lat, zoom }}
+        style={{ width: "100%", height: "100%" }}
+        mapStyle={tileStyle() as any}
+        scrollZoom={true}
+        touchPitch={true}
+      >
+        {/* <NavigationControl position="bottom-right" showCompass={false} /> */}
+        {markedPositions.map((pos, i) => (
+          <Marker key={i} longitude={pos.lon} latitude={pos.lat} anchor="bottom" onClick={() => handleMarkerClick(pos)}>
+            <Pin active={activePopup === pos} />
+          </Marker>
+        ))}
+      </Map>
+
+      {activePopup && <BottomSheet pos={activePopup} onClose={() => setActivePopup(null)} />}
+
+      <div className="geo-badge">{markedPositions.length} location{markedPositions.length !== 1 ? "s" : ""}</div>
+    </div>
+  );
+};
+
+export default memo(MapComponent);
