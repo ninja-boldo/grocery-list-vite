@@ -56,7 +56,7 @@ const GetCoordPosition = ( {setCenterPos, setMarkedPos, radius}: Props) => {
         }
     }
 
-    async function success(position) {
+    async function success(position: GeolocationPosition) {
         setStatus("success");
         console.log("longitude: " + position.coords.longitude)
         console.log("latitude: " + position.coords.latitude)

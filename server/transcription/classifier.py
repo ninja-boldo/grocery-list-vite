@@ -1,5 +1,8 @@
-from typing import List, Union, Dict, Literal, Any, Optional
+from typing import List, Union, Dict, Literal, Any
+from peft import PeftModel
 from pydantic import BaseModel, Field, ValidationError
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 import os
@@ -7,11 +10,10 @@ import json
 import re
 import ast
 
-# Confidence threshold - if either classification falls below this, return unknown
 CONFIDENCE_THRESHOLD = 0.5
 
 # Model configuration
-GROQ_MODEL = "openai/gpt-oss-20b"  # OpenAI's open-weight 20B model on Groq
+GROQ_MODEL = "openai/gpt-oss-20b"  
 
 
 def _get_llm():
@@ -109,462 +111,45 @@ class FullClassification(BaseModel):
     action: Literal["add", "remove", "unknown"]
     action_confidence: float = Field(ge=0.0, le=1.0)
 
-
-BASE_TAGS = [
-    # Dairy & Alternatives
-    "milk",
-    "cheese",
-    "yogurt",
-    "butter",
-    "cream",
-    "sour cream",
-    "cottage cheese",
-    "cream cheese",
-    "quark",
-    "kefir",
-    "plant milk",
-    "vegan cheese",
-    # Proteins
-    "beef",
-    "pork",
-    "chicken",
-    "turkey",
-    "lamb",
-    "fish",
-    "salmon",
-    "tuna",
-    "shrimp",
-    "eggs",
-    "tofu",
-    "tempeh",
-    "seitan",
-    # Grains & Starches
-    "rice",
-    "pasta",
-    "noodles",
-    "bread",
-    "rolls",
-    "bagel",
-    "tortilla",
-    "couscous",
-    "quinoa",
-    "oats",
-    "cereal",
-    "flour",
-    "cornmeal",
-    # Fruits & Vegetables
-    "apple",
-    "banana",
-    "orange",
-    "berries",
-    "tomato",
-    "lettuce",
-    "carrot",
-    "potato",
-    "onion",
-    "garlic",
-    "pepper",
-    "cucumber",
-    "spinach",
-    # Snacks & Sweets
-    "chips",
-    "crackers",
-    "cookies",
-    "candy",
-    "chocolate",
-    "gum",
-    "nuts",
-    "popcorn",
-    "pretzels",
-    "granola bar",
-    "protein bar",
-    "fruit spread",
-    # Beverages
-    "water",
-    "juice",
-    "soda",
-    "tea",
-    "coffee",
-    "beer",
-    "wine",
-    "cider",
-    "energy drink",
-    "sports drink",
-    "kombucha",
-    # Condiments & Sauces
-    "ketchup",
-    "mustard",
-    "mayonnaise",
-    "vinegar",
-    "oil",
-    "soy sauce",
-    "hot sauce",
-    "bbq sauce",
-    "salad dressing",
-    "syrup",
-    "nutella",
-    "pesto",
-    "salsa",
-    # Baking & Cooking
-    "sugar",
-    "salt",
-    "pepper",
-    "spices",
-    "baking soda",
-    "baking powder",
-    "yeast",
-    "vanilla extract",
-    "broth",
-    "stock",
-    # Frozen & Prepared
-    "ice cream",
-    "frozen pizza",
-    "frozen vegetables",
-    "frozen fruit",
-    "ready meal",
-    "soup",
-    "canned beans",
-    "canned tomatoes",
-    # Household
-    "dish soap",
-    "laundry detergent",
-    "paper towels",
-    "toilet paper",
-    # Fallback
-    "unknown",
-]
-
-# Flavor/Variety/Subtype tags
-FLAVOR_TAGS = [
-    "none",
-    "plain",
-    "original",
-    # Only these mainstream fruit flavors are allowed for marmalades/jams:
-    "strawberry",
-    "apricot",
-    "raspberry",
-    "blueberry",
-    "cherry",
-    # Non-fruit flavors
-    "sea salt",
-    "cheddar",
-    "bbq",
-    "barbecue",
-    "salt and vinegar",
-    "paprika",
-    "herbs",
-    "chili",
-    "spicy",
-    "jalapeño",
-    "buffalo",
-    "ranch",
-    "bacon",
-    "vanilla",
-    "caramel",
-    "cinnamon",
-    "mint",
-    "hazelnut",
-    "almond",
-    "peanut",
-    "coffee",
-    "mocha",
-    "honey",
-    "menthol",
-    "eucalyptus",
-    "licorice",
-    "cola",
-    "bubblegum",
-    "earl grey",
-    "green tea",
-    "black tea",
-    "chamomile",
-    "peppermint",
-    "english breakfast",
-    "jasmine",
-    "oolong",
-    "espresso",
-    "arabica",
-    "robusta",
-    "smoked",
-    "grilled",
-    "fried",
-    "roasted",
-    "ground",
-    "sliced",
-    "organic",
-    "whole wheat",
-    "multigrain",
-    "gluten free",
-    "sugar free",
-    "low fat",
-    "fat free",
-    "lactose free",
-    "vegan",
-    "vegetarian",
-    "italian",
-    "mexican",
-    "asian",
-    "indian",
-    "thai",
-    "greek",
-    "french",
-    "extra virgin",
-    "aged",
-    "fresh",
-    "dried",
-    "unsalted",
-    "salted",
-    "sweetened",
-    "unsweetened",
-    "carbonated",
-    "still",
-    "sparkling",
-]
-
-# Form/Physical state tags
-FORM_TAGS = [
-    "none",
-    "liquid",
-    "solid",
-    "powder",
-    "gel",
-    "paste",
-    "cream",
-    "foam",
-    "grain",
-    "flakes",
-    "leaves",
-    "ground",
-    "whole",
-    "sliced",
-    "diced",
-    "shredded",
-    "grated",
-    "chopped",
-    "frozen",
-    "fresh",
-    "dried",
-    "canned",
-    "bottled",
-    "jarred",
-    "bagged",
-    "boxed",
-    "tablet",
-    "lozenge",
-    "gummy",
-    "hard candy",
-    "chewy",
-    "crunchy",
-    "soft",
-    "crispy",
-    "ready to eat",
-    "ready to cook",
-    "instant",
-    "concentrate",
-    "aerosol",
-    "spray",
-]
+# --- NORMALIZATION TEMPLATES ---
 
 
-TAG_TO_SHORTNAME_BATCH_PROMPT = """You are a grocery product name generator.
+TAG_TO_SHORTNAME_BATCH_PROMPT = """
+You are a grocery product name generator.
+For EACH base category tag, generate a natural short name.
+this short name should be in this language(the lang code is provided like en or de): {languageCode}
 
-Your task:
-For EACH tag combination, independently generate a natural short name that a person would use.
-
-IMPORTANT:
-- Treat each tag combination independently.
-- Do NOT compare combinations.
-- Preserve input order exactly.
-- Generate natural, human-readable names.
-- Return only valid JSON. No extra text.
-
-INPUT FORMAT:
-Each tag combination consists of exactly 3 elements in this order:
-1. base - the main product type (e.g., "bread", "tea", "chips")
-2. flavor - the flavor/subtype or "none" if plain/unflavored
-3. form - the physical form or "none" if not specified
-
-NAME GENERATION RULES:
-1. Always include the base in the short name
-2. Include flavor ONLY if it's not "none"
-3. NEVER include form in the name (form is metadata, not part of the name)
-4. Use natural word order for the language (usually flavor + base in English)
-5. Keep it minimal - 1-3 words maximum
-6. Use lowercase
-7. No articles (no "a", "the", etc.)
-8. Singular form preferred unless plural is more natural
-
-Examples:
-- ["bread", "none", "none"] → "bread"
-- ["tea", "earl grey", "leaves"] → "earl grey tea"
-- ["chips", "paprika", "solid"] → "paprika chips"
-- ["milk", "none", "liquid"] → "milk"
-- ["candy", "menthol", "solid"] → "menthol candy"
-- ["couscous", "none", "grain"] → "couscous"
-- ["yogurt", "strawberry", "gel"] → "strawberry yogurt"
-- ["cheese", "cheddar", "solid"] → "cheddar cheese"
-- ["juice", "orange", "liquid"] → "orange juice"
-- ["cookie", "chocolate chip", "solid"] → "chocolate chip cookie"
-
-OUTPUT FORMAT:
-Return EXACTLY one valid JSON object.
-Each key is the ORIGINAL tag combination as a string "base, flavor, form".
-Each value is the generated short name as a string.
-
-Example output:
-{{
-  "apricot, marmelade, gel": "apricot marmelade",
-  "bread, none, none": "bread",
-  "tea, earl grey, leaves": "earl grey tea",
-  "chips, paprika, solid": "paprika chips"
-}}
-
-Now generate short names for the following tag combinations:
-
-Tag combinations (format: "base, flavor, form"):
-{tag_combinations}
-
-Return ONLY valid JSON, no explanations."""
-
-TAG_ASSIGNMENT_BATCH_PROMPT = """
-You are a grocery product classifier.
-
-Your task:
-For EACH database row, independently assign semantic tags that describe the product.
-
-IMPORTANT:
-- Treat each row independently.
-- Do NOT compare rows.
-- Preserve input order exactly.
-- Use the shortened name as the primary signal.
-- Use the original name only for clarification.
-- Categories are hints only and may be missing.
-- Return only valid JSON. No extra text.
-
-ALLOWED TAGS - you MUST pick from these lists:
-Base tags: {base_tags}
-Flavor/Subtype tags: {flavor_tags}
-Form tags: {form_tags}
-
-NORMALIZATION RULES:
-- lowercase
-- singular nouns where it makes sense
-- no brand names in tags (brands go in shortened name, not tags)
-- no marketing adjectives
-- 1-3 words per field
-- ASCII where possible
-- ALWAYS pick from the allowed lists above - never invent new tags
-- use 'none' if no tag fits
-- use 'unknown' for base only if product type is completely unclear
-
-MATCHING STRATEGY:
-1. For fruit-based spreads (jam, marmalade, marmelade, confiture, konfitüre, gelée, etc.):
-   - ALWAYS use base="fruit spread".
-   - Check if the fruit flavor is in the ALLOWED mainstream list: strawberry, apricot, raspberry, blueberry, cherry.
-   - If the flavor IS in the allowed list, assign it (e.g., flavor="apricot").
-   - If the flavor is NOT in the allowed list (peach, plum, blackberry, orange, etc.), set flavor="none" (consolidate as generic fruit spread).
-   - NEVER use non-mainstream flavors - only the 5 allowed ones.
-   - ALWAYS use form="jarred" for all jams/marmalades/spreads - they are always in jars.
-
-2. For all other products:
-   - First try to find EXACT or VERY CLOSE match in allowed tags.
-   - If no close match, pick the most GENERAL category that fits.
-   - For flavors: match the actual flavor/variety, use "none" if plain/unflavored.
-   - For forms: use the most appropriate and CONSISTENT form for grouping (liquid, solid, powder, gel, paste, leaves, grain, jarred, tablet, etc.)
-   - Prefer consistency: same product types should use same form tags for proper grouping.
+INPUT FORMAT: {tag_combinations}
 
 RULES:
-1. Use the shortened name ('class') as the PRIMARY signal.
-2. Only use original name or categories as clarification.
-3. Prefer matching to general categories over 'unknown'.
-4. Categories are weak hints from Open Food Facts; only guide disambiguation.
-5. If completely unclear after checking all options, use: base='unknown', flavor='none', form='none'.
-6. Do NOT translate.
-7. Be generous with matching - though things that are different shall not be grouped, but jam and marmalade are e.g. quite similar -> fruit spread.
+1. Use the category name itself as the base.
+2. Keep it minimal - 1 word, lowercase, no articles.
 
 OUTPUT FORMAT:
-Return EXACTLY one valid JSON object.
-Each key is the ORIGINAL item name.
-Each value has this structure:
+Return EXACTLY one JSON object.
+Key: ORIGINAL tag combination "base, flavor, form".
+Value: Generated short name.
+
+Example:
 {{
-  "base": "<base product tag>",
-  "flavor": "<flavor/subtype tag or '' if not in allowed fruit flavors>",
-  "form": "<form tag or 'none'>"
+  "dairy, none, none": "dairy",
+  "sweet snack, none, none": "snack"
 }}
-
-EXAMPLES:
-{{
-  "Coucous": {{"base": "couscous", "flavor": "none", "form": "grain"}},
-  "Menthol Extra Stark Ohne Zucker": {{"base": "candy", "flavor": "menthol", "form": "solid"}},
-  "Thé Earl Grey Classic": {{"base": "tea", "flavor": "earl grey", "form": "leaves"}},
-  "milk": {{"base": "milk", "flavor": "none", "form": "liquid"}},
-  "Chipsfrisch Ungarisch": {{"base": "chips", "flavor": "paprika", "form": "solid"}},
-  "Bonne Maman - Apricot and Peach French Jam, 13oz (370g) Jar": {{
-    "base": "fruit spread",
-    "flavor": "apricot",
-    "form": "jarred"
-  }},
-  "Samt Aprikose ohne Stücke weniger Zucker": {{
-    "base": "fruit spread",
-    "flavor": "apricot",
-    "form": "jarred"
-  }},
-  "Peach Marmalade": {{
-    "base": "fruit spread",
-    "flavor": "none",
-    "form": "jarred"
-  }},
-  "Strawberry Jam": {{
-    "base": "fruit spread",
-    "flavor": "strawberry",
-    "form": "jarred"
-  }}
-}}
-
-Now classify the following rows (use ORIGINAL item names as keys):
-
-item_name (original names, same order):
-{item_names}
-
-class (shortened names, same order):
-{shortened_names}
-
-categories (list of categories, same order; may be empty):
-{categories}
-
-Return ONLY valid JSON, no explanations.
 """
 
 SHORTEN_BATCH_TMPL = """
 You are a product name normalizer. Shorten and normalize product names into a concise, recognizable format.
 
 RULES:
-1. AGGRESSIVELY REMOVE MARKETING TEXT: French Jam, ohne Stücke, weniger Zucker, Classic, Bio, Extra, Stark, Natur, measurements (13oz, 370g), etc.
-2. FOR JAMS/MARMALADES/SPREADS/CONFITURE:
-   - REMOVE brand names (Bonne Maman, Samt, Hero, etc.)
-   - Keep flavor + product type: "Aprikosen Marmelade", "Strawberry Jam", "Apricot Marmelade"
-   - Use product type from input language: Marmelade (German), Jam (English), Confiture (French)
-   - For multi-fruit, use first/main fruit mentioned
-3. FOR OTHER BRANDED PRODUCTS:
-   - Keep brand + variant if distinctive: "Chips Ungarisch"
-   - Or just brand if product type is clear: "Nutella"
-4. FOR NON-BRANDED PRODUCTS:
-   - Keep descriptive product type + flavor if relevant
-   - Examples: "Menthol Bonbons", "Earl Grey", "Couscous"
-5. NEVER TRANSLATE: Keep the original language (e.g., "Aprikose" stays "Aprikose", "Marmelade" stays "Marmelade").
-6. CORRECT MINOR TYPOS: e.g., Coucous -> Couscous.
-7. NO PARENTHETICAL INFO: Remove (weniger Zucker), (370g), etc.
-
-EXAMPLES:
-- "Bonne Maman - Apricot and Peach French Jam, 13oz (370g) Jar" → "Apricot Marmelade"
-- "Samt Aprikose ohne Stücke weniger Zucker" → "Aprikosen Marmelade"
-- "Hero Erdbeer Konfitüre Extra" → "Erdbeer Marmelade"
-- "Strawberry Jam" → "Strawberry Jam"
-- "Thé Earl Grey Classic" → "Earl Grey"
-- "Coucous" → "Couscous"
-- "Menthol Extra Stark Ohne Zucker" → "Menthol Bonbons"
-- "Bonbons Honig" → "Honig Bonbons"
-- "Nutella Brotaufstrich" → "Nutella"
+1. AGGRESSIVELY REMOVE MARKETING: French Jam, ohne Stücke, weniger Zucker, Classic, Bio, Extra, Stark, Natur, measurements (13oz, 370g), etc.
+2. FOR JAMS/MARMALADES/SPREADS:
+   - Always keep [Flavor] + [Product Type]. 
+   - Use language-appropriate terms: Marmelade/Konfitüre (DE), Jam (EN), Confiture (FR), Mark (DE).
+   - Example: "Samt Aprikose ohne Stücke weniger Zucker" → "Aprikosen Marmelade"
+3. FOR BRANDED SNACKS: Keep brand + distinctive variant: "Chipsfrisch Ungarisch", "Haribo Wummis".
+4. FOR NON-BRANDED: Keep descriptive product type + flavor: "Menthol Bonbons", "Couscous", "Earl Grey".
+5. CLEANUP: Correct "Coucous" to "Couscous". Remove all parenthetical info.
+6. NEVER TRANSLATE: Keep the original language of the product type.
 
 INPUT DATA:
 Items: {items_list}
@@ -576,42 +161,20 @@ OUTPUT FORMAT: Return EXACTLY one JSON object. No extra text.
 
 SHORTEN_TMPL = """
 Shorten and normalize product name: "{input}"
-Categories (use as hints only): "{categories}"
+Categories: "{categories}"
 
 RULES:
-1. AGGRESSIVELY REMOVE: Bio, Extra, Stark, Natives, Natur, Ohne Zucker, weniger Zucker, Classic, measurements, French Jam, ohne Stücke, etc.
-2. FOR JAMS/MARMALADES/SPREADS/CONFITURE:
-   - REMOVE brand names (Bonne Maman, Samt, Hero, etc.)
-   - Keep flavor + product type: "Aprikosen Marmelade", "Strawberry Jam", "Apricot Marmelade"
-   - Use product type from input language: Marmelade (German), Jam (English), Confiture (French)
-   - For multi-fruit, use first/main fruit
-3. FOR OTHER BRANDED PRODUCTS: Keep brand + distinctive variant if needed ("Chips Ungarisch") or just brand ("Nutella")
-4. FOR NON-BRANDED: Keep descriptive type + flavor ("Menthol Bonbons", "Earl Grey")
-5. NEVER TRANSLATE - maintain input language
-6. NO PARENTHETICAL INFO: Remove (weniger Zucker), (370g), etc.
-7. Correct spelling: Coucous → Couscous
-
-Examples:
-'Samt Aprikose ohne Stücke weniger Zucker' → Aprikosen Marmelade
-'Bonne Maman Apricot and Peach French Jam' → Apricot Marmelade
-'Hero Erdbeer Konfitüre Extra' → Erdbeer Marmelade
-'Aprikose Marmelade' → Aprikosen Marmelade
-'Strawberry Jam' → Strawberry Jam
-'Thé Earl Grey Classic' → Earl Grey
-'Menthol Extra Stark Ohne Zucker' → Menthol Bonbons
-'Chipsfrisch Ungarisch' → Chips Ungarisch
-'Ricola Kräuter Bonbons' → Ricola Bonbons
-'Nutella Brotaufstrich' → Nutella
-'Griechisches Natives Olivenöl Extra' → Olivenöl
-'Coucous' → Couscous
-'milk' → milk
-'cookies' → cookies
+1. AGGRESSIVELY REMOVE: Bio, Extra, Stark, Natives, Natur, Ohne Zucker, weniger Zucker, measurements, etc.
+2. JAMS/SPREADS: Remove brand names, keep flavor + product type (Marmelade, Jam, Mark).
+3. BRANDED: Keep brand + variant if distinctive.
+4. Correct spelling: Coucous → Couscous.
+5. NEVER TRANSLATE - maintain input language.
 
 Return EXACTLY one JSON object:
 {{"shortenedText":"result here"}}
-
-CRITICAL: For jams/marmalades, use descriptive flavor + product type, NO brand names.
 """
+
+# --- INTENT & SEARCH TEMPLATES ---
 
 PROMPT_TMPL = """
 Find the item in the text: "{input}"
@@ -619,7 +182,7 @@ Find the item in the text: "{input}"
 Options: {classes}
 
 Return EXACTLY one JSON object and nothing else, e.g.:
-{{"category":"milch","confidence":0.95}}
+{{"category":"milk","confidence":0.95}}
 
 - "category" must be one of the options above. If none match, return "unknown".
 - "confidence" must be a float between 0.0 and 1.0.
@@ -629,18 +192,14 @@ ACTION_PROMPT_TMPL = """
 Determine the intent from this text: "{input}"
 
 The user is either:
-- ADDING/INCREMENTING an item (wants to buy it, add to list, get more, etc.)
-- REMOVING/DECREMENTING an item (already bought it, remove from list, got it, checked off, etc.)
+- ADDING/INCREMENTING an item (wants to buy it, add to list, etc.)
+- REMOVING/DECREMENTING an item (bought it, remove from list, checked off, etc.)
 
 Return EXACTLY one JSON object and nothing else, e.g.:
 {{"action":"add","confidence":0.95}}
 
-- "action" must be either "add" or "remove". If unclear, return "unknown".
+- "action" must be "add", "remove", or "unknown".
 - "confidence" must be a float between 0.0 and 1.0.
-
-Common patterns:
-- "add X", "I need X", "buy X", "get X", "put X on list" → add
-- "got X", "bought X", "remove X", "checked off X", "have X" → remove
 """
 
 
@@ -842,12 +401,56 @@ def _validate_tag(tag: str, allowed_tags: List[str]) -> str:
     return allowed_lower.get(tag, "unknown" if "unknown" in allowed_lower else "none")
 
 
-def tagAssignmentBatch(
+class GroceryClassifier:
+    def __init__(self):
+        base_model = "NousResearch/Llama-3.2-1B"
+        adapter_path = "./outputs/lora-out"
+        
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+        )
+        
+        tokenizer = AutoTokenizer.from_pretrained(adapter_path)
+        model = AutoModelForCausalLM.from_pretrained(
+            base_model,
+            quantization_config=bnb_config,
+            device_map="auto",
+        )
+        model.resize_token_embeddings(len(tokenizer))
+        self.model = PeftModel.from_pretrained(model, adapter_path).eval()
+        self.tagging_classes = [
+            "meat_fish",
+            "fruit_veg",
+            "bread_bakery",
+            "grains_pasta",
+            "pantry_staples",
+            "spices_seasoning",
+            "snacks",
+            "drinks",
+            "frozen",
+            "household",
+            "canned_jars",
+            "dairy_eggs",
+        ]
+        self.INSTRUCTION = (
+            f"extract this into one of these categories{tuple(self.tagging_classes)}"
+        )
+        self.tokenizer = tokenizer
+
+    def classify(self, item: str) -> str:
+        prompt = f"### Instruction:\n{self.INSTRUCTION}\n\n### Input:\n{item}\n\n### Response:\n"
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        with torch.no_grad():
+            outputs = self.model.generate(**inputs, max_new_tokens=20, do_sample=False)
+        result = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return result.split("### Response:")[-1].strip()
+
+
+async def tagAssignmentBatch(
     items: list[dict[str, str]],
-    base_tags: List[str] = BASE_TAGS,
-    flavor_tags: List[str] = FLAVOR_TAGS,
-    form_tags: List[str] = FORM_TAGS,
-    batch_size: int = 50,
 ) -> Dict[str, Dict[str, str]]:
     """
     Assign semantic tags to multiple grocery items in batch.
@@ -861,23 +464,6 @@ def tagAssignmentBatch(
 
     Returns:
         Dict mapping item_name to { "base": str, "flavor": str, "form": str }
-
-    Example with your DB format:
-        >>> item_names = ["Coucous", "milk", "Menthol Extra Stark Ohne Zucker"]
-        >>> shortened = ["Couscous", "Milk", "Bonbons menthol zucker"]
-        >>> categories = [
-        ...     "['en:cereals-and-potatoes', 'en:durum-wheat-semolinas']",
-        ...     "",
-        ...     "['en:candies', 'en:hard-candies']"
-        ... ]
-        >>> results = tagAssignmentBatch(
-        ...     item_names=item_names,
-        ...     shortened_names=shortened,
-        ...     categories=categories,
-        ...     base_tags=["couscous", "milk", "candy"],
-        ...     flavor_tags=["none", "menthol"],
-        ...     form_tags=["grain", "liquid", "solid"]
-        ... )
     """
 
     item_names, shortened_names, categories = [], [], []
@@ -903,88 +489,42 @@ def tagAssignmentBatch(
         # Join back to comma-separated for the prompt
         parsed_categories.append(", ".join(parsed) if parsed else "")
 
-    # Ensure "none" and "unknown" are in tag lists
-    if "none" not in flavor_tags:
-        flavor_tags = flavor_tags + ["none"]
-    if "none" not in form_tags:
-        form_tags = form_tags + ["none"]
-    if "unknown" not in base_tags:
-        base_tags = base_tags + ["unknown"]
-
-    llm = _get_llm()
-    prompt = ChatPromptTemplate.from_template(TAG_ASSIGNMENT_BATCH_PROMPT)
-    chain = prompt | llm
-
+    classifier = GroceryClassifier()
     all_results = {}
-
-    # Process in batches to avoid token limits
-    for i in range(0, len(item_names), batch_size):
-        batch_items = item_names[i : i + batch_size]
-        batch_shortened = shortened_names[i : i + batch_size]
-        batch_categories = parsed_categories[i : i + batch_size]
-
-        try:
-            result = chain.invoke(
-                {
-                    "item_names": batch_items,
-                    "shortened_names": batch_shortened,
-                    "categories": batch_categories,
-                    "base_tags": ", ".join(base_tags),
-                    "flavor_tags": ", ".join(flavor_tags),
-                    "form_tags": ", ".join(form_tags),
-                }
-            )
-
-            text_content = result.content if hasattr(result, "content") else str(result)
-            parsed = extract_batch_json(text_content)
-
-            # Validate and normalize results
-            for item_name in batch_items:
-                if item_name in parsed and isinstance(parsed[item_name], dict):
-                    tags = parsed[item_name]
-                    # tags = json.dumps(tags)
-                    all_results[item_name] = {
-                        "base": _validate_tag(tags.get("base", "unknown"), base_tags),
-                        "flavor": _validate_tag(
-                            tags.get("flavor", "none"), flavor_tags
-                        ),
-                        "form": _validate_tag(tags.get("form", "none"), form_tags),
-                    }
-                else:
-                    # Fallback for failed items
-                    all_results[item_name] = {
-                        "base": "unknown",
-                        "flavor": "none",
-                        "form": "none",
-                    }
-
-        except Exception as e:
-            print(f"Error processing batch {i // batch_size + 1}: {e}")
-            # Fallback for entire batch
-            for item_name in batch_items:
-                all_results[item_name] = {
-                    "base": "unknown",
-                    "flavor": "none",
-                    "form": "none",
-                }
+    for item in item_names:
+        all_results[item] = {
+            "base": classifier.classify(item),
+            "flavor": "none",
+            "form": "none",
+        }
 
     print(
-        f"Processed {len(item_names)} items in {(len(item_names) + batch_size - 1) // batch_size} batches. "
-        f"Results: {len(all_results)} tagged items"
+        f"Processed {len(item_names)} and tagged them with {len(classifier.tagging_classes)} "
     )
 
     return all_results
 
 
-def tagToNameBatch(tagsList: list[str]):
+def tagToNameBatch(tagsList: list[str], languageCode: str = "de"):
     print(f"started the tag to name batching with this input: {tagsList}")
     llm = _get_llm()
+
+    # normalize input to match prompt
+
+    tag_combinations = []
+    for tag in tagsList:
+        if tag.find("none,") == -1:
+            tag_combinations.append((f"{tag}, none, none"))
+        else:
+            tag_combinations.append(tag)
 
     prompt = ChatPromptTemplate.from_template(TAG_TO_SHORTNAME_BATCH_PROMPT)
     chain = prompt | llm
 
     try:
-        result = chain.invoke({"tag_combinations": tagsList})
+        result = chain.invoke(
+            {"tag_combinations": tag_combinations, "languageCode": languageCode}
+        )
 
         # Extract the text content from the response
         text_content: str = (
@@ -995,7 +535,8 @@ def tagToNameBatch(tagsList: list[str]):
         print(f"Error during category classification: {e}")
         return None
 
-    resp = {tag: out.get(tag, "failed") for tag in tagsList}
+    # map back to original tag names
+    resp = {tag: out.get(f"{tag}, none, none", "failed") for tag in tagsList}
     print(f"got these input tags: {tagsList} and produced this output: {resp}")
 
     return resp

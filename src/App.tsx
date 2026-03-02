@@ -2,18 +2,13 @@ import './App.css';
 import Container from './comp/other/Container';
 import { useCallback, useEffect, useState, useRef } from 'react';
 import ErrorContainer from './comp/utils/ErrorContainer';
-//import DropdownComp from './comp/Dropdown';
-import MergedDropdown from './comp/other/MergedDropdown';
 import { useNavigate } from 'react-router-dom';
-//import StyledButton from './comp/StyledButton';
-import SplitButton from './comp/other/SplitButton';
 import SidebarComp from "./comp/other/Sidebar";
 import InfoContainer from './comp/utils/InfoContainer';
 import AttributionNotice from './comp/utils/AttributionNotice';
-import SearchBar from './comp/other/SearchBar';
 import VoiceRecorder from './comp/utils/VoiceRecorder';
 import { Virtuoso } from 'react-virtuoso'
-import GetCoordPosition from './comp/geo/GetCoordPosition';
+import TopBar from './comp/other/TopBar';
 
 
 // ============================================================================
@@ -27,6 +22,7 @@ export interface Item {
   count: number;
   perish_dates: string[] | null;
   imageUrl: string;
+  tags: string[];
 }
 
 // ============================================================================
@@ -96,6 +92,7 @@ interface ApiItem {
   count: number;
   perish_dates: string[] | null;
   imageUrl: string;
+  tags: string;
 }
 
 interface ApiResponse {
@@ -103,8 +100,7 @@ interface ApiResponse {
 }
 
 const transformItems = (data: ApiResponse): Item[] => {
-
-  
+  console.log("item.tags:", data.items[0].tags);
   const transformed = data.items.map((item) => ({
     ean: item.ean,
     text: item.text,
@@ -112,10 +108,11 @@ const transformItems = (data: ApiResponse): Item[] => {
     classname: item.classname,
     count: item.count,
     perish_dates: item.perish_dates ?? [],
-    imageUrl: item.imageUrl
+    imageUrl: item.imageUrl,
+    tags: item.tags.toString().split(","),
   }));
   
-  console.log("Transformed items count:", transformed.length);
+  console.log("item.tags:", transformed[0].tags);
   return transformed;
 };
 
@@ -152,7 +149,7 @@ function App() {
   const [subgroupsToSearch, setSubgroupsToSearch] = useState<string>("");
   
   const skipCountRef = useRef(0);
-  const newItemsPerFetch = 30;
+  const newItemsPerFetch = 20;
   const hasInitialFetchedRef = useRef(false);
 
   
@@ -160,6 +157,31 @@ function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const transcriptionTimer = useRef<NodeJS.Timeout | null>(null);
+
+
+  useEffect(() => {
+  const loadingState = transformItems({ "items": [
+      { "ean": "loading-0", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-1", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-2", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-3", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-4", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-5", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-6", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-7", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-8", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-9", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: ""},
+      { "ean": "loading-10", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: "" },
+      { "ean": "loading-11", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: "" },
+      { "ean": "loading-12", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: "" },
+      { "ean": "loading-13", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: "" },
+      { "ean": "loading-14", "text": "Loading...", "subgroups": null, "classname": null, "count": 0, "perish_dates": [], "imageUrl": "", tags: "" }
+    ]
+  })
+  
+  setData(loadingState);
+}, []); // Empty array means "run once on mount"
+  
 
   // ========== Data Fetching ==========
   const filterFetchItems = async(subgroupFilter: string | null, sortOrderFilter: string | undefined) => {
@@ -221,17 +243,15 @@ const fetchItemsWithParams = useCallback(async (subgroupsParam?: string, sortOrd
       
       // Deduplicate based on EAN when appending
       setData(prev => {
-        const combined = [...prev, ...newItems];
-        const seen = new Set<string>();
-        return combined.filter(item => {
-          // Create a unique key combining EAN and text
-          const uniqueKey = `${item.ean}-${item.text}`;
-          
-          if (seen.has(uniqueKey)) {
-            console.log("Duplicate detected:", uniqueKey);
-            return false;
-          }
-          seen.add(uniqueKey);
+        const isPlaceholder = prev.length > 0 && prev[0].ean.startsWith("loading-");
+        
+        if (isPlaceholder) return newItems;
+
+        const seen = new Set();
+        return [...prev, ...newItems].filter(item => {
+          const key = `${item.ean}-${item.text}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
           return true;
         });
       });
@@ -455,54 +475,34 @@ const fetchItems = useCallback(async () => {
   console.log("Rendering main UI - displayError:", displayError, "noItemsAvailable:", noItemsAvailable);
     
   return (
-  <div className='min-h-screen '>
+  <div className='h-screen '>
     {/* Sidebar - always rendered, visibility controlled by CSS transform */}
     <SidebarComp isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
     
     {displayError ? (
       <ErrorContainer text={displayError} />
     ) : (
-      <div className="min-h-screen">
-        <div className='w-full flex justify-center items-center sticky top-1  z-50 '>
-          {/* Header Bar - fixed */}
-          <header className="flex items-center justify-center max-w-fit h-14 sm:h-16 px-3 sm:px-6 gap-3 sm:gap-4 border border-emerald-500/30
-                            rounded-2xl bg-slate-900/95 relative">
-            {/* Sidebar Toggle */}
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="flex items-center justify-center w-12 h-12 rounded-lg hover:bg-slate-700/50 transition-colors shrink-0"
-            >
-              ≡
-            </button>
-
-            {/* Dropdowns */}
-            <div className='flex flex-col'>
-              <div className='m-1'>
-                <MergedDropdown 
-                  subgroups={subgroups}
-                  sortOrder={["A-Z", "Z-A", "new-old", "old-new"]}
-                  onClickElement={filterFetchItems}
-                  onClickReset={fetchItems}
-                />
-              </div>
-            </div>
-            
-            <SplitButton 
-              onClickUpper={() => navigateScanner(1)}
-              onClickBottom={() => navigateScanner(-1)}
-            />
-            <SearchBar placeholder="enter name" itemsToRender={data} setItemsToRender={setData} />
-          </header>
-        </div>
+      <div className="h-screen">
+        <TopBar
+          sidebarOpen={sidebarOpen}
+          onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+          subgroups={subgroups}
+          onFilter={filterFetchItems}
+          onReset={fetchItems}
+          onScanIncrease={() => navigateScanner(1)}
+          onScanDecrease={() => navigateScanner(-1)}
+          items={data}
+          setItems={setData}
+        />
 
         {/* Main Content with top padding */}
-        <div className=" flex-1 p-3 sm:p-4 md:p-6 ">
+        <div className=" flex-1 p-3 sm:p-4 md:p-6">
           <div className="max-w-4xl mx-auto ">
             {noItemsAvailable ? (
               <InfoContainer text={"No items available in the database.\nSo perhaps add one."} />
             ) : (
               <Virtuoso
-                style={{ height: '100vh' }}
+                style={{ height: '85vh' }}
                 data={data}
                 endReached={() => {
                   if (hasMoreData && !isLoading) {
@@ -511,7 +511,7 @@ const fetchItems = useCallback(async () => {
                 }}
                 itemContent={(idx, item) => (
                   <Container
-                    key={`${item.text}-${idx}`}
+                    key={idx}
                     text={item.text}
                     subgroups={item.subgroups}
                     count={item.count}
@@ -521,6 +521,7 @@ const fetchItems = useCallback(async () => {
                     ean={item.ean}
                     onClickIncrease={increaseItem}
                     onClickDecrease={decreaseItem}
+                    badgeTexts={item.tags}
                     style=""
                   />
                 )}

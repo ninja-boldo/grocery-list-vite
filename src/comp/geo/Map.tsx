@@ -45,7 +45,7 @@ const Map = ( {heightNum, widthNum, zoom, centerPos, markedPositions}: Props ) =
         {(centerPos?.valid && markedPositions.length > 0) && (
             
                 <MapContainer 
-                    center={[centerPos.lat, centerPos.lon]} 
+                    center={[centerPos.lat, centerPos.lon] as [number, number]}                    
                     zoom={zoom} 
                     scrollWheelZoom={false}
                     style={{ height: heightString, width: widthString }}

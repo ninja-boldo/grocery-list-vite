@@ -13,7 +13,7 @@ RUN apt-get update && \
 RUN locale-gen en_US.UTF-8
 ENV LANG=en_US.UTF-8
 
-# copy everything first (simpler approach)
+# copy everything first 
 COPY . .
 
 # clean install

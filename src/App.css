@@ -6,7 +6,7 @@ html, body {
   box-sizing: border-box;
 }
 
-/* Prevents unwanted side scroll */
+
 #root {
   width: 100%;
   max-width: 100vw;
@@ -16,13 +16,12 @@ html, body {
   
 }
 
-/* ==== Optional spacing for your main app container ==== */
-/* If you still want that nice breathing room that was previously applied via #root */
+
 .App {
   padding: 2rem;
 }
 
-/* ==== Original logo styling ==== */
+
 .logo {
   height: 6em;
   padding: 1.5em;

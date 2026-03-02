@@ -62,7 +62,7 @@ const ContainerTagGrouped = ({ tags, name, subItems }: Props) => {
       {/* Dropdown content */}
       <div 
         className={`transition-all duration-500 ease-out ${open ? 'max-h-200 opacity-100' : 'max-h-0 opacity-0'}`}
-        style={{ overflow: 'hidden' }}
+        style={{ overflow: 'scroll' }}
       >
         <div className={`mt-3 transform transition-all duration-400 ${open ? 'translate-y-0' : '-translate-y-4'}`}>
           <div className="bg-linear-to-r from-slate-900/80 to-slate-800/80 backdrop-blur-md rounded-xl border border-cyan-500/20 shadow-lg shadow-cyan-500/10 mx-2 p-4">

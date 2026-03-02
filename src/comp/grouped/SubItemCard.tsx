@@ -11,6 +11,7 @@ const SubItemCard = ({ name, count, index, isOpen }: Props) => {
       className={`
         group/item relative
         flex items-center justify-between
+        
         bg-linear-to-r from-emerald-600/70 to-emerald-700/70
         border border-emerald-500/40
         rounded-xl shadow-md shadow-emerald-500/20

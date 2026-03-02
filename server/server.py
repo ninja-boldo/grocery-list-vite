@@ -3,13 +3,15 @@ from pathlib import Path
 import re
 import shlex
 import traceback
+
+import httpx
 from utils.dbManager import DatabaseManager
 from enum import Enum
 import requests
 from dotenv import load_dotenv
 from utils.lookup import WORD_STRIP, PHRASE_STRIP
 os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
-
+ 
 import datetime
 import json
 from typing import Optional, Union, Any
@@ -57,7 +59,6 @@ if not key:
 # ============================================================================
 class Config:
     # Feature toggles
-    ENABLE_ML_MODEL = False
     ENABLE_WHISPER_MODEL_LOCAL = False
     ENABLE_WHISPER_MODEL_CLOUD = True
     ENABLE_LOKI_LOGGING = True
@@ -65,8 +66,8 @@ class Config:
     ENABLE_FILE_LOGGING = True
 
     # Database settings
-    DB_POOL_MIN_SIZE = 1
-    DB_POOL_MAX_SIZE = 5
+    DB_POOL_MIN_SIZE = 10
+    DB_POOL_MAX_SIZE = 20
     DB_COMMAND_TIMEOUT = 30
     DB_RETRY_ATTEMPTS = 10
     DB_RETRY_DELAY = 2.0
@@ -108,14 +109,6 @@ if Config.ENABLE_WHISPER_MODEL_LOCAL or Config.ENABLE_WHISPER_MODEL_CLOUD:
     from transcription.transcript import init_whisper, transcribe
     from transcription import classifier
 
-if Config.ENABLE_ML_MODEL:
-    try:
-        import torch  # type: ignore
-        import food_classifier.main as food_classifier
-
-        device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    except Exception as e:
-        raise Exception("you have to install the ml dependencies (here: torch)")
 
 # ============================================================================
 # LOGGING SETUP
@@ -227,6 +220,7 @@ DATABASE_SCHEMA = {
             ("idx_food_code", "code"),
             ("idx_food_product_name", "product_name"),
         ],
+        "constraints": "",
     },
     "item_list": {
         "columns": [
@@ -251,6 +245,7 @@ DATABASE_SCHEMA = {
             ("idx_item_list_iswished", "iswished"),
             ("idx_item_list_tags", "tags"),
         ],
+        "constraints": "CONSTRAINT item_list_ean_name_unique UNIQUE (ean, item_name)",
     },
     "tagging_to_name": {
         "columns": [
@@ -261,6 +256,7 @@ DATABASE_SCHEMA = {
             ("idx_tags", "tags"),
             ("idx_inferred_name", "inferred_name"),
         ],
+        "constraints": "",
     },
 }
 
@@ -272,12 +268,7 @@ async def ensure_schema_compliance(pool: asyncpg.Pool) -> None:
     This is idempotent and safe to run multiple times.
     """
 
-    logger.info(
-        f"ensuring schema compliance for these items of the schema dict: {DATABASE_SCHEMA.items()}"
-    )
-    logger.info(
-        f"ensuring schema compliance for these keys of the schema dict: {DATABASE_SCHEMA.keys()}"
-    )
+
 
     async with pool.acquire() as con:
         for table_name, schema in DATABASE_SCHEMA.items():
@@ -300,7 +291,10 @@ async def ensure_schema_compliance(pool: asyncpg.Pool) -> None:
                 columns_def = ", ".join(
                     [f"{col} {col_type}" for col, col_type in schema["columns"]]
                 )
-                create_sql = f"CREATE TABLE {table_name} ({columns_def})"
+                 
+                constraint_clause = f", {schema['constraints']}" if schema['constraints'] else ""
+                create_sql = f"CREATE TABLE {table_name} ({columns_def}{constraint_clause})"
+                print(f"creating table with sql query: {create_sql}")
                 await con.execute(create_sql)
                 logger.info(f"✓ Created table: {table_name}")
             else:
@@ -526,10 +520,12 @@ def build_fetch_query(
     sortOrder: Optional[str] = None,
     skip: Optional[int] = Query(None),
     limit: Optional[int] = Query(None),
+    include_tags: Optional[bool] = Query(None),
 ) -> tuple[str, list]:
     """Build optimized SQL query for fetching items with filters"""
     conditions = []
     params = []
+    fields_to_include = ["ean", "item_name", "subgroups", "class", "count", "timestamps", "image_url"]
 
     # Add filters
     if subgroups:
@@ -551,13 +547,17 @@ def build_fetch_query(
         conditions.append(
             "item_name IS NOT NULL AND item_name != 'null' AND item_name != ''"
         )
+    
+    if include_tags:
+        fields_to_include.append("tags")
 
     where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     limit_clause = f"limit {limit}" if limit else "LIMIT 1000"
     offset_clause = f"offset {skip}" if skip else ""
-
+    field_clause = ", ".join(fields_to_include)
+    
     return (
-        f"""SELECT ean, item_name, subgroups, class, count, timestamps, image_url
+        f"""SELECT {field_clause}
         FROM item_list{where_clause} {convertSortToSql(sortMode=sortOrder)} {limit_clause} {offset_clause}""",
         params,
     )
@@ -566,41 +566,32 @@ def build_fetch_query(
 async def resolve_item_identity(
     con: asyncpg.Connection, ean: Optional[str], item_name: Optional[str]
 ) -> tuple[str, str]:
-    """
-    Resolve EAN and item_name from either parameter.
-    Returns: (ean, item_name)
-    """
-    # Case 1: Both provided
     if ean and item_name:
         return (ean, item_name)
 
-    # Case 2: Only EAN provided
     if ean and not item_name:
-        """
-        row = await con.fetchrow(
-            "SELECT item_name FROM item_list WHERE ean = $1 LIMIT 1", ean
-        )
-        if row:
-            return (ean, row['item_name'])
-        """
-        res = requests.get(
-            f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=product_name"
-        )
-        json = res.json()
-        if json["status_verbose"]:
-            return (ean, json["product"]["product_name"])
+        try:
+            res = requests.get(
+                f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=product_name",
+                timeout=5.0
+            )
+            data = res.json()
+            if data.get("status") == 1:  # 1 = found, 0 = not found
+                product_name = data.get("product", {}).get("product_name")
+                if product_name:
+                    return (ean, product_name)
+        except Exception as e:
+            logger.warning(f"OpenFoodFacts lookup failed for ean {ean}: {e}")
 
-        # Fallback to food database
+        # Fallback to local food table
         row = await con.fetchrow(
             "SELECT product_name FROM food WHERE code = $1 LIMIT 1", ean
         )
-        if row:
+        if row and row["product_name"]:
             return (ean, row["product_name"])
 
-        # Return generic name instead of raising 404
         return (ean, "none")
 
-    # Case 3: Only item_name provided
     if item_name and not ean:
         row = await con.fetchrow(
             "SELECT ean FROM item_list WHERE item_name = $1 LIMIT 1", item_name
@@ -608,7 +599,6 @@ async def resolve_item_identity(
         return (row["ean"] if row else "0", item_name)
 
     raise HTTPException(status_code=400, detail="Must provide ean or item_name")
-
 
 def getImageUrl(ean: str):
     try:
@@ -630,6 +620,21 @@ def getImageUrl(ean: str):
         logger.warning(
             f"failed to do the image fetching for this ean: {ean}. error: {e} "
         )
+        
+async def getImageUrlAsync(client: httpx.AsyncClient, ean: str) -> str:
+    try:
+        res = await client.get(
+            f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=selected_images",
+            timeout=5.0
+        )
+        data = res.json()
+        images = data["product"]["selected_images"]["front"]["display"]
+        for lang in ("en", "de", "fr", "es"):
+            if lang in images:
+                return images[lang]
+    except Exception as e:
+        logger.warning(f"Failed to fetch image for ean {ean}: {e}")
+    return ""
 
 
 async def perform_item_operation(
@@ -639,6 +644,7 @@ async def perform_item_operation(
     count_delta: int = 1,
     subgroups: str = "none",
     is_wish_list: str = "false",
+    image_url: str = "",
 ) -> str:
     """
     Unified item operation handler (create/update/delete).
@@ -668,7 +674,7 @@ async def perform_item_operation(
             count_delta,
             json.dumps(timestamps),
             is_wish_list,
-            getImageUrl(ean),
+            image_url,
         )
         return "created"
 
@@ -746,6 +752,18 @@ class AddEanRequest(BaseModel):
     subgroups: Optional[str] = None
     count: Optional[int] = 1
     wish_list: Optional[str] = None
+
+class FetchedSingleItem(BaseModel):
+    ean: int
+    text: str
+    subgroups: str
+    classname: str
+    count: int
+    perish_dates: list[str]
+    imageUrl: str
+    
+class AddFetchedItems(BaseModel):
+    items: list[FetchedSingleItem]
 class ItemUpdateResponse(BaseModel):
     """Response model for item updates"""
 
@@ -812,6 +830,12 @@ async def lifespan(app: FastAPI):
 
         # Initialize database manager
         app.state.db = DatabaseManager(app.state.pool, logger)
+        
+        async with httpx.AsyncClient(
+        headers={"User-Agent": "grocery-list-app/1.0"},
+        timeout=httpx.Timeout(5.0)
+        ) as client:
+            app.state.http_client = client
 
         # Initialize database schema
         await init_database(app.state.pool)
@@ -839,24 +863,7 @@ async def lifespan(app: FastAPI):
         daemon_tasks.append(
             asyncio.create_task(assignShorthandNameToTags(app.state.pool))
         )
-        logger.info("✓ Started shorthand name assignment")
-
-        # Initialize ML model (conditional)
-        app.state.net = None
-        if Config.ENABLE_ML_MODEL:
-            try:
-                net = food_classifier.create_net(num_classes=206)
-                model_path = os.path.join(
-                    food_classifier.get_relative_path(), "food_classifier_resnet50.pth"
-                )
-                if os.path.exists(model_path):
-                    net.load_state_dict(torch.load(model_path, weights_only=True))
-                    app.state.net = net.to(device)
-                    logger.info("ML model loaded")
-                else:
-                    logger.warning(f"Model file not found: {model_path}")
-            except Exception as e:
-                logger.error(f"ML model loading failed: {e}")
+        logger.info("✓ Started shorthand name assignment")      
 
         yield
 
@@ -1141,6 +1148,7 @@ async def fetch_items(
             sortOrder=sortOrder,
             skip=skip,
             limit=limit,
+            include_tags=True,
         )
         rows = await request.app.state.db.fetch_with_retry(query, *params)
 
@@ -1152,7 +1160,8 @@ async def fetch_items(
                 "classname": row["class"] or "",
                 "count": row["count"],
                 "perish_dates": convert_timestamps_to_dates(row["timestamps"]),
-                "imageUrl": row["image_url"] or "/none_available.png",
+                "imageUrl": row["image_url"] or "/none_available.webp",
+                "tags": row["tags"]
             }
             for row in rows
         ]
@@ -1293,14 +1302,59 @@ async def get_supermarkets_close(
             status_code=502,
             detail="Error communicating with Overpass API"
         )
+    
+    
+@app.post("/add_fetched_items")
+async def addFetchedItems(request: Request, body: AddFetchedItems):
+    try:
+        pool = request.app.state.pool
+        async with pool.acquire() as con:
+            values = []
+            for item in body.items:
+                # Convert DD.MM.YYYY back to ISO for DB consistency if needed
+                # If they are already ISO, json.dumps(item.perish_dates) is fine
+                values.append((
+                    str(item.ean),
+                    item.text,
+                    item.classname or "",
+                    item.subgroups or "",
+                    item.count,
+                    json.dumps(item.perish_dates or []),
+                    item.imageUrl or ""
+                ))
 
+            await con.executemany(
+                """
+                INSERT INTO item_list 
+                (ean, item_name, class, subgroups, count, timestamps, image_url)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (ean, item_name) 
+                DO UPDATE SET 
+                    count = EXCLUDED.count,
+                    timestamps = EXCLUDED.timestamps,
+                    class = EXCLUDED.class,
+                    subgroups = EXCLUDED.subgroups,
+                    image_url = EXCLUDED.image_url
+                """, 
+                values
+            )
+
+        return {"message": f"Synced {len(values)} items", "status": "success"}
+
+    except Exception as e:
+        logger.error(f"addFetchedItems failed: {e}")
+        return {"done": False, "error": str(e)}
+    
+    
+    
+@lru_cache(maxsize=1000)
 def getCategories(ean: str):
     try:
         res = requests.get(
             f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=categories_tags"
         )
         json = res.json()
-        categories: dict[str, str] = json["product"]["categories_tags"]
+        categories: dict[str, str] = json["product"].get("categories_tags", [])
 
         if not categories or len(categories) == 0:
             logger.warning(f"failed to get the categories for ean: {ean} ")
@@ -1452,21 +1506,24 @@ async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 60.0):
                             }
                         )
 
+                if not itemsToProcess:
+                    await asyncio.sleep(waitingTime)
+                    continue
+
                 logger.info(
-                    f"processing these items for tag assignment: {itemsToProcess}"
+                    f"processing {len(itemsToProcess)} items for tag assignment"
                 )
 
                 tagMapping: dict[str, dict[str, str]] = classifier.tagAssignmentBatch(
                     items=itemsToProcess, batch_size=100
                 )
 
-                # logger.info(f"send this input for tag assignment: {itemsToProcess} and got this result: {tagMapping}")
-
                 for item in itemsToProcess:
                     try:
                         itemName = item["item_name"]
                         tagsDict: dict[str, str] = tagMapping[itemName]
-                        tags: str = f"{tagsDict['base']}, {tagsDict['flavor']}, {tagsDict['form']}"
+                        # New format: just the category ID (e.g., "milk", "bread")
+                        tags: str = tagsDict["base"]
 
                         await con.execute(
                             "update item_list set tags = $1 where item_name = $2 ",
@@ -1648,7 +1705,7 @@ async def taggingToNameBatch(
 
         tagNameMapping: dict[str, str] = {}
         async with pool.acquire() as con:
-            rows = con.fetch(
+            rows = await con.fetch(
                 "select tags, inferred_name from tagging_to_name where tags in ($1) ",
                 tuple(tagsList),
             )
@@ -1698,6 +1755,14 @@ async def taggingToNameBatch(
         )
 
 
+async def resetTagsAsignment(pool: asyncpg.Pool):
+    try:
+        await pool.fetch("update item_list set tags = '' where not tags = '' ")
+        
+    except Exception as e:
+        logger.error("the resetTagsAsignment failed")
+        
+        
 async def rescanCategoriesProcess(pool: asyncpg.Pool):
     try:
         rows = await pool.fetch("select distinct(ean), categories from item_list")
@@ -1824,16 +1889,71 @@ async def rescanImageUrls(request: Request):
         return {"done": False, "error": str(e)}
 
 
+@app.get("/migrate_tags")
+async def migrate_tags(request: Request):
+    """
+    Migrate old 3-part tags (e.g., 'fruit spread, strawberry, jarred')
+    to new single-category format (e.g., 'jam').
+
+    Re-classifies all items with old-format tags using keyword matching
+    (fast, deterministic) and updates the tagging_to_name table.
+    """
+    try:
+        async with request.app.state.pool.acquire() as con:
+            # Find items with old-format tags (contain commas = old format)
+            rows = await con.fetch(
+                "SELECT DISTINCT item_name, class, categories, tags FROM item_list "
+                "WHERE tags != '' AND tags LIKE '%,%'"
+            )
+
+            if not rows:
+                return {"done": True, "message": "No old-format tags found", "migrated": 0}
+
+            logger.info(f"Migrating {len(rows)} items from old tag format to new categories")
+
+            items_to_process = [
+                {
+                    "item_name": row["item_name"],
+                    "shortened_name": row["class"] or "",
+                    "categories": row["categories"] or "",
+                }
+                for row in rows
+            ]
+
+            tag_mapping = classifier.tagAssignmentBatch(
+                items=items_to_process, batch_size=100
+            )
+
+            migrated = 0
+            for item in items_to_process:
+                name = item["item_name"]
+                if name in tag_mapping:
+                    new_tag = tag_mapping[name]["base"]
+                    await con.execute(
+                        "UPDATE item_list SET tags = $1 WHERE item_name = $2",
+                        new_tag, name,
+                    )
+                    migrated += 1
+
+            # Clean up orphaned tagging_to_name entries
+            await con.execute("""
+                DELETE FROM tagging_to_name
+                WHERE tags NOT IN (SELECT DISTINCT tags FROM item_list WHERE tags != '')
+            """)
+
+            logger.info(f"Migration complete: {migrated}/{len(rows)} items migrated")
+            return {"done": True, "migrated": migrated, "total_old_format": len(rows)}
+
+    except Exception as e:
+        logger.error(f"Tag migration failed: {e}")
+        logger.error(traceback.format_exc())
+        return {"done": False, "error": str(e)}
+
+
 @app.post("/add_ean_to_list/")
 async def add_ean_to_list(
     request: Request, body: AddEanRequest, background_tasks: BackgroundTasks
 ):
-    """
-    Add item to list by EAN or name (POST)
-
-    @deprecated Use /api/items/update instead for better performance
-    This endpoint is maintained for backwards compatibility only.
-    """
     if not body.ean and not body.item_name:
         raise HTTPException(status_code=400, detail="Must supply ean or item_name")
 
@@ -1841,19 +1961,26 @@ async def add_ean_to_list(
     subgroups = sanitize_string(body.subgroups, "none")
     wish_list = validate_wish_list(body.wish_list)
 
-    logger.info(
-        f"got ean={body.ean},count_delta={count_delta}, subgroups={subgroups}, wish_list={wish_list}, item_name={body.item_name if body.item_name else ''},"
-    )
-
     try:
+        # Resolve identity AND check existence in the same connection
+        async with request.app.state.pool.acquire() as con:
+            resolved_ean, resolved_item_name = await resolve_item_identity(
+                con, body.ean, body.item_name
+            )
+            existing = await con.fetchrow(
+                "SELECT 1 FROM item_list WHERE item_name = $1", resolved_item_name
+            )
+
+        # Now fetch image outside any connection/transaction
+        image_url = ""
+        if not existing and resolved_ean not in ("0", "-1", "1"):
+            image_url = await getImageUrlAsync(
+                request.app.state.http_client, resolved_ean
+            )
+
+        # Open a fresh connection for the actual write
         async with request.app.state.pool.acquire() as con:
             async with con.transaction():
-                # Resolve item identity
-                resolved_ean, resolved_item_name = await resolve_item_identity(
-                    con, body.ean, body.item_name
-                )
-
-                # Perform operation
                 operation = await perform_item_operation(
                     con,
                     resolved_item_name,
@@ -1861,14 +1988,11 @@ async def add_ean_to_list(
                     count_delta,
                     subgroups,
                     wish_list,
+                    image_url=image_url,
                 )
 
-                is_known = resolved_item_name != "none" and resolved_ean not in (
-                    "0",
-                    "-1",
-                )
+                is_known = resolved_item_name != "none" and resolved_ean not in ("0", "-1")
 
-                # Schedule background task to shorten item name if needed
                 if operation == "created" and resolved_item_name:
                     background_tasks.add_task(
                         shorten_item_name_task,
@@ -1882,15 +2006,15 @@ async def add_ean_to_list(
                     "done": is_known,
                     "subgroups": subgroups,
                     "known_to_db": is_known,
-                    "operation": operation,  # Added for clarity: 'created', 'updated', 'deleted'
+                    "operation": operation,
                 }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"add_ean_to_list error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to add item")
-
+        raise HTTPException(status_code=500, detail="Failed to add item")  
+    
 
 @app.get("/add_ean_to_list_manual/")
 async def add_ean_manual(
