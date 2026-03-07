@@ -106,7 +106,7 @@ if Config.ENABLE_WHISPER_MODEL_CLOUD and Config.ENABLE_WHISPER_MODEL_LOCAL:
 
 # Conditional imports
 if Config.ENABLE_WHISPER_MODEL_LOCAL or Config.ENABLE_WHISPER_MODEL_CLOUD:
-    from transcription.transcript import init_whisper, transcribe
+    from transcription.transcript import transcribe
     from transcription import classifier
 
 
@@ -234,14 +234,12 @@ DATABASE_SCHEMA = {
             ("iswished", "TEXT DEFAULT 'false'"),
             ("image_url", "TEXT DEFAULT '' "),
             ("categories", "TEXT DEFAULT '' "),
-            ("categories_short", "TEXT DEFAULT '' "),
             ("tags", "TEXT DEFAULT '' "),
+            ("mapped_wish", "TEXT DEFAULT '' "),
         ],
         "indexes": [
             ("idx_item_list_ean", "ean"),
             ("idx_item_list_item_name", "item_name"),
-            ("idx_item_list_subgroups", "subgroups"),
-            ("idx_item_list_class", "class"),
             ("idx_item_list_iswished", "iswished"),
             ("idx_item_list_tags", "tags"),
         ],
@@ -842,13 +840,8 @@ async def lifespan(app: FastAPI):
 
         # Initialize Whisper model (conditional)
         app.state.whisper = None
-        if Config.ENABLE_WHISPER_MODEL_LOCAL:
-            try:
-                app.state.whisper = init_whisper(cloud=False)
-                logger.info("Whisper model loaded (local)")
-            except Exception as e:
-                logger.error(f"Whisper initialization failed: {e}")
-        elif Config.ENABLE_WHISPER_MODEL_CLOUD:
+        
+        if Config.ENABLE_WHISPER_MODEL_CLOUD:
             logger.info("Whisper cloud mode enabled")
         
 
@@ -859,6 +852,9 @@ async def lifespan(app: FastAPI):
         # schedule tag assignment for item grouping
         daemon_tasks.append(asyncio.create_task(assignTagsTask(app.state.pool)))
         logger.info("✓ Started tag assignment daemon")
+        
+        daemon_tasks.append(asyncio.create_task(mapItemToWishDaemon(app.state.pool)))
+        logger.info("✓ Started item to wish mapping daemon")
 
         daemon_tasks.append(
             asyncio.create_task(assignShorthandNameToTags(app.state.pool))
@@ -1110,6 +1106,58 @@ async def fetch_grouped(
         return {"items": resp, "count": len(resp)}
     except Exception as e:
         logger.error(f"the fetch_grouped api call failed with this error: {e}")
+
+
+
+
+@app.get("/fetch_items/wish_mapping")
+async def fetch_wish_mapping(
+    request: Request,
+    sortOrder: Optional[str] = Query(None),
+    skip: Optional[int] = Query(None),
+    limit: Optional[int] = Query(None),
+):
+    """
+
+    """
+    sortOrder = sortOrder.lower() if sortOrder else sortOrder
+    logger.info(
+        f"""fetch_items: sortOrder={sortOrder}, skip={skip}, limit={limit}"""
+    )
+
+    try:
+        if skip and skip < 0:
+            skip = 0
+
+        if limit and limit < 0:
+            limit = 0
+
+        pool = request.app.state.pool
+        async with pool.acquire() as con:
+            pass
+
+        item_list = [
+            {
+                "ean": row["ean"],
+                "text": row["item_name"],
+                "subgroups": row["subgroups"] or "",
+                "classname": row["class"] or "",
+                "count": row["count"],
+                "perish_dates": convert_timestamps_to_dates(row["timestamps"]),
+                "imageUrl": row["image_url"] or "/none_available.webp",
+                "tags": row["tags"]
+            }
+            for row in rows
+        ]
+        logger.info(f"fetch_items returned {len(item_list)} items")
+
+        return {"items": item_list, "count": len(item_list)}
+
+    except Exception as e:
+        logger.error(f"fetch_items error: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to fetch items")
+
 
 
 @app.get("/fetch_items")
@@ -1429,7 +1477,58 @@ async def shortenNames(request: Request, useBatch: bool = True):
         return {"done": False, "error": str(e)}
 
 
-async def shortenItemNamesDaemon(pool: asyncpg.Pool, useBatch: bool = True):
+async def mapItemToWishDaemon(pool: asyncpg.Pool, waitingTime: float = 60.0):
+    from transcription.wishMapperClass import WishMapper
+    try:
+        await asyncio.sleep(waitingTime)
+        logger.info(f"started mapItemToWishDaemon function after waiting time: {waitingTime}")
+        async with pool.acquire() as con:
+            rows_items = await con.fetch(
+                "SELECT DISTINCT item_name FROM item_list WHERE iswished IS NULL and mapped_wish = ''"
+            )
+            
+            rows_wished = await con.fetch(
+                "SELECT DISTINCT item_name FROM item_list where iswished = 'true' "
+            )
+
+            item_names = [row["item_name"] for row in rows_items]
+            wished_items = [row["item_name"] for row in rows_wished]
+
+        if not item_names:
+            logger.info("mapItemToWishDaemon: nothing to map")
+            return {"done": True, "updated": 0}
+
+        mapper = WishMapper()
+        try:
+            mapper.startServer()
+            updated_count = 0
+            async with pool.acquire() as con:
+                for item_name in item_names:
+                    mapped: str = mapper.mapWishItem(item_name, wished_items)
+                    await con.execute(
+                        "UPDATE item_list SET mapped_wish = $1 WHERE item_name = $2",
+                        mapped,
+                        item_name,
+                    )
+                    updated_count += 1
+        finally:
+            mapper.stopServer()
+                
+        logger.info(
+            f"Updated {updated_count} item names out of {len(wished_items)} wish items, with length(item_names) = {len(item_names)}"
+        )
+        return {
+            "done": True,
+            "updated": updated_count,
+        }
+
+    except Exception as e:
+        logger.error(f"Daemon for item wish mapping failed: {e}")
+        logger.error(traceback.format_exc())
+        return {"done": False, "error": str(e)}
+    
+    
+async def shortenItemNamesDaemon(pool: asyncpg.Pool, useBatch: bool = True, waitingTime: float = 30.0):
     try:
         await rescanCategoriesProcess(pool=pool)  # fill up categories if possible first
         async with pool.acquire() as con:
@@ -1473,6 +1572,7 @@ async def shortenItemNamesDaemon(pool: asyncpg.Pool, useBatch: bool = True):
             logger.info(
                 f"Updated {updated_count} item names out of {len(original_names)} empty entries"
             )
+            await asyncio.sleep(waitingTime)
 
             return {
                 "done": True,
@@ -1486,10 +1586,12 @@ async def shortenItemNamesDaemon(pool: asyncpg.Pool, useBatch: bool = True):
         return {"done": False, "error": str(e)}
 
 
-async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 60.0):
+async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 30.0):
     updatedCount = 0
     while True:
         try:
+            await asyncio.sleep(waitingTime)
+            logger.info(f"the assignTagsTask daemon got started after waiting time: {waitingTime}")
             async with pool.acquire() as con:
                 rows = await con.fetch(
                     "select ean, item_name, class, categories from item_list where tags = '' "
@@ -1507,7 +1609,6 @@ async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 60.0):
                         )
 
                 if not itemsToProcess:
-                    await asyncio.sleep(waitingTime)
                     continue
 
                 logger.info(
@@ -1553,16 +1654,16 @@ async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 60.0):
             return {"done": False, "error": str(e)}
 
 
-async def assignShorthandNameToTags(pool: asyncpg.Pool, waitingTime: float = 10.0):
+async def assignShorthandNameToTags(pool: asyncpg.Pool, waitingTime: float = 40.0):
     updatedCount = 0
     logger.info("started assignShorthandNameToTags")
 
     try:
         while True:
+            await asyncio.sleep(waitingTime)
+            logger.info(f"started assignShorthandNameToTags funtion after wating time: {waitingTime}")
             try:
                 async with pool.acquire() as con:
-                    logger.info("acquired pool in assignShorthandNameToTags")
-
                     # Optimized query - avoid TRIM in WHERE clause
                     rows = await con.fetch("""
                         SELECT DISTINCT il.tags as original_tags
@@ -1606,8 +1707,6 @@ async def assignShorthandNameToTags(pool: asyncpg.Pool, waitingTime: float = 10.
                             logger.info(
                                 f"Assigned {updatedCount} short names for tags total"
                             )
-
-                await asyncio.sleep(waitingTime)
 
             except asyncio.CancelledError:
                 logger.info("assignShorthandNameToTags received cancellation signal")
@@ -1759,7 +1858,7 @@ async def resetTagsAsignment(pool: asyncpg.Pool):
     try:
         await pool.fetch("update item_list set tags = '' where not tags = '' ")
         
-    except Exception as e:
+    except Exception as _:
         logger.error("the resetTagsAsignment failed")
         
         

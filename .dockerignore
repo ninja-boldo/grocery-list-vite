@@ -13,3 +13,5 @@ README.md
 
 *.log
 .cache
+llama.cpp/
+*.gguf

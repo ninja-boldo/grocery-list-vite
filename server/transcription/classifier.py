@@ -1,8 +1,7 @@
 from typing import List, Union, Dict, Literal, Any
-from peft import PeftModel
+from transcription.groceryClassifierClass import GroceryClassifier
+from transcription.wishMapperClass import WishMapper
 from pydantic import BaseModel, Field, ValidationError
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 import os
@@ -13,7 +12,10 @@ import ast
 CONFIDENCE_THRESHOLD = 0.5
 
 # Model configuration
-GROQ_MODEL = "openai/gpt-oss-20b"  
+GROQ_MODEL = "openai/gpt-oss-20b"
+
+# Global instance for wish mapping (lazy-loaded)
+_wish_mapper_instance = None  
 
 
 def _get_llm():
@@ -21,10 +23,11 @@ def _get_llm():
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         raise ValueError("GROQ_API_KEY environment variable is not set")
+    from langchain_core.utils.utils import convert_to_secret_str
     return ChatGroq(
         model=GROQ_MODEL,
         temperature=0.1,  # Low temperature for consistent classification
-        api_key=api_key,
+        api_key=convert_to_secret_str(api_key),
     )
 
 
@@ -225,7 +228,8 @@ def _classify_category(input_text: str, classes_list: List[str]) -> Dict[str, An
         result = chain.invoke({"input": input_text, "classes": classes_str})
 
         # Extract the text content from the response
-        text_content = result.content if hasattr(result, "content") else str(result)
+        raw_content = result.content if hasattr(result, "content") else str(result)
+        text_content = raw_content if isinstance(raw_content, str) else str(raw_content)
         out = extract_batch_json(text_content)
     except Exception as e:
         print(f"Error during category classification: {e}")
@@ -268,7 +272,8 @@ def _classify_action(input_text: str) -> Dict[str, Any]:
         result = chain.invoke({"input": input_text})
 
         # Extract the text content from the response
-        text_content = result.content if hasattr(result, "content") else str(result)
+        raw_content = result.content if hasattr(result, "content") else str(result)
+        text_content = raw_content if isinstance(raw_content, str) else str(raw_content)
         out = extract_batch_json(text_content)
     except Exception as e:
         print(f"Error during action classification: {e}")
@@ -280,14 +285,16 @@ def _classify_action(input_text: str) -> Dict[str, Any]:
     except (TypeError, ValueError):
         conf = 0.0
 
-    if action not in ["add", "remove"]:
+    from typing import get_args
+    valid_actions = get_args(ActionClassification.model_fields["action"].annotation)
+    if action not in valid_actions:
         action = "unknown"
         conf = min(conf, 0.2)
 
     conf = max(0.0, min(1.0, conf))
 
     try:
-        validated = ActionClassification(action=action, confidence=conf)
+        validated = ActionClassification(action=action, confidence=conf)  # type: ignore[arg-type]
     except ValidationError:
         validated = ActionClassification(action="unknown", confidence=0.0)
 
@@ -400,57 +407,8 @@ def _validate_tag(tag: str, allowed_tags: List[str]) -> str:
     allowed_lower = {t.lower(): t for t in allowed_tags}
     return allowed_lower.get(tag, "unknown" if "unknown" in allowed_lower else "none")
 
-
-class GroceryClassifier:
-    def __init__(self):
-        base_model = "NousResearch/Llama-3.2-1B"
-        adapter_path = "./outputs/lora-out"
-        
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.bfloat16,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-        )
-        
-        tokenizer = AutoTokenizer.from_pretrained(adapter_path)
-        model = AutoModelForCausalLM.from_pretrained(
-            base_model,
-            quantization_config=bnb_config,
-            device_map="auto",
-        )
-        model.resize_token_embeddings(len(tokenizer))
-        self.model = PeftModel.from_pretrained(model, adapter_path).eval()
-        self.tagging_classes = [
-            "meat_fish",
-            "fruit_veg",
-            "bread_bakery",
-            "grains_pasta",
-            "pantry_staples",
-            "spices_seasoning",
-            "snacks",
-            "drinks",
-            "frozen",
-            "household",
-            "canned_jars",
-            "dairy_eggs",
-        ]
-        self.INSTRUCTION = (
-            f"extract this into one of these categories{tuple(self.tagging_classes)}"
-        )
-        self.tokenizer = tokenizer
-
-    def classify(self, item: str) -> str:
-        prompt = f"### Instruction:\n{self.INSTRUCTION}\n\n### Input:\n{item}\n\n### Response:\n"
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
-        with torch.no_grad():
-            outputs = self.model.generate(**inputs, max_new_tokens=20, do_sample=False)
-        result = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-        return result.split("### Response:")[-1].strip()
-
-
 async def tagAssignmentBatch(
-    items: list[dict[str, str]],
+    items: list[dict],
 ) -> Dict[str, Dict[str, str]]:
     """
     Assign semantic tags to multiple grocery items in batch.
@@ -466,40 +424,33 @@ async def tagAssignmentBatch(
         Dict mapping item_name to { "base": str, "flavor": str, "form": str }
     """
 
-    item_names, shortened_names, categories = [], [], []
-
     print(f"started tag assignment with this input: {items}")
-    for item in items:
-        item_names.append(item["item_name"])
-        shortened_names.append(item["shortened_name"])
-        categories.append(item["categories"])
 
-    if not (len(item_names) == len(shortened_names) == len(categories)):
-        raise ValueError(
-            f"Input lists must have same length. Got: "
-            f"item_names={len(item_names)}, "
-            f"shortened_names={len(shortened_names)}, "
-            f"categories={len(categories)}"
-        )
 
     # Parse category strings into clean lists
-    parsed_categories = []
-    for cat_str in categories:
-        parsed = parse_category_list(cat_str)
+    for idx, item in enumerate(items):
+        parsed = parse_category_list(item["categories"])
         # Join back to comma-separated for the prompt
-        parsed_categories.append(", ".join(parsed) if parsed else "")
+        items[idx]["categories"] = (", ".join(parsed) if parsed else "")
 
     classifier = GroceryClassifier()
+    classifier.startServer()
     all_results = {}
-    for item in item_names:
-        all_results[item] = {
-            "base": classifier.classify(item),
-            "flavor": "none",
-            "form": "none",
-        }
+    try:
+        for idx, item in enumerate(items):
+            try:
+                all_results[item["item_name"]] = {
+                    "base": classifier.classify(item["item_name"], item["categories"]),
+                    "flavor": "none",
+                    "form": "none",
+                }
+            except Exception as _:
+                raise Exception(f"failed for this item: {item} with exception: {_}")
+    finally:
+        classifier.stopServer()
 
     print(
-        f"Processed {len(item_names)} and tagged them with {len(classifier.tagging_classes)} "
+        f"Processed {len(items)} and tagged them with one of {len(classifier.tagging_classes)} classes"
     )
 
     return all_results
@@ -540,6 +491,27 @@ def tagToNameBatch(tagsList: list[str], languageCode: str = "de"):
     print(f"got these input tags: {tagsList} and produced this output: {resp}")
 
     return resp
+
+
+def mapWishItem(item_name: str, wished_items: list[str], min_conf: float=0.8) -> str:
+    '''
+    Map a grocery item to the most similar wished item using the fine-tuned model.
+    
+    Args:
+        item_name: The grocery item name to map
+        wished_items: List of wished item names to map to
+        min_conf: Minimum confidence threshold (currently unused, kept for API compatibility)
+    
+    Returns:
+        The mapped wish item name, or 'none' if no good match exists
+    '''
+    global _wish_mapper_instance
+    
+    # Lazy-load the wish mapper instance
+    if _wish_mapper_instance is None:
+        _wish_mapper_instance = WishMapper()
+    
+    return _wish_mapper_instance.mapWishItem(item_name, wished_items)
 
 
 # Backwards-compatible wrapper for existing code that only expects category

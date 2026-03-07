@@ -55,3 +55,5 @@ server/transcription/uploads
 examples/
 fine_tuning/
 last_run_prepared/
+llama.cpp/
+*.gguf

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import Badge, { BadgeType } from "./Badge";
+import CountPill from "./ContainerComp/CountPill";
 
 interface Props {
   text: string | null;
@@ -12,6 +13,7 @@ interface Props {
   imageUrl: string;
   tags: string[] | null;
   ean: string;
+  isWishedNumber: number | null;
   onClickIncrease: (clickedNode: Props) => Promise<void>;
   onClickDecrease: (clickedNode: Props) => Promise<void>;
 }
@@ -26,12 +28,14 @@ const Container = ({
   imageUrl,
   tags,
   ean,
+  isWishedNumber,
   onClickIncrease,
   onClickDecrease,
 }: Props) => {
   if (!tags) {
     tags = [];
   }
+
   const [open, setOpen] = useState(false);
   const [isIncreasing, setIsIncreasing] = useState(false);
   const [isDecreasing, setIsDecreasing] = useState(false);
@@ -84,6 +88,7 @@ const Container = ({
         onClickDecrease,
         ean,
         tags,
+        isWishedNumber,
       });
     } finally {
       setTimeout(() => setIsIncreasing(false), 300);
@@ -104,7 +109,8 @@ const Container = ({
         onClickIncrease,
         onClickDecrease,
         ean,
-        tags
+        tags,
+        isWishedNumber,
       });
     } finally {
       setTimeout(() => setIsDecreasing(false), 300);
@@ -210,40 +216,9 @@ const Container = ({
           </p>
 
           {/* Count pill */}
-          <span
-            style={{
-              flexShrink: 0,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: 600,
-              padding: "0 10px",
-              height: 24,
-              minWidth: 36,
-              fontVariantNumeric: "tabular-nums",
-              transition: "all 0.18s",
-              backgroundColor: isIncreasing
-                ? "#0d4a3f"
-                : isDecreasing
-                  ? "#4a1020"
-                  : TEAL_D,
-              color: isIncreasing
-                ? "#2dd4bf"
-                : isDecreasing
-                  ? "#f87171"
-                  : "#5eead4",
-              border: `1px solid ${isIncreasing ? TEAL : isDecreasing ? "#ef444450" : TEAL_B}`,
-              transform: isIncreasing
-                ? "scale(1.08)"
-                : isDecreasing
-                  ? "scale(0.94)"
-                  : "scale(1)",
-            }}
-          >
-            {count}×
-          </span>
+          <CountPill instockNumber={count} wishedNumber={isWishedNumber} isIncreasing={isIncreasing}
+            isDecreasing={isDecreasing} TEAL={TEAL} TEAL_B={TEAL_B} TEAL_D={TEAL_D} 
+           />
 
           {/* Buttons */}
           <div

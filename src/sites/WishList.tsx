@@ -185,13 +185,14 @@ function WishList() {
           ean={item.ean}
           text={item.text}
           subgroups={item.subgroups}
-          count={item.count}
+          count={3}
           classname={item.classname}
           perish_dates={['none']}
           imageUrl={item.imageUrl}
           onClickIncrease={increaseItemCount}
           onClickDecrease={decreaseItemCount}
           tags={null}
+          isWishedNumber={item.count}
           style=""
         />
       )),
