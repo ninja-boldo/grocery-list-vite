@@ -44,7 +44,7 @@ class Config:
     def get_csv_path(cls) -> str:
         if os.getenv("RUNNING_IN_CONTAINER"):
             return "/app/openfoodfacts.csv"
-        return "/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/openfoodfacts.csv"
+        return os.getenv("OPENFOODFACTS_CSV_PATH", "./openfoodfacts.csv")
 
 
 class DatabaseManager:

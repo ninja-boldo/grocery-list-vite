@@ -50,9 +50,6 @@ import atexit
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv(".env")
-key = os.getenv("GROQ_API_KEY")
-if not key:
-    raise Exception("GROQ_API_KEY not set or empty")
 
 
 # ============================================================================
@@ -96,7 +93,7 @@ class Config:
     def get_csv_path(cls) -> str:
         if os.getenv("RUNNING_IN_CONTAINER"):
             return "/app/openfoodfacts.csv"
-        return "/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/openfoodfacts.csv"
+        return os.getenv("OPENFOODFACTS_CSV_PATH", "./openfoodfacts.csv")
 
 
 # Validate conflicting settings
@@ -104,6 +101,12 @@ if Config.ENABLE_WHISPER_MODEL_CLOUD and Config.ENABLE_WHISPER_MODEL_LOCAL:
     raise ValueError(
         "Cannot enable both WHISPER_MODEL_LOCAL and WHISPER_MODEL_CLOUD simultaneously"
     )
+
+# Validate API key when cloud transcription is enabled
+if Config.ENABLE_WHISPER_MODEL_CLOUD:
+    key = os.getenv("GROQ_API_KEY")
+    if not key:
+        raise Exception("GROQ_API_KEY not set or empty")
 
 # Conditional imports
 if Config.ENABLE_WHISPER_MODEL_LOCAL or Config.ENABLE_WHISPER_MODEL_CLOUD:
