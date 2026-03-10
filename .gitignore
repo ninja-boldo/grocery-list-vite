@@ -57,3 +57,6 @@ fine_tuning/
 last_run_prepared/
 llama.cpp/
 *.gguf
+other/
+saves/
+llamaboard_cache/

@@ -10,8 +10,9 @@ from enum import Enum
 import requests
 from dotenv import load_dotenv
 from utils.lookup import WORD_STRIP, PHRASE_STRIP
+
 os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
- 
+
 import datetime
 import json
 from typing import Optional, Union, Any
@@ -61,7 +62,7 @@ class Config:
     # Feature toggles
     ENABLE_WHISPER_MODEL_LOCAL = False
     ENABLE_WHISPER_MODEL_CLOUD = True
-    ENABLE_LOKI_LOGGING = True
+    ENABLE_LOKI_LOGGING = False
     ENABLE_PROMETHEUS = True
     ENABLE_FILE_LOGGING = True
 
@@ -231,17 +232,22 @@ DATABASE_SCHEMA = {
             ("class", "TEXT DEFAULT ''"),
             ("count", "INTEGER DEFAULT 1"),
             ("timestamps", "JSONB DEFAULT '[]'::jsonb"),
+            ("last_added", "TIMESTAMP DEFAULT NOW()"),
+            ("checked_last", "TIMESTAMP DEFAULT NOW()"),
             ("iswished", "TEXT DEFAULT 'false'"),
             ("image_url", "TEXT DEFAULT '' "),
             ("categories", "TEXT DEFAULT '' "),
             ("tags", "TEXT DEFAULT '' "),
             ("mapped_wish", "TEXT DEFAULT '' "),
+            
         ],
         "indexes": [
             ("idx_item_list_ean", "ean"),
             ("idx_item_list_item_name", "item_name"),
             ("idx_item_list_iswished", "iswished"),
             ("idx_item_list_tags", "tags"),
+            ("idx_item_list_last_added_desc", "last_added DESC"),
+            ("idx_item_list_last_added_asc", "last_added ASC"),
         ],
         "constraints": "CONSTRAINT item_list_ean_name_unique UNIQUE (ean, item_name)",
     },
@@ -266,8 +272,6 @@ async def ensure_schema_compliance(pool: asyncpg.Pool) -> None:
     This is idempotent and safe to run multiple times.
     """
 
-
-
     async with pool.acquire() as con:
         for table_name, schema in DATABASE_SCHEMA.items():
             logger.info(f"Ensuring schema compliance for table: {table_name}")
@@ -289,9 +293,13 @@ async def ensure_schema_compliance(pool: asyncpg.Pool) -> None:
                 columns_def = ", ".join(
                     [f"{col} {col_type}" for col, col_type in schema["columns"]]
                 )
-                 
-                constraint_clause = f", {schema['constraints']}" if schema['constraints'] else ""
-                create_sql = f"CREATE TABLE {table_name} ({columns_def}{constraint_clause})"
+
+                constraint_clause = (
+                    f", {schema['constraints']}" if schema["constraints"] else ""
+                )
+                create_sql = (
+                    f"CREATE TABLE {table_name} ({columns_def}{constraint_clause})"
+                )
                 print(f"creating table with sql query: {create_sql}")
                 await con.execute(create_sql)
                 logger.info(f"✓ Created table: {table_name}")
@@ -486,79 +494,124 @@ def validate_wish_list(value: Optional[str]) -> str:
     return normalized if normalized in ("true", "false") else "false"
 
 
-def convertSortToSql(sortMode: str | None = None):
-    if not sortMode:
-        sortMode = "new-old"
+_SORT_MODE_TO_SQL: dict[str, str] = {
+    "a-z":     "ORDER BY item_name ASC",
+    "z-a":     "ORDER BY item_name DESC",
+    "new-old": "ORDER BY last_added DESC NULLS LAST",
+    "old-new": "ORDER BY last_added ASC NULLS LAST",
+}
+_DEFAULT_SORT = "new-old"
 
-    if sortMode not in ["a-z", "z-a", "new-old", "old-new"]:
-        logger.warning(
-            f"the sort mode {sortMode} isnt supported. going back to a-z mode"
+def convertSortToSql(sortMode: str | None = None) -> str:
+    key = (sortMode or _DEFAULT_SORT).lower().strip()
+    if key not in _SORT_MODE_TO_SQL:
+        logger.warning(f"Unrecognised sort mode '{sortMode}', falling back to '{_DEFAULT_SORT}'")
+        key = _DEFAULT_SORT
+    return _SORT_MODE_TO_SQL[key]
+
+
+@lru_cache(maxsize=64)
+def _build_fetch_query_template(
+    has_subgroups: bool,
+    has_classnames: bool,
+    only_wish_list: Optional[str],
+    onlyNotNull: str,
+    sortOrder: Optional[str],
+    has_limit: bool,
+    has_skip: bool,
+    include_tags: bool,
+    has_search: bool,
+) -> str:
+    """
+    Cached query template builder. Keyed only on the *shape* of the query
+    (which filters are active, sort order) — not on the actual values.
+    Returns a query string with $1..$N placeholders but no bound values.
+    """
+    conditions = []
+    param_idx = 0
+    fields = ["ean", "item_name", "subgroups", "class", "count", "timestamps", "image_url"]
+
+    if has_subgroups:
+        param_idx += 1
+        conditions.append(f"subgroups = ${param_idx}")
+
+    if has_classnames:
+        param_idx += 1
+        conditions.append(f"class = ${param_idx}")
+
+    if only_wish_list == "true":
+        param_idx += 1
+        conditions.append(f"iswished = ${param_idx}")
+    elif only_wish_list == "false":
+        conditions.append("(iswished IS NULL OR iswished != 'true')")
+
+    if onlyNotNull != "false":
+        conditions.append("item_name IS NOT NULL AND item_name != 'null' AND item_name != ''")
+
+    if has_search:
+        param_idx += 1
+        conditions.append(
+            f"(item_name ILIKE ${param_idx} OR ean ILIKE ${param_idx} OR class ILIKE ${param_idx})"
         )
-        sortMode = "a-z"
 
-    if sortMode == "a-z":
-        return "order by item_name asc "
+    if include_tags:
+        fields.append("tags")
 
-    elif sortMode == "z-a":
-        return "order by item_name desc "
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-    elif sortMode == "new-old":
-        return "ORDER BY (SELECT MAX(t)FROM jsonb_array_elements_text(timestamps) AS t) desc "
+    limit_clause = f"LIMIT ${param_idx + 1}" if has_limit else "LIMIT 1000"
+    if has_limit:
+        param_idx += 1
 
-    elif sortMode == "old-new":
-        return "ORDER BY (SELECT MAX(t)FROM jsonb_array_elements_text(timestamps) AS t) asc "
+    offset_clause = f"OFFSET ${param_idx + 1}" if has_skip else ""
+
+    return (
+        f"SELECT {', '.join(fields)} FROM item_list "
+        f"{where_clause} {convertSortToSql(sortOrder)} {limit_clause} {offset_clause}"
+    ).strip()
 
 
-@lru_cache(maxsize=Config.LRU_CACHE_SIZE)
 def build_fetch_query(
     subgroups: Optional[str] = None,
     classnames: Optional[str] = None,
     only_wish_list: Optional[str] = None,
-    onlyNotNull: Optional[str] = "true",
+    onlyNotNull: str = "true",
     sortOrder: Optional[str] = None,
-    skip: Optional[int] = Query(None),
-    limit: Optional[int] = Query(None),
-    include_tags: Optional[bool] = Query(None),
+    skip: Optional[int] = None,
+    limit: Optional[int] = None,
+    include_tags: bool = False,
+    searchQuery: Optional[str] = None,
 ) -> tuple[str, list]:
-    """Build optimized SQL query for fetching items with filters"""
-    conditions = []
     params = []
-    fields_to_include = ["ean", "item_name", "subgroups", "class", "count", "timestamps", "image_url"]
-
-    # Add filters
     if subgroups:
         params.append(subgroups)
-        conditions.append(f"subgroups = ${len(params)}")
-
     if classnames:
         params.append(classnames)
-        conditions.append(f"class = ${len(params)}")
-
     if only_wish_list == "true":
         params.append("true")
-        conditions.append(f"iswished = ${len(params)}")
-    elif only_wish_list == "false":
-        conditions.append("COALESCE(lower(iswished::text), '') <> 'true'")
+    if searchQuery and searchQuery.strip():
+        params.append(f"%{searchQuery.strip()}%")
 
-    # Filter out null items
-    if onlyNotNull != "false":
-        conditions.append(
-            "item_name IS NOT NULL AND item_name != 'null' AND item_name != ''"
-        )
-    
-    if include_tags:
-        fields_to_include.append("tags")
+    has_limit = limit is not None and limit > 0
+    has_skip = skip is not None and skip > 0
+    if has_limit:
+        params.append(limit)
+    if has_skip:
+        params.append(skip)
 
-    where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-    limit_clause = f"limit {limit}" if limit else "LIMIT 1000"
-    offset_clause = f"offset {skip}" if skip else ""
-    field_clause = ", ".join(fields_to_include)
-    
-    return (
-        f"""SELECT {field_clause}
-        FROM item_list{where_clause} {convertSortToSql(sortMode=sortOrder)} {limit_clause} {offset_clause}""",
-        params,
+    query = _build_fetch_query_template(
+        has_subgroups=bool(subgroups),
+        has_classnames=bool(classnames),
+        only_wish_list=only_wish_list,
+        onlyNotNull=onlyNotNull,
+        sortOrder=sortOrder,
+        has_limit=has_limit,
+        has_skip=has_skip,
+        include_tags=bool(include_tags),
+        has_search=bool(searchQuery and searchQuery.strip()),
     )
+    return query, params
+
 
 
 async def resolve_item_identity(
@@ -571,7 +624,7 @@ async def resolve_item_identity(
         try:
             res = requests.get(
                 f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=product_name",
-                timeout=5.0
+                timeout=5.0,
             )
             data = res.json()
             if data.get("status") == 1:  # 1 = found, 0 = not found
@@ -598,8 +651,10 @@ async def resolve_item_identity(
 
     raise HTTPException(status_code=400, detail="Must provide ean or item_name")
 
-def getImageUrl(ean: str):
+
+def getImageUrl(ean: str, delay: float=0.5):
     try:
+        time.sleep(delay)
         res = requests.get(
             f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=selected_images"
         )
@@ -618,12 +673,16 @@ def getImageUrl(ean: str):
         logger.warning(
             f"failed to do the image fetching for this ean: {ean}. error: {e} "
         )
-        
-async def getImageUrlAsync(client: httpx.AsyncClient, ean: str) -> str:
+
+
+async def getImageUrlAsync(
+    client: httpx.AsyncClient, ean: str, delay: float = 0.5
+) -> str:
     try:
+        await asyncio.sleep(delay)
         res = await client.get(
             f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=selected_images",
-            timeout=5.0
+            timeout=5.0,
         )
         data = res.json()
         images = data["product"]["selected_images"]["front"]["display"]
@@ -719,7 +778,26 @@ def purge_folder(folder_path: str) -> None:
             except Exception as e:
                 logger.warning(f"Failed to delete {p}: {e}")
 
-
+async def backfill_last_added(pool: asyncpg.Pool) -> None:
+    """
+    One-time startup backfill: derive last_added from the timestamps JSONB array
+    for any row where last_added is still NULL or equal to the column default.
+    Safe to run on every startup — only touches rows that need it.
+    """
+    async with pool.acquire() as con:
+        updated = await con.execute("""
+            UPDATE item_list
+            SET last_added = (
+                SELECT MAX(t::timestamp)
+                FROM jsonb_array_elements_text(timestamps) AS t
+            )
+            WHERE last_added IS NULL
+              AND timestamps IS NOT NULL
+              AND jsonb_array_length(timestamps) > 0
+        """)
+        logger.info(f"✓ backfill_last_added: {updated}")
+        
+        
 # ============================================================================
 # PYDANTIC MODELS (Data Transfer Objects)
 # ============================================================================
@@ -734,6 +812,8 @@ class GroceryItem(BaseModel):
     perish_dates: list[str] = []
     is_wish_list: bool = False
     imageUrl: str
+
+
 class ItemUpdateRequest(BaseModel):
     """Request model for item updates"""
 
@@ -742,6 +822,8 @@ class ItemUpdateRequest(BaseModel):
     subgroups: Optional[str] = None
     count: Optional[int] = 1
     is_wish_list: Optional[bool] = False
+
+
 class AddEanRequest(BaseModel):
     """Request model for add_ean_to_list endpoint (legacy)"""
 
@@ -751,6 +833,7 @@ class AddEanRequest(BaseModel):
     count: Optional[int] = 1
     wish_list: Optional[str] = None
 
+
 class FetchedSingleItem(BaseModel):
     ean: int
     text: str
@@ -759,9 +842,12 @@ class FetchedSingleItem(BaseModel):
     count: int
     perish_dates: list[str]
     imageUrl: str
-    
+
+
 class AddFetchedItems(BaseModel):
     items: list[FetchedSingleItem]
+
+
 class ItemUpdateResponse(BaseModel):
     """Response model for item updates"""
 
@@ -770,25 +856,35 @@ class ItemUpdateResponse(BaseModel):
     subgroups: str = ""
     operation: str  # 'created', 'updated', 'deleted', 'created_new'
     execution_time: Optional[float] = None
+
+
 class ItemListResponse(BaseModel):
     """Response model for item list"""
 
     items: list[GroceryItem]
     total: int
+
+
 class MetadataResponse(BaseModel):
     """Response model for metadata"""
 
     subgroups: list[str]
     classnames: list[str]
+
+
 class BatchUpdateItem(BaseModel):
     """Single item in batch update"""
 
     item_name: str
     count_delta: int
+
+
 class BatchUpdateRequest(BaseModel):
     """Request model for batch updates"""
 
     items: list[BatchUpdateItem]
+
+
 class BatchUpdateResponse(BaseModel):
     """Response model for batch updates"""
 
@@ -825,25 +921,26 @@ async def lifespan(app: FastAPI):
                     await asyncio.sleep(Config.DB_RETRY_DELAY * (attempt + 1))
                 else:
                     raise
-
+        
+        
         # Initialize database manager
         app.state.db = DatabaseManager(app.state.pool, logger)
-        
+
         async with httpx.AsyncClient(
-        headers={"User-Agent": "grocery-list-app/1.0"},
-        timeout=httpx.Timeout(5.0)
+            headers={"User-Agent": "grocery-list-app/1.0"}, timeout=httpx.Timeout(5.0)
         ) as client:
             app.state.http_client = client
 
         # Initialize database schema
         await init_database(app.state.pool)
-
+        
+        await backfill_last_added(app.state.pool)
+        
         # Initialize Whisper model (conditional)
         app.state.whisper = None
-        
+
         if Config.ENABLE_WHISPER_MODEL_CLOUD:
             logger.info("Whisper cloud mode enabled")
-        
 
         # Start background daemon tasks (run once at startup)
         daemon_tasks.append(asyncio.create_task(shortenItemNamesDaemon(app.state.pool)))
@@ -852,14 +949,20 @@ async def lifespan(app: FastAPI):
         # schedule tag assignment for item grouping
         daemon_tasks.append(asyncio.create_task(assignTagsTask(app.state.pool)))
         logger.info("✓ Started tag assignment daemon")
-        
+
         daemon_tasks.append(asyncio.create_task(mapItemToWishDaemon(app.state.pool)))
         logger.info("✓ Started item to wish mapping daemon")
 
         daemon_tasks.append(
             asyncio.create_task(assignShorthandNameToTags(app.state.pool))
         )
-        logger.info("✓ Started shorthand name assignment")      
+        logger.info("✓ Started shorthand name assignment")
+        
+        daemon_tasks.append(
+            asyncio.create_task(rescanImageUrlsDaemon(app.state.pool))
+        )
+        logger.info("✓ Started image url rescanning daemon")
+        
 
         yield
 
@@ -1108,8 +1211,6 @@ async def fetch_grouped(
         logger.error(f"the fetch_grouped api call failed with this error: {e}")
 
 
-
-
 @app.get("/fetch_items/wish_mapping")
 async def fetch_wish_mapping(
     request: Request,
@@ -1117,13 +1218,9 @@ async def fetch_wish_mapping(
     skip: Optional[int] = Query(None),
     limit: Optional[int] = Query(None),
 ):
-    """
-
-    """
+    """ """
     sortOrder = sortOrder.lower() if sortOrder else sortOrder
-    logger.info(
-        f"""fetch_items: sortOrder={sortOrder}, skip={skip}, limit={limit}"""
-    )
+    logger.info(f"""fetch_items: sortOrder={sortOrder}, skip={skip}, limit={limit}""")
 
     try:
         if skip and skip < 0:
@@ -1133,8 +1230,9 @@ async def fetch_wish_mapping(
             limit = 0
 
         pool = request.app.state.pool
+        rows = []
         async with pool.acquire() as con:
-            pass
+            rows = []
 
         item_list = [
             {
@@ -1144,8 +1242,9 @@ async def fetch_wish_mapping(
                 "classname": row["class"] or "",
                 "count": row["count"],
                 "perish_dates": convert_timestamps_to_dates(row["timestamps"]),
-                "imageUrl": row["image_url"] or "/none_available.webp",
-                "tags": row["tags"]
+                "imageUrl": row["image_url"]
+                or "http://boldo.ddns.net/none_available.webp",
+                "tags": row["tags"],
             }
             for row in rows
         ]
@@ -1159,7 +1258,6 @@ async def fetch_wish_mapping(
         raise HTTPException(status_code=500, detail="Failed to fetch items")
 
 
-
 @app.get("/fetch_items")
 async def fetch_items(
     request: Request,
@@ -1169,6 +1267,7 @@ async def fetch_items(
     sortOrder: Optional[str] = Query(None),
     skip: Optional[int] = Query(None),
     limit: Optional[int] = Query(None),
+    searchQuery: Optional[str] = Query(None),
 ):
     """
     Fetch items with optional filters
@@ -1179,9 +1278,10 @@ async def fetch_items(
     sortOrder = sortOrder.lower() if sortOrder else sortOrder
     logger.info(
         f"""fetch_items: subgroups={subgroups}, classnames={classnames}, only_wish_list={only_wish_list},
-            sortOrder={sortOrder}, skip={skip}, limit={limit}"""
+            sortOrder={sortOrder}, searchQuery={searchQuery}, skip={skip}, limit={limit}"""
     )
 
+    startingTime = datetime.datetime.now()
     try:
         if skip and skip < 0:
             skip = 0
@@ -1197,7 +1297,11 @@ async def fetch_items(
             skip=skip,
             limit=limit,
             include_tags=True,
+            searchQuery=searchQuery
         )
+        
+        logger.info(f"time it took to get the query + params: {datetime.datetime.now() - startingTime}")
+        
         rows = await request.app.state.db.fetch_with_retry(query, *params)
 
         item_list = [
@@ -1208,12 +1312,14 @@ async def fetch_items(
                 "classname": row["class"] or "",
                 "count": row["count"],
                 "perish_dates": convert_timestamps_to_dates(row["timestamps"]),
-                "imageUrl": row["image_url"] or "/none_available.webp",
-                "tags": row["tags"]
+                "imageUrl": row["image_url"]
+                or "http://boldo.ddns.net/none_available.webp",
+                "tags": row["tags"],
             }
             for row in rows
         ]
         logger.info(f"fetch_items returned {len(item_list)} items")
+        logger.info(f"time it took to get to the return: {datetime.datetime.now() - startingTime}")
 
         return {"items": item_list, "count": len(item_list)}
 
@@ -1249,35 +1355,40 @@ def normalizeSeparators(s: str) -> str:
 async def get_supermarkets_close(
     lat: Optional[float] = Query(None),
     lon: Optional[float] = Query(None),
-    radius_meters: int = Query(2000, ge=100, le=50000), 
-    chains: Optional[list[str]] = Query(None)  
+    radius_meters: int = Query(2000, ge=100, le=50000),
+    chains: Optional[list[str]] = Query(None),
 ) -> dict:
     """
     Get supermarkets near given coordinates using Overpass API.
     """
-    
+
     # Validate required parameters
     if lat is None:
         raise HTTPException(status_code=400, detail="Missing required parameter: lat")
     if lon is None:
         raise HTTPException(status_code=400, detail="Missing required parameter: lon")
-    
+
     # Validate coordinate ranges
     if not -90 <= lat <= 90:
-        raise HTTPException(status_code=400, detail="Latitude must be between -90 and 90")
+        raise HTTPException(
+            status_code=400, detail="Latitude must be between -90 and 90"
+        )
     if not -180 <= lon <= 180:
-        raise HTTPException(status_code=400, detail="Longitude must be between -180 and 180")
-    
+        raise HTTPException(
+            status_code=400, detail="Longitude must be between -180 and 180"
+        )
+
     print(f"Searching: lat={lat}, lon={lon}, radius={radius_meters}m, chains={chains}")
-    
-    overpass_url = "https://overpass-api.de/api/interpreter"
-    
+
+    # overpass_url = "https://overpass-api.de/api/interpreter"
+    overpass_url = "https://overpass.private.coffee/api/interpreter"
+
     # Build chain filter if provided
     chain_filter = ""
     if chains:
         chain_pattern = "|".join(chains)
         chain_filter = f'["name"~"^({chain_pattern})$",i]'
-    
+
     # Overpass QL query
     overpass_query = f"""
     [out:json][timeout:25];
@@ -1287,71 +1398,65 @@ async def get_supermarkets_close(
     );
     out center tags;
     """
-    
+
     try:
         response = requests.get(
-            overpass_url, 
-            params={'data': overpass_query}, 
+            overpass_url,
+            params={"data": overpass_query},
             timeout=30,
-            headers={'User-Agent': 'SupermarketFinder/1.0'}
+            headers={"User-Agent": "SupermarketFinder/1.0"},
         )
         response.raise_for_status()
         data = response.json()
-        
+
         results = []
-        for element in data.get('elements', []):
+        for element in data.get("elements", []):
             # Get coordinates
-            if element['type'] == 'node':
-                element_lat = element['lat']
-                element_lon = element['lon']
+            if element["type"] == "node":
+                element_lat = element["lat"]
+                element_lon = element["lon"]
             else:  # way
-                element_lat = element.get('center', {}).get('lat')
-                element_lon = element.get('center', {}).get('lon')
-            
+                element_lat = element.get("center", {}).get("lat")
+                element_lon = element.get("center", {}).get("lon")
+
             # Extract useful info
-            tags = element.get('tags', {})
-            results.append({
-                'name': tags.get('name', 'Unknown'),
-                'lat': element_lat,
-                'lon': element_lon,
-                'street': tags.get('addr:street'),
-                'housenumber': tags.get('addr:housenumber'),
-                'postcode': tags.get('addr:postcode'),
-                'city': tags.get('addr:city'),
-                'opening_hours': tags.get('opening_hours'),
-                'phone': tags.get('phone'),
-                'website': tags.get('website'),
-                'brand': tags.get('brand'),
-            })
-        
-        return {
-            "results": results,
-            "count": len(results)
-        }
-        
+            tags = element.get("tags", {})
+            results.append(
+                {
+                    "name": tags.get("name", "Unknown"),
+                    "lat": element_lat,
+                    "lon": element_lon,
+                    "street": tags.get("addr:street"),
+                    "housenumber": tags.get("addr:housenumber"),
+                    "postcode": tags.get("addr:postcode"),
+                    "city": tags.get("addr:city"),
+                    "opening_hours": tags.get("opening_hours"),
+                    "phone": tags.get("phone"),
+                    "website": tags.get("website"),
+                    "brand": tags.get("brand"),
+                }
+            )
+
+        return {"results": results, "count": len(results)}
+
     except requests.exceptions.Timeout:
         raise HTTPException(
-            status_code=504,
-            detail="Overpass API request timed out. Please try again."
+            status_code=504, detail="Overpass API request timed out. Please try again."
         )
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 429:
             raise HTTPException(
                 status_code=429,
-                detail="Too many requests to Overpass API. Please wait and try again."
+                detail="Too many requests to Overpass API. Please wait and try again.",
             )
-        raise HTTPException(
-            status_code=502,
-            detail=f"Overpass API error: {str(e)}"
-        )
+        raise HTTPException(status_code=502, detail=f"Overpass API error: {str(e)}")
     except requests.exceptions.RequestException as e:
         print(f"Error fetching data: {e}")
         raise HTTPException(
-            status_code=502,
-            detail="Error communicating with Overpass API"
+            status_code=502, detail="Error communicating with Overpass API"
         )
-    
-    
+
+
 @app.post("/add_fetched_items")
 async def addFetchedItems(request: Request, body: AddFetchedItems):
     try:
@@ -1361,15 +1466,17 @@ async def addFetchedItems(request: Request, body: AddFetchedItems):
             for item in body.items:
                 # Convert DD.MM.YYYY back to ISO for DB consistency if needed
                 # If they are already ISO, json.dumps(item.perish_dates) is fine
-                values.append((
-                    str(item.ean),
-                    item.text,
-                    item.classname or "",
-                    item.subgroups or "",
-                    item.count,
-                    json.dumps(item.perish_dates or []),
-                    item.imageUrl or ""
-                ))
+                values.append(
+                    (
+                        str(item.ean),
+                        item.text,
+                        item.classname or "",
+                        item.subgroups or "",
+                        item.count,
+                        json.dumps(item.perish_dates or []),
+                        item.imageUrl or "",
+                    )
+                )
 
             await con.executemany(
                 """
@@ -1383,8 +1490,8 @@ async def addFetchedItems(request: Request, body: AddFetchedItems):
                     class = EXCLUDED.class,
                     subgroups = EXCLUDED.subgroups,
                     image_url = EXCLUDED.image_url
-                """, 
-                values
+                """,
+                values,
             )
 
         return {"message": f"Synced {len(values)} items", "status": "success"}
@@ -1392,12 +1499,12 @@ async def addFetchedItems(request: Request, body: AddFetchedItems):
     except Exception as e:
         logger.error(f"addFetchedItems failed: {e}")
         return {"done": False, "error": str(e)}
-    
-    
-    
+
+
 @lru_cache(maxsize=1000)
-def getCategories(ean: str):
+def getCategories(ean: str, delay: float = 0.5):
     try:
+        time.sleep(delay)
         res = requests.get(
             f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=categories_tags"
         )
@@ -1479,14 +1586,17 @@ async def shortenNames(request: Request, useBatch: bool = True):
 
 async def mapItemToWishDaemon(pool: asyncpg.Pool, waitingTime: float = 60.0):
     from transcription.wishMapperClass import WishMapper
+
     try:
         await asyncio.sleep(waitingTime)
-        logger.info(f"started mapItemToWishDaemon function after waiting time: {waitingTime}")
+        logger.info(
+            f"started mapItemToWishDaemon function after waiting time: {waitingTime}"
+        )
         async with pool.acquire() as con:
             rows_items = await con.fetch(
                 "SELECT DISTINCT item_name FROM item_list WHERE iswished IS NULL and mapped_wish = ''"
             )
-            
+
             rows_wished = await con.fetch(
                 "SELECT DISTINCT item_name FROM item_list where iswished = 'true' "
             )
@@ -1500,7 +1610,6 @@ async def mapItemToWishDaemon(pool: asyncpg.Pool, waitingTime: float = 60.0):
 
         mapper = WishMapper()
         try:
-            mapper.startServer()
             updated_count = 0
             async with pool.acquire() as con:
                 for item_name in item_names:
@@ -1512,8 +1621,8 @@ async def mapItemToWishDaemon(pool: asyncpg.Pool, waitingTime: float = 60.0):
                     )
                     updated_count += 1
         finally:
-            mapper.stopServer()
-                
+            pass
+
         logger.info(
             f"Updated {updated_count} item names out of {len(wished_items)} wish items, with length(item_names) = {len(item_names)}"
         )
@@ -1526,9 +1635,20 @@ async def mapItemToWishDaemon(pool: asyncpg.Pool, waitingTime: float = 60.0):
         logger.error(f"Daemon for item wish mapping failed: {e}")
         logger.error(traceback.format_exc())
         return {"done": False, "error": str(e)}
-    
-    
-async def shortenItemNamesDaemon(pool: asyncpg.Pool, useBatch: bool = True, waitingTime: float = 30.0):
+
+
+async def rescanImageUrlsDaemon(pool: asyncpg.Pool, waitingTime: float = 35.0):
+    try:
+        while True:
+            await asyncio.sleep(waitingTime)
+            logger.info("rescanning for empty and deprecated image urls")
+            await rescanImageUrls(pool)
+    except Exception as error:
+        logger.error(f"the rescanImageUrlsDaemon daemon failed with this error: {error} ")
+        
+async def shortenItemNamesDaemon(
+    pool: asyncpg.Pool, useBatch: bool = True, waitingTime: float = 30.0
+):
     try:
         await rescanCategoriesProcess(pool=pool)  # fill up categories if possible first
         async with pool.acquire() as con:
@@ -1591,7 +1711,9 @@ async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 30.0):
     while True:
         try:
             await asyncio.sleep(waitingTime)
-            logger.info(f"the assignTagsTask daemon got started after waiting time: {waitingTime}")
+            logger.info(
+                f"the assignTagsTask daemon got started after waiting time: {waitingTime}"
+            )
             async with pool.acquire() as con:
                 rows = await con.fetch(
                     "select ean, item_name, class, categories from item_list where tags = '' "
@@ -1615,9 +1737,9 @@ async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 30.0):
                     f"processing {len(itemsToProcess)} items for tag assignment"
                 )
 
-                tagMapping: dict[str, dict[str, str]] = await classifier.tagAssignmentBatch(
-                    items=itemsToProcess
-                )
+                tagMapping: dict[
+                    str, dict[str, str]
+                ] = await classifier.tagAssignmentBatch(items=itemsToProcess)
 
                 for item in itemsToProcess:
                     try:
@@ -1640,8 +1762,6 @@ async def assignTagsTask(pool: asyncpg.Pool, waitingTime: float = 30.0):
 
                 # logger.info(f"Updated {updatedCount} tag assignments out of {len(itemsToProcess)} empty entries")
 
-            await asyncio.sleep(waitingTime)
-
             """return {
                 "done": True,
                 "updated": updatedCount,
@@ -1661,7 +1781,9 @@ async def assignShorthandNameToTags(pool: asyncpg.Pool, waitingTime: float = 40.
     try:
         while True:
             await asyncio.sleep(waitingTime)
-            logger.info(f"started assignShorthandNameToTags funtion after wating time: {waitingTime}")
+            logger.info(
+                f"started assignShorthandNameToTags funtion after wating time: {waitingTime}"
+            )
             try:
                 async with pool.acquire() as con:
                     # Optimized query - avoid TRIM in WHERE clause
@@ -1857,11 +1979,11 @@ async def taggingToNameBatch(
 async def resetTagsAsignment(pool: asyncpg.Pool):
     try:
         await pool.fetch("update item_list set tags = '' where not tags = '' ")
-        
+
     except Exception as _:
         logger.error("the resetTagsAsignment failed")
-        
-        
+
+
 async def rescanCategoriesProcess(pool: asyncpg.Pool):
     try:
         rows = await pool.fetch("select distinct(ean), categories from item_list")
@@ -1948,45 +2070,66 @@ async def rescanCategories(request: Request):
         logger.error(f"Failed while rescanning categories in rescanCategories: {e}")
         logger.error(traceback.format_exc())
         return {"done": False, "error": str(e)}
+        
 
+async def resetDeprecatedImageUrls(pool: asyncpg.Pool, deprecationDays: int = 30) -> list[str]:
+    async with pool.acquire() as con:
 
-@app.get("/rescan_for_image_urls")
-async def rescanImageUrls(request: Request):
-    """Rescan all items with empty image URLs and fetch them from OpenFoodFacts"""
-    try:
-        rows = await request.app.state.db.fetch_with_retry(
-            "select distinct(ean), image_url from item_list"
+        items_to_update = await con.fetch(
+            """
+            SELECT ean
+            FROM item_list
+            WHERE (checked_last < NOW() - $1 * INTERVAL '1 day'
+                   OR image_url = '')
+              AND ean NOT IN ('-1','0','1')
+            """,
+            deprecationDays
         )
-        eansToMod = []
 
-        for row in rows:
-            if row["image_url"] == "" and row["ean"] not in ["-1", "0", "1"]:
-                eansToMod.append(row["ean"])
+        await con.execute(
+            """
+            UPDATE item_list
+            SET checked_last = NOW()
+            WHERE (checked_last < NOW() - $1 * INTERVAL '1 day'
+                   OR image_url = '')
+              AND ean NOT IN ('-1','0','1')
+            """,
+            deprecationDays
+        )
+
+        return [item["ean"] for item in items_to_update]
+    
+
+async def rescanImageUrls(pool: asyncpg.Pool):
+    try:
+        eansToMod = await resetDeprecatedImageUrls(pool, deprecationDays=30)
+        if not eansToMod:
+            logger.info("rescanImageUrls: nothing to update")
+            return {"done": True, "updated": 0, "total_empty": 0}
 
         updated_count = 0
-        for ean in eansToMod:
-            image_url = getImageUrl(ean)
-            if image_url:
-                await request.app.state.db.execute_with_retry(
-                    "UPDATE item_list SET image_url = $1 WHERE ean = $2", image_url, ean
-                )
-                updated_count += 1
+        # Single shared client for all requests in this scan pass
+        async with httpx.AsyncClient(
+            headers={"User-Agent": "grocery-list-app/1.0"},
+            timeout=httpx.Timeout(5.0),
+        ) as client:
+            async with pool.acquire() as con:
+                for ean in eansToMod:
+                    image_url = await getImageUrlAsync(client, ean, delay=0.3)
+                    if image_url:
+                        await con.execute(
+                            "UPDATE item_list SET image_url = $1 WHERE ean = $2",
+                            image_url, ean,
+                        )
+                        updated_count += 1
 
-        logger.info(
-            f"Updated {updated_count} image URLs out of {len(eansToMod)} empty entries"
-        )
-        return {
-            "done": True,
-            "updated": updated_count,
-            "total_empty": len(eansToMod),
-            "eansUpdated": str(eansToMod),
-        }
+        logger.info(f"Updated {updated_count} image URLs out of {len(eansToMod)} entries")
+        return {"done": True, "updated": updated_count, "total_empty": len(eansToMod)}
 
     except Exception as e:
         logger.error(f"Failed while rescanning image URLs: {e}")
         logger.error(traceback.format_exc())
         return {"done": False, "error": str(e)}
-
 
 @app.get("/migrate_tags")
 async def migrate_tags(request: Request):
@@ -2006,9 +2149,15 @@ async def migrate_tags(request: Request):
             )
 
             if not rows:
-                return {"done": True, "message": "No old-format tags found", "migrated": 0}
+                return {
+                    "done": True,
+                    "message": "No old-format tags found",
+                    "migrated": 0,
+                }
 
-            logger.info(f"Migrating {len(rows)} items from old tag format to new categories")
+            logger.info(
+                f"Migrating {len(rows)} items from old tag format to new categories"
+            )
 
             items_to_process = [
                 {
@@ -2019,9 +2168,7 @@ async def migrate_tags(request: Request):
                 for row in rows
             ]
 
-            tag_mapping = classifier.tagAssignmentBatch(
-                items=items_to_process
-            )
+            tag_mapping = classifier.tagAssignmentBatch(items=items_to_process)
 
             migrated = 0
             for item in items_to_process:
@@ -2030,7 +2177,8 @@ async def migrate_tags(request: Request):
                     new_tag = tag_mapping[name]["base"]
                     await con.execute(
                         "UPDATE item_list SET tags = $1 WHERE item_name = $2",
-                        new_tag, name,
+                        new_tag,
+                        name,
                     )
                     migrated += 1
 
@@ -2090,7 +2238,10 @@ async def add_ean_to_list(
                     image_url=image_url,
                 )
 
-                is_known = resolved_item_name != "none" and resolved_ean not in ("0", "-1")
+                is_known = resolved_item_name != "none" and resolved_ean not in (
+                    "0",
+                    "-1",
+                )
 
                 if operation == "created" and resolved_item_name:
                     background_tasks.add_task(
@@ -2112,8 +2263,8 @@ async def add_ean_to_list(
         raise
     except Exception as e:
         logger.error(f"add_ean_to_list error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to add item")  
-    
+        raise HTTPException(status_code=500, detail="Failed to add item")
+
 
 @app.get("/add_ean_to_list_manual/")
 async def add_ean_manual(

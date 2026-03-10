@@ -2,6 +2,22 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
 import ShortPopup from '../utils/ShortPopUp';
+import TopBar from '@/comp/other/TopBar';
+import Sidebar from '@/comp/other/Sidebar';
+import { PageModes } from '@/lib/utils';
+
+// ── Palette (mirrors main site) ─────────────────────────────────────────────
+const P = {
+  bg: '#0d1117',
+  surface: '#161b22',
+  border: '#21262d',
+  teal: '#0d9488',
+  tealD: '#0f2a28',
+  tealB: '#0d948850',
+  text: '#e6edf3',
+  muted: '#6e7681',
+  subtle: '#4d5566',
+} as const;
 
 
 //TODO: implement jwt webtockens to e.g. savely let there be multiple users
@@ -35,6 +51,7 @@ export default function ImprovedScanner() {
   const [scanCount, setScanCount] = useState(0);
   const [lastScanTime, setLastScanTime] = useState<string>('');
   const [scannedCode, setScannedCode] = useState<string>('');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   
   const scanLockRef = useRef(false);
   const lastSentRef = useRef<{ ean?: string; ts?: number }>({});
@@ -342,381 +359,271 @@ const sendEan = useCallback(async (eanToSend: string, quantityToSend?: number) =
     };
   }, [mode, sendEan, log, verbose, scanQuantity]);
 
+  // ── Shared style helpers ───────────────────────────────────────────────────
+  const inputStyle: React.CSSProperties = {
+    display: 'block', width: '100%', boxSizing: 'border-box',
+    padding: '9px 12px', backgroundColor: P.bg,
+    border: `1px solid ${P.border}`, borderRadius: 10,
+    color: P.text, fontSize: 14, outline: 'none', transition: 'border-color 0.15s',
+  };
+
+  const qtyBtnStyle = (isPlus: boolean): React.CSSProperties => ({
+    all: 'unset' as const, boxSizing: 'border-box' as const,
+    width: 44, height: 44,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    borderRadius: 10, fontSize: 22, fontWeight: 300, cursor: 'pointer',
+    backgroundColor: isPlus ? P.tealD : P.surface,
+    border: `1px solid ${isPlus ? P.tealB : P.border}`,
+    color: isPlus ? '#5eead4' : P.muted,
+    transition: 'all 0.15s', flexShrink: 0,
+  });
+
+  const submitBtnStyle: React.CSSProperties = {
+    all: 'unset' as const, boxSizing: 'border-box' as const,
+    display: 'block', width: '100%', textAlign: 'center' as const,
+    marginTop: 12, padding: '10px 0',
+    backgroundColor: P.tealD, border: `1px solid ${P.tealB}`,
+    borderRadius: 10, color: '#5eead4', fontSize: 14, fontWeight: 500,
+    cursor: 'pointer', transition: 'all 0.15s',
+  };
+
   return (
-    <div className="fixed inset-0 bg-linear-to-br from-slate-900 via-slate-800 to-slate-900 overflow-hidden flex flex-col">
-      {/* Compact Header */}
-      <div className="bg-slate-900/95 backdrop-blur-sm border-b border-slate-700/50">
-        <div className="max-w-4xl mx-auto px-3 py-2">
-          <div className="flex items-center justify-between gap-2">
-            {/* Left: Close + Title */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={async () => {
-                  if (html5QrCodeRef.current) {
-                    try {
-                      await hardStopCamera()
-                      setTimeout(() => {
-                        console.log("waiting for 2000ms")
-                      }, 2000);
-                    } catch (err) {
-                      console.warn('Failed to stop QR scanner:', err);
-                    }
-                  }
-                  navHook('/');
-                }}
-                className="p-1.5 rounded-lg bg-slate-800/60 hover:bg-slate-700/80 border border-slate-600/40 transition-all"
-              >
-                <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-              <h1 className="text-sm sm:text-base font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">
-                {headline}
-              </h1>
-            </div>
-            
-            {/* Center: Mode Toggle */}
-            <div className="flex gap-1 bg-slate-800/60 p-0.5 rounded-lg border border-slate-600/40">
-              <button
-                onClick={() => setMode('auto')}
-                className={`px-3 py-1.5 text-xs rounded-md font-medium transition-all ${
-                  mode === 'auto'
-                    ? 'bg-gradient-to-r from-cyan-500 to-blue-500 text-white shadow-lg shadow-cyan-500/30'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Auto
-              </button>
-              <button
-                onClick={() => setMode('manual')}
-                className={`px-3 py-1.5 text-xs rounded-md font-medium transition-all ${
-                  mode === 'manual'
-                    ? 'bg-gradient-to-r from-emerald-500 to-green-500 text-white shadow-lg shadow-emerald-500/30'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Manual
-              </button>
+    <div style={{ minHeight: '100vh', backgroundColor: P.bg }}>
+      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+      <TopBar
+        sidebarOpen={sidebarOpen}
+        onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+        subgroups={[]}
+        onFilter={null}
+        onReset={() => null}
+        onScanIncrease={() => null}
+        onScanDecrease={() => null}
+        items={[]}
+        setItems={() => null}
+        mode={PageModes.GeoPage}
+      />
+
+      <div className="p-3 sm:p-4 md:p-6">
+        <div className="max-w-lg mx-auto">
+
+          {/* Title row: back + headline + mode toggle + verbose */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            {/* Back */}
+            <button
+              onClick={async () => { await hardStopCamera(); navHook('/'); }}
+              style={{
+                all: 'unset', boxSizing: 'border-box',
+                width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                backgroundColor: P.surface, border: `1px solid ${P.border}`,
+                borderRadius: 9, color: P.muted, cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s',
+                fontSize: 16,
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = P.text; (e.currentTarget as HTMLElement).style.borderColor = P.tealB; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = P.muted; (e.currentTarget as HTMLElement).style.borderColor = P.border; }}
+              aria-label="Back"
+            >
+              ‹
+            </button>
+
+            {/* Headline */}
+            <span style={{ flex: 1, color: P.text, fontSize: 14, fontWeight: 600, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {headline}
+            </span>
+
+            {/* Mode toggle */}
+            <div style={{ display: 'flex', gap: 2, backgroundColor: P.surface, padding: 3, borderRadius: 10, border: `1px solid ${P.border}`, flexShrink: 0 }}>
+              {(['auto', 'manual'] as ScanMode[]).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setMode(m)}
+                  style={{
+                    all: 'unset', boxSizing: 'border-box',
+                    padding: '5px 12px', borderRadius: 8, fontSize: 12, fontWeight: 500,
+                    cursor: 'pointer', transition: 'all 0.15s',
+                    backgroundColor: mode === m ? P.tealD : 'transparent',
+                    border: `1px solid ${mode === m ? P.tealB : 'transparent'}`,
+                    color: mode === m ? '#5eead4' : P.muted,
+                  }}
+                >
+                  {m === 'auto' ? 'Auto' : 'Manual'}
+                </button>
+              ))}
             </div>
 
-            {/* Right: Verbose Toggle */}
+            {/* Verbose toggle */}
             <button
               onClick={() => setVerbose(!verbose)}
-              className={`p-1.5 rounded-lg border transition-all ${
-                verbose
-                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-400'
-                  : 'bg-slate-800/60 border-slate-600/40 text-slate-400 hover:text-white'
-              }`}
+              style={{
+                all: 'unset', boxSizing: 'border-box',
+                width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                backgroundColor: verbose ? P.tealD : P.surface,
+                border: `1px solid ${verbose ? P.tealB : P.border}`,
+                borderRadius: 9, color: verbose ? '#5eead4' : P.muted,
+                cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s',
+              }}
               title="Toggle verbose logging"
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                <path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
               </svg>
             </button>
           </div>
-        </div>
-      </div>
 
-      {/* Main Content - Scrollable */}
-      <div className="flex-1 overflow-auto">
-        {mode === 'auto' ? (
-          /* Auto Scanner Mode */
-          <div className="flex flex-col items-center justify-start p-4 min-h-full">
-            {/* Scanner Container */}
-            <div className="w-full max-w-sm space-y-4">
-              <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-xl rounded-2xl border border-slate-600/40 p-4 shadow-2xl shadow-cyan-500/10">
-                {/* Scanner Area */}
-                <div id={scannerIdRef.current} className="rounded-xl overflow-hidden border-2 border-cyan-400/60 shadow-lg shadow-cyan-400/20 bg-black" style={{ minHeight: '280px' }} />
-                
+          {mode === 'auto' ? (
+            /* ── Auto scanner ── */
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+              {/* Camera card */}
+              <div style={{ backgroundColor: P.surface, border: `1px solid ${P.border}`, borderRadius: 18, padding: 16, boxShadow: '0 8px 32px #00000060' }}>
+                <div
+                  id={scannerIdRef.current}
+                  style={{ borderRadius: 12, overflow: 'hidden', border: `2px solid ${P.tealB}`, backgroundColor: '#000', minHeight: 280 }}
+                />
                 {/* Status */}
-                <div className="mt-3 text-center">
-                  <p className="text-sm font-medium">
-                    {showSuccess ? (
-                      <span className="flex items-center justify-center gap-2 text-emerald-400 animate-pulse">
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                        Added successfully!
-                      </span>
-                    ) : error ? (
-                      <span className="text-rose-400">{error}</span>
-                    ) : ean ? (
-                      <span className="text-cyan-400 font-mono">Code: {ean}</span>
-                    ) : scanning ? (
-                      <span className="text-slate-300 flex items-center justify-center gap-2">
-                        <span className="animate-pulse">●</span> Scanning...
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">Point at barcode</span>
-                    )}
-                  </p>
+                <div style={{ marginTop: 10, textAlign: 'center' }}>
+                  {showSuccess ? (
+                    <span style={{ color: '#5eead4', fontSize: 13, fontWeight: 500 }}>✓ Added successfully!</span>
+                  ) : error ? (
+                    <span style={{ color: '#f87171', fontSize: 13 }}>{error}</span>
+                  ) : ean ? (
+                    <span style={{ color: '#5eead4', fontSize: 13, fontFamily: 'monospace' }}>Code: {ean}</span>
+                  ) : scanning ? (
+                    <span style={{ color: P.muted, fontSize: 13 }}>● Scanning...</span>
+                  ) : (
+                    <span style={{ color: P.subtle, fontSize: 13 }}>Point at barcode</span>
+                  )}
                 </div>
-
-                {/* Verbose Debug Info */}
                 {verbose && (
-                  <div className="mt-3 p-2 bg-slate-900/60 rounded-lg border border-amber-500/30">
-                    <p className="text-xs text-amber-400 font-mono">
-                      Scans: {scanCount} | Last: {lastScanTime || 'N/A'}
-                    </p>
-                    <p className="text-xs text-amber-400 font-mono">
-                      Status: {scanning ? 'Active' : 'Stopped'}
-                    </p>
+                  <div style={{ marginTop: 10, padding: '7px 10px', backgroundColor: P.bg, borderRadius: 8, border: `1px solid ${P.tealB}` }}>
+                    <p style={{ margin: 0, fontSize: 11, color: P.teal, fontFamily: 'monospace' }}>Scans: {scanCount} | Last: {lastScanTime || 'N/A'} | Status: {scanning ? 'Active' : 'Stopped'}</p>
                   </div>
                 )}
               </div>
 
-              {/* Quantity Selector for Scanned Items */}
+              {/* Scanned code quantity + submit */}
               {scannedCode && (
-                <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-xl rounded-2xl border border-emerald-500/40 p-4 shadow-2xl shadow-emerald-500/20 animate-slideIn">
-                  <label className="block text-xs text-emerald-400 mb-3 text-center font-semibold">Adjust Quantity</label>
-                  <div className="flex items-center justify-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => handleQuantityChange(-1, true)}
-                      className="w-14 h-14 flex items-center justify-center bg-slate-700/60 hover:bg-slate-600/80 border border-slate-600/40 rounded-xl transition-all active:scale-90 transform duration-150 shadow-lg hover:shadow-slate-500/50"
-                    >
-                      <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M20 12H4" />
-                      </svg>
-                    </button>
-                    
-                    <div className="flex-1 max-w-[140px]">
-                      <div className="relative">
-                        <input
-                          type="number"
-                          value={scanQuantity}
-                          onChange={(e) => {
-                            const val = parseInt(e.target.value) || 1;
-                            setScanQuantity(Math.max(1, val));
-                          }}
-                          min="1"
-                          className="w-full px-4 py-4 bg-gradient-to-br from-slate-900 to-slate-800 border-2 border-emerald-500/50 rounded-xl text-white text-3xl font-bold text-center focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition-all shadow-inner transform hover:scale-105 duration-200"
-                        />
-                      </div>
-                    </div>
-                    
-                    <button
-                      type="button"
-                      onClick={() => handleQuantityChange(1, true)}
-                      className="w-14 h-14 flex items-center justify-center bg-emerald-500/30 hover:bg-emerald-500/50 border-2 border-emerald-500/60 rounded-xl transition-all active:scale-90 transform duration-150 shadow-lg hover:shadow-emerald-500/50"
-                    >
-                      <svg className="w-6 h-6 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 4v16m8-8H4" />
-                      </svg>
-                    </button>
+                <div style={{ backgroundColor: P.surface, border: `1px solid ${P.tealB}`, borderRadius: 18, padding: 16 }}>
+                  <p style={{ margin: '0 0 12px', textAlign: 'center', color: '#5eead4', fontSize: 12, fontWeight: 500 }}>Adjust Quantity</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center' }}>
+                    <button type="button" onClick={() => handleQuantityChange(-1, true)} style={qtyBtnStyle(false)}>−</button>
+                    <input
+                      type="number" value={scanQuantity}
+                      onChange={e => setScanQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                      min="1"
+                      style={{ width: 80, padding: '10px 8px', backgroundColor: P.bg, border: `2px solid ${P.tealB}`, borderRadius: 10, color: P.text, fontSize: 26, fontWeight: 700, textAlign: 'center', outline: 'none' }}
+                    />
+                    <button type="button" onClick={() => handleQuantityChange(1, true)} style={qtyBtnStyle(true)}>+</button>
                   </div>
-                  
-                  
-                  {/* Manual Submit Button */}
                   <button
                     type="button"
-                    onClick={() => {
-                      if (scanSubmitTimeoutRef.current) {
-                        clearTimeout(scanSubmitTimeoutRef.current);
-                      }
-                      sendEan(scannedCode, scanQuantity);
-                    }}
-                    className="w-full mt-3 py-2.5 text-sm bg-gradient-to-r from-emerald-500 to-green-500 text-white font-bold rounded-lg shadow-lg shadow-emerald-500/30 hover:from-emerald-400 hover:to-green-400 transition-all active:scale-95"
+                    onClick={() => { if (scanSubmitTimeoutRef.current) clearTimeout(scanSubmitTimeoutRef.current); sendEan(scannedCode, scanQuantity); }}
+                    style={submitBtnStyle}
                   >
                     Submit Now
                   </button>
                 </div>
               )}
 
-              {(error !== "") && (
-                    <ShortPopup text={error} variant='error' />
-                  )}
-              {
-                showSuccess && (
-                  <ShortPopup text='mapped ean succesfully :)' variant='success' />
-                )
-              }
+              {error !== '' && <ShortPopup text={error} variant="error" />}
+              {showSuccess && <ShortPopup text="mapped ean successfully :)" variant="success" />}
 
-              {/* Tips */}
-              <div className="p-3 bg-slate-900/40 rounded-xl border border-slate-700/30">
-                <p className="text-xs text-slate-400 text-center">
-                  💡 Position barcode in the center of the frame
-                </p>
-              </div>
+              <p style={{ textAlign: 'center', color: P.subtle, fontSize: 12 }}>Position barcode in the center of the frame</p>
             </div>
-          </div>
-        ) : (
-          /* Manual Entry Mode */
-          <div className="flex items-start justify-center p-4 min-h-full">
-            <div className="w-full max-w-md">
-              <div className="bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-xl rounded-2xl border border-slate-600/40 p-6 shadow-2xl">
-                <div className="text-center mb-4">
-                  <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-emerald-500 to-green-500 rounded-xl mb-3 shadow-lg shadow-emerald-500/40 animate-pulse">
-                    <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
+          ) : (
+            /* ── Manual entry ── */
+            <div style={{ backgroundColor: P.surface, border: `1px solid ${P.border}`, borderRadius: 18, padding: '20px 16px', boxShadow: '0 8px 32px #00000060' }}>
+
+              {/* Input mode toggle */}
+              <div style={{ display: 'flex', gap: 2, backgroundColor: P.bg, padding: 3, borderRadius: 10, border: `1px solid ${P.border}`, marginBottom: 16 }}>
+                {(['name', 'ean'] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setInputMode(m)}
+                    style={{
+                      all: 'unset', boxSizing: 'border-box',
+                      flex: 1, padding: '6px 0', textAlign: 'center',
+                      borderRadius: 8, fontSize: 12, fontWeight: 500,
+                      cursor: 'pointer', transition: 'all 0.15s',
+                      backgroundColor: inputMode === m ? P.tealD : 'transparent',
+                      border: `1px solid ${inputMode === m ? P.tealB : 'transparent'}`,
+                      color: inputMode === m ? '#5eead4' : P.muted,
+                    }}
+                  >
+                    {m === 'name' ? 'By Name' : 'By Barcode'}
+                  </button>
+                ))}
+              </div>
+
+              <form onSubmit={handleManualSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {inputMode === 'name' ? (
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, color: P.muted, marginBottom: 6 }}>Item Name</label>
+                    <input
+                      type="text" value={manualName}
+                      onChange={e => setManualName(e.target.value)}
+                      placeholder="e.g. Milk, Bread, Apples..."
+                      autoFocus style={inputStyle}
+                      onFocus={e => (e.currentTarget.style.borderColor = P.teal)}
+                      onBlur={e => (e.currentTarget.style.borderColor = P.border)}
+                    />
                   </div>
-                  <h2 className="text-xl font-bold text-white mb-2">Add Item</h2>
-                  
-                  {/* Input Mode Toggle */}
-                  <div className="flex gap-2 justify-center">
-                    <button
-                      type="button"
-                      onClick={() => setInputMode('name')}
-                      className={`px-4 py-2 text-sm rounded-lg font-medium transition-all duration-200 ${
-                        inputMode === 'name'
-                          ? 'bg-emerald-500/30 text-emerald-300 border-2 border-emerald-500/60 shadow-lg shadow-emerald-500/30'
-                          : 'text-slate-400 border border-slate-600/40 hover:text-white hover:border-slate-500'
-                      }`}
-                    >
-                      By Name
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setInputMode('ean')}
-                      className={`px-4 py-2 text-sm rounded-lg font-medium transition-all duration-200 ${
-                        inputMode === 'ean'
-                          ? 'bg-emerald-500/30 text-emerald-300 border-2 border-emerald-500/60 shadow-lg shadow-emerald-500/30'
-                          : 'text-slate-400 border border-slate-600/40 hover:text-white hover:border-slate-500'
-                      }`}
-                    >
-                      By Barcode
-                    </button>
+                ) : (
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, color: P.muted, marginBottom: 6 }}>Barcode (EAN)</label>
+                    <input
+                      type="text" value={manualEan}
+                      onChange={e => setManualEan(e.target.value.replace(/\D/g, ''))}
+                      placeholder="e.g. 4006040055136"
+                      maxLength={14} autoFocus
+                      style={{ ...inputStyle, fontFamily: 'monospace' }}
+                      onFocus={e => (e.currentTarget.style.borderColor = P.teal)}
+                      onBlur={e => (e.currentTarget.style.borderColor = P.border)}
+                    />
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: P.subtle, textAlign: 'center' }}>{manualEan.length} / 14 digits</p>
+                  </div>
+                )}
+
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, color: P.muted, marginBottom: 8 }}>Quantity</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'center' }}>
+                    <button type="button" onClick={() => handleQuantityChange(-1)} style={qtyBtnStyle(false)}>−</button>
+                    <input
+                      type="number" value={manualQuantity}
+                      onChange={e => setManualQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                      min="1"
+                      style={{ width: 80, padding: '10px 8px', backgroundColor: P.bg, border: `2px solid ${P.tealB}`, borderRadius: 10, color: P.text, fontSize: 26, fontWeight: 700, textAlign: 'center', outline: 'none' }}
+                    />
+                    <button type="button" onClick={() => handleQuantityChange(1)} style={qtyBtnStyle(true)}>+</button>
                   </div>
                 </div>
 
-                <form onSubmit={handleManualSubmit} className="space-y-5">
-                  {/* Input Field */}
-                  {inputMode === 'name' ? (
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-2 font-medium">Item Name</label>
-                      <input
-                        type="text"
-                        value={manualName}
-                        onChange={(e) => setManualName(e.target.value)}
-                        placeholder="e.g., Milk, Bread, Apples..."
-                        className="w-full px-4 py-3 bg-slate-900/60 border border-slate-600/40 rounded-xl text-white text-base focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all shadow-inner"
-                        autoFocus
-                      />
-                    </div>
-                  ) : (
-                    <div>
-                      <label className="block text-sm text-slate-300 mb-2 font-medium">Barcode (EAN)</label>
-                      <input
-                        type="text"
-                        value={manualEan}
-                        onChange={(e) => setManualEan(e.target.value.replace(/\D/g, ''))}
-                        placeholder="e.g., 4006040055136"
-                        className="w-full px-4 py-3 bg-slate-900/60 border border-slate-600/40 rounded-xl text-white text-base font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all shadow-inner"
-                        maxLength={14}
-                        autoFocus
-                      />
-                      <p className="mt-1.5 text-xs text-slate-400 text-center">
-                        {manualEan.length} / 14 digits
-                      </p>
-                    </div>
-                  )}
+                {error !== '' && <ShortPopup text={error} variant="error" />}
+                {showSuccess && <ShortPopup text="mapped ean successfully :)" variant="success" />}
 
-                  {/* Quantity Selector (Dial-like with animations) */}
-                  <div>
-                    <label className="block text-sm text-slate-300 mb-3 font-medium">Quantity</label>
-                    <div className="flex items-center justify-center gap-4">
-                      <button
-                        type="button"
-                        onClick={() => handleQuantityChange(-1)}
-                        className="w-14 h-14 flex items-center justify-center bg-slate-700/60 hover:bg-slate-600/80 border border-slate-600/40 rounded-xl transition-all active:scale-90 transform duration-150 shadow-lg hover:shadow-slate-500/50"
-                      >
-                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M20 12H4" />
-                        </svg>
-                      </button>
-                      
-                      <div className="flex-1 max-w-[140px]">
-                        <div className="relative">
-                          <input
-                            type="number"
-                            value={manualQuantity}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value) || 1;
-                              setManualQuantity(Math.max(1, val));
-                            }}
-                            min="1"
-                            className="w-full px-4 py-4 bg-gradient-to-br from-slate-900 to-slate-800 border-2 border-emerald-500/50 rounded-xl text-white text-3xl font-bold text-center focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent transition-all shadow-inner transform hover:scale-105 duration-200"
-                          />
-                        </div>
-                      </div>
-                      
-                      <button
-                        type="button"
-                        onClick={() => handleQuantityChange(1)}
-                        className="w-14 h-14 flex items-center justify-center bg-emerald-500/30 hover:bg-emerald-500/50 border-2 border-emerald-500/60 rounded-xl transition-all active:scale-90 transform duration-150 shadow-lg hover:shadow-emerald-500/50"
-                      >
-                        <svg className="w-6 h-6 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 4v16m8-8H4" />
-                        </svg>
-                      </button>
-                    </div>
-                    
-                  </div>
+                <button
+                  type="submit"
+                  disabled={(inputMode === 'ean' && (!manualEan || manualEan.length < 8)) || (inputMode === 'name' && !manualName.trim()) || showSuccess}
+                  style={{
+                    ...submitBtnStyle,
+                    opacity: ((inputMode === 'ean' && (!manualEan || manualEan.length < 8)) || (inputMode === 'name' && !manualName.trim()) || showSuccess) ? 0.4 : 1,
+                    cursor: ((inputMode === 'ean' && (!manualEan || manualEan.length < 8)) || (inputMode === 'name' && !manualName.trim()) || showSuccess) ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  Add to {isWishList ? 'Wish List' : 'Grocery List'}
+                </button>
+              </form>
 
-                  {(error !== "") && (
-                    <ShortPopup text={error} variant='error' />
-                  )}
-                  {
-                    showSuccess && (
-                      <ShortPopup text='mapped ean succesfully :)' variant='success' />
-                    )
-                  }
-
-                  <button
-                    type="submit"
-                    disabled={
-                      (inputMode === 'ean' && (!manualEan || manualEan.length < 8)) ||
-                      (inputMode === 'name' && !manualName.trim()) ||
-                      showSuccess
-                    }
-                    className="w-full py-4 text-base bg-gradient-to-r from-emerald-500 to-green-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/40 hover:from-emerald-400 hover:to-green-400 disabled:from-slate-600 disabled:to-slate-600 disabled:shadow-none transition-all disabled:cursor-not-allowed active:scale-95 transform duration-150"
-                  >
-                    Add to {isWishList ? 'Wish List' : 'Grocery List'}
-                  </button>
-                </form>
-
-                {/* Verbose Debug Info */}
-                {verbose && (
-                  <div className="mt-4 p-3 bg-slate-900/60 rounded-lg border border-amber-500/30">
-                    <p className="text-xs text-amber-400 font-mono">
-                      Mode: {inputMode} | Quantity: {manualQuantity}
-                    </p>
-                  </div>
-                )}
-              </div>
+              {verbose && (
+                <div style={{ marginTop: 12, padding: '7px 10px', backgroundColor: P.bg, borderRadius: 8, border: `1px solid ${P.tealB}` }}>
+                  <p style={{ margin: 0, fontSize: 11, color: P.teal, fontFamily: 'monospace' }}>Mode: {inputMode} | Quantity: {manualQuantity}</p>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
-
-      {/* CSS Animations */}
-      <style>{`
-        @keyframes slideIn {
-          from {
-            opacity: 0;
-            transform: translateY(-10px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          25% { transform: translateX(-5px); }
-          75% { transform: translateX(5px); }
-        }
-
-        .animate-slideIn {
-          animation: slideIn 0.3s ease-out;
-        }
-
-        .animate-shake {
-          animation: shake 0.3s ease-in-out;
-        }
-      `}</style>
     </div>
   );
 }
+

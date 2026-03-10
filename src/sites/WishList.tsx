@@ -239,40 +239,38 @@ function WishList() {
   const noItemsAvailable = data.length === 0 && !error;
 
   return (
-    <>
-      <Sidebar isOpen={sidebarOpen} onClose={() => (null)} />
-      <div className="flex flex-col min-h-screen">
-        {error ? (
-          <ErrorContainer text={error} />
-        ) : (
-          <>
-            <TopBar
-              sidebarOpen={sidebarOpen}
-              onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-              subgroups={[]}
-              onFilter={null}
-              onReset={fetchItems}
-              onScanIncrease={() => navigateScanner(null, 1)}
-              onScanDecrease={() => navigateScanner(null, -1)}
-              items={data}
-              setItems={setData}
-              mode={PageModes.WishPage}
-            />
+    <div className='h-screen'>
+      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      {error ? (
+        <ErrorContainer text={error} />
+      ) : (
+        <div className='h-screen'>
+          <TopBar
+            sidebarOpen={sidebarOpen}
+            onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+            subgroups={[]}
+            onFilter={null}
+            onReset={fetchItems}
+            onScanIncrease={() => navigateScanner(null, 1)}
+            onScanDecrease={() => navigateScanner(null, -1)}
+            items={data}
+            setItems={setData}
+            mode={PageModes.WishPage}
+          />
 
-            {/* Main Content */}
-            <main className="flex-1 p-3 sm:p-4 md:p-6">
-              <div className="max-w-4xl mx-auto">
-                {noItemsAvailable ? (
-                  <InfoContainer text={"No items on your wish list.\nAdd something you'd like to buy!"} />
-                ) : (
-                  containerComponents
-                )}
-              </div>
-            </main>
-          </>
-        )}
-      </div>
-    </>
+          {/* Main Content */}
+          <div className="flex-1 p-3 sm:p-4 md:p-6">
+            <div className="max-w-4xl mx-auto">
+              {noItemsAvailable ? (
+                <InfoContainer text={"No items on your wish list.\nAdd something you'd like to buy!"} />
+              ) : (
+                containerComponents
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

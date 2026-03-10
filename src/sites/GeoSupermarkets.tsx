@@ -28,10 +28,10 @@ useEffect(() => {
 }, [userPos, supermarketRadius]);
 
     return (
-        <div className="h-screen flex flex-col items-center">
-            <Sidebar isOpen={isSidebarOpen} onClose={ () => (null) } />
+        <div className="h-screen flex flex-col">
+            <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
             
-                <TopBar 
+            <TopBar 
                 sidebarOpen={isSidebarOpen}
                 onSidebarToggle={ () => (setIsSidebarOpen(!isSidebarOpen)) }
                 onScanIncrease={() => (null) }
@@ -40,11 +40,18 @@ useEffect(() => {
                 onReset={ () => (null) }
                 items={[]}
                 setItems={ () => (null) }
+                subgroups={[]}
                 mode={PageModes.GeoPage}
-                />
-            {isLoading ? (null) : (
-                <div className="my-4 overflow-clip max-w-4xl w-full p-2">
-                    <Map key={`${userPos.lat}-${userPos.lon}`} heightNum={550}  zoom={12} centerPos={userPos} markedPositions={markedPositions} />
+            />
+            {isLoading ? (
+                <div className="flex justify-center items-center flex-1">
+                    <div style={{ color: "#5eead4", fontSize: 14 }}>Loading map...</div>
+                </div>
+            ) : (
+                <div className="flex-1 p-3 sm:p-4 md:p-6">
+                    <div className="max-w-4xl mx-auto">
+                        <Map key={`${userPos.lat}-${userPos.lon}`} heightNum={550}  zoom={12} centerPos={userPos} markedPositions={markedPositions} />
+                    </div>
                 </div>
             )}
         </div>

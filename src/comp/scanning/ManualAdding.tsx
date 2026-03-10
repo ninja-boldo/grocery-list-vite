@@ -2,6 +2,22 @@
 import { useState } from "react";
 import ErrorContainer from "../utils/ErrorContainer";
 import { useLocation, useNavigate } from "react-router-dom";
+import TopBar from "@/comp/other/TopBar";
+import Sidebar from "@/comp/other/Sidebar";
+import { PageModes } from "@/lib/utils";
+
+// ── Palette (mirrors main site) ────────────────────────────────────────────
+const P = {
+  bg: "#0d1117",
+  surface: "#161b22",
+  border: "#21262d",
+  teal: "#0d9488",
+  tealD: "#0f2a28",
+  tealB: "#0d948850",
+  text: "#e6edf3",
+  muted: "#6e7681",
+  subtle: "#4d5566",
+} as const;
 
 const ManualAdd = () => {
 
@@ -23,29 +39,7 @@ const ManualAdd = () => {
 
     const [errorMessage, setErrorMessage] = useState("")
     const [showErrorBox, setshowErrorBox] = useState(false)
-
-
-    const handleInputChangeItem = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setInputValue1(e.target.value);
-        setItemName(e.target.value); 
-    };
-
-    const handleInputChangeEan = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setInputValue2(e.target.value);
-        setEan(e.target.value); 
-    };
-
-    const handleInputChangeCount = (e: React.ChangeEvent<HTMLInputElement>) => {
-        setInputValue3(e.target.value);
-        setCount(e.target.value); 
-    };
-
-    const handleInputChangeSubgroups = (e: React.ChangeEvent<HTMLInputElement>) => {
-        
-        setInputValue4(e.target.value);
-        console.log("inputValue4: " + inputValue4)
-        setSubgroups(e.target.value); 
-    };
+    const [sidebarOpen, setSidebarOpen] = useState(false)
 
     const sendRes = () => {
 
@@ -102,41 +96,115 @@ const ManualAdd = () => {
     }
 
     return (
-        <div className="">
-            <div className="mb-4">
+        <div className="h-screen" style={{ backgroundColor: P.bg }}>
+            <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-            {showErrorBox ? <ErrorContainer text={errorMessage} /> : <></> }
-                <input
-                    type="text"
-                    value={inputValue1}
-                    onChange={handleInputChangeItem}
-                    placeholder="item name"
-                    className="my-3  bg-gray-800 w-full px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <input
-                    type="text"
-                    value={inputValue2}
-                    onChange={handleInputChangeEan}
-                    placeholder="ean"
-                    className="my-3  bg-gray-800 w-full px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <input
-                    type="text"
-                    value={inputValue3}
-                    onChange={handleInputChangeCount}
-                    placeholder="count (default = 1)"
-                    className="my-3  bg-gray-800 w-full px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
+            <TopBar
+                sidebarOpen={sidebarOpen}
+                onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+                subgroups={[]}
+                onFilter={null}
+                onReset={() => (null)}
+                onScanIncrease={() => (null)}
+                onScanDecrease={() => (null)}
+                items={[]}
+                setItems={() => (null)}
+                mode={PageModes.GeoPage}
+            />
 
-                <input
-                    type="text"
-                    value={inputValue4}
-                    onChange={handleInputChangeSubgroups}
-                    placeholder="subgroups"
-                    className="my-3  bg-gray-800 w-full px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
+            <div className="flex-1 p-3 sm:p-4 md:p-6">
+                <div className="max-w-4xl mx-auto">
 
-                <button onClick={sendRes}>submit</button>
+                    {showErrorBox && <ErrorContainer text={errorMessage} />}
+
+                    {/* Form card */}
+                    <div style={{
+                        backgroundColor: P.surface,
+                        border: `1px solid ${P.border}`,
+                        borderRadius: 18,
+                        padding: "24px 20px",
+                        marginTop: 16,
+                        boxShadow: `0 8px 32px #00000060`,
+                    }}>
+                        {/* Title */}
+                        <p style={{
+                            margin: "0 0 20px",
+                            fontSize: 15,
+                            fontWeight: 600,
+                            color: P.text,
+                            borderBottom: `1px solid ${P.border}`,
+                            paddingBottom: 14,
+                        }}>
+                            {isWishList ? "Add to Wish List" : "Add Item Manually"}
+                        </p>
+
+                        {/* Inputs */}
+                        {[
+                            { value: inputValue1, onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setInputValue1(e.target.value); setItemName(e.target.value); }, placeholder: "Item name *" },
+                            { value: inputValue2, onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setInputValue2(e.target.value); setEan(e.target.value); }, placeholder: "EAN (optional)" },
+                            { value: inputValue3, onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setInputValue3(e.target.value); setCount(e.target.value); }, placeholder: "Count (default = 1)" },
+                            { value: inputValue4, onChange: (e: React.ChangeEvent<HTMLInputElement>) => { setInputValue4(e.target.value); console.log("inputValue4: " + inputValue4); setSubgroups(e.target.value); }, placeholder: "Subgroups (optional)" },
+                        ].map(({ value, onChange, placeholder }, idx) => (
+                            <input
+                                key={idx}
+                                type="text"
+                                value={value}
+                                onChange={onChange}
+                                placeholder={placeholder}
+                                style={{
+                                    display: "block",
+                                    width: "100%",
+                                    boxSizing: "border-box",
+                                    marginBottom: 10,
+                                    padding: "9px 12px",
+                                    backgroundColor: P.bg,
+                                    border: `1px solid ${P.border}`,
+                                    borderRadius: 10,
+                                    color: P.text,
+                                    fontSize: 14,
+                                    outline: "none",
+                                    transition: "border-color 0.15s",
+                                }}
+                                onFocus={e => (e.currentTarget.style.borderColor = P.teal)}
+                                onBlur={e => (e.currentTarget.style.borderColor = P.border)}
+                            />
+                        ))}
+
+                        {/* Submit button */}
+                        <button
+                            onClick={sendRes}
+                            style={{
+                                all: "unset",
+                                boxSizing: "border-box",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                marginTop: 8,
+                                padding: "9px 20px",
+                                backgroundColor: P.tealD,
+                                border: `1px solid ${P.tealB}`,
+                                borderRadius: 10,
+                                color: "#5eead4",
+                                fontSize: 14,
+                                fontWeight: 500,
+                                cursor: "pointer",
+                                transition: "all 0.15s",
+                            }}
+                            onMouseEnter={e => {
+                                const b = e.currentTarget as HTMLElement;
+                                b.style.backgroundColor = P.teal;
+                                b.style.color = "#fff";
+                            }}
+                            onMouseLeave={e => {
+                                const b = e.currentTarget as HTMLElement;
+                                b.style.backgroundColor = P.tealD;
+                                b.style.color = "#5eead4";
+                            }}
+                        >
+                            Submit
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     );

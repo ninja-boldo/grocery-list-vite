@@ -1,6 +1,6 @@
 import './App.css';
 import Container from './comp/other/Container';
-import { useCallback, useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef, memo } from 'react';
 import ErrorContainer from './comp/utils/ErrorContainer';
 import { useNavigate } from 'react-router-dom';
 import SidebarComp from "./comp/other/Sidebar";
@@ -32,6 +32,7 @@ const PHONE_WIDTH = 500;
 const TRANSCRIPTION_TIMEOUT = 10000;
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY = 1000;
+let noItemsAvailable: boolean = false;
 
 // ============================================================================
 // API Utilities - Self-healing with retry logic
@@ -62,7 +63,7 @@ async function apiCall<T>(
       
       // Try to parse
       const parsed = JSON.parse(rawText);
-      
+
       return parsed;
       
     } catch (err) {
@@ -150,23 +151,7 @@ function App() {
   
 
   // ========== Data Fetching ==========
-  const filterFetchItems = async(subgroupFilter: string | null, sortOrderFilter: string | undefined) => {
-    // Update state for future fetches
-    if(subgroupFilter){
-      setSubgroupsToSearch(subgroupFilter)
-    }
-    if(sortOrderFilter){
-      setSortOrder(sortOrderFilter)
-    }
-    
-    // Reset data and fetch with NEW values immediately
-    setData([])
-    skipCountRef.current = 0
-    setHasMoreData(true)
-    
-    // Pass values directly instead of waiting for state update
-    fetchItemsWithParams(subgroupFilter || subgroupsToSearch, sortOrderFilter)
-  }
+
 const fetchItemsWithParams = useCallback(async (subgroupsParam?: string, sortOrderParam?: string) => {
   // Prevent concurrent fetches
   if (isLoading) {
@@ -195,6 +180,7 @@ const fetchItemsWithParams = useCallback(async (subgroupsParam?: string, sortOrd
     console.log("Calling API with URL:", url, "Skip:", skipCountRef.current);
     
     const response = await apiCall<ApiResponse>(url);
+    noItemsAvailable = (response.items.length === 0 && data.length === 0) ? true : false
     console.log("API returned items:", response.items.length);
     
     if(response.items.length === 0){
@@ -234,7 +220,21 @@ const fetchItemsWithParams = useCallback(async (subgroupsParam?: string, sortOrd
     setIsLoading(false);
     setIsInitialLoad(false);
   }
-}, [isLoading, subgroupsToSearch, sortOrder]);
+}, [isLoading, subgroupsToSearch, sortOrder, data.length]);
+
+const filterFetchItems = useCallback(async (
+  subgroupFilter: string | null, 
+  sortOrderFilter: string | undefined
+) => {
+  if (subgroupFilter) setSubgroupsToSearch(subgroupFilter);
+  if (sortOrderFilter) setSortOrder(sortOrderFilter);
+  
+  setData([]);
+  skipCountRef.current = 0;
+  setHasMoreData(true);
+  
+  fetchItemsWithParams(subgroupFilter || subgroupsToSearch, sortOrderFilter);
+}, [fetchItemsWithParams, subgroupsToSearch]);
 
 const fetchItems = useCallback(async () => {
   return fetchItemsWithParams();
@@ -429,7 +429,6 @@ const fetchItems = useCallback(async () => {
   }
 
   let displayError = null;
-  let noItemsAvailable: boolean = false;
   if(error?.includes('there are no items in the database')){
       displayError = null;  //'No items in database' 
       noItemsAvailable = true;
@@ -459,6 +458,7 @@ const fetchItems = useCallback(async () => {
           onScanDecrease={() => navigateScanner(-1)}
           items={data}
           setItems={setData}
+          currentSortOrder={sortOrder}
           mode={PageModes.HomePage}
         />
 
@@ -489,7 +489,8 @@ const fetchItems = useCallback(async () => {
                     onClickIncrease={increaseItem}
                     onClickDecrease={decreaseItem}
                     tags={item.tags}
-                    style=""
+                    isWishedNumber={null}
+                    style="m-2"
                   />
                 )}
               />
@@ -530,4 +531,4 @@ const fetchItems = useCallback(async () => {
 );
 }
 
-export default App;
+export default memo(App);

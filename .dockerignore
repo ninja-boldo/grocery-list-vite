@@ -15,3 +15,6 @@ README.md
 .cache
 llama.cpp/
 *.gguf
+other/
+saves/
+llamaboard_cache/

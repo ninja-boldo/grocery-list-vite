@@ -1,3 +1,5 @@
+import asyncio
+from functools import partial
 from typing import List, Union, Dict, Literal, Any
 from transcription.groceryClassifierClass import GroceryClassifier
 from transcription.wishMapperClass import WishMapper
@@ -205,6 +207,7 @@ Return EXACTLY one JSON object and nothing else, e.g.:
 - "confidence" must be a float between 0.0 and 1.0.
 """
 
+_classifier = GroceryClassifier()
 
 def _normalize_classes(classes: Union[str, List[str]]) -> List[str]:
     if isinstance(classes, str):
@@ -401,60 +404,27 @@ def shortenTextBatch(
     return resp
 
 
-def _validate_tag(tag: str, allowed_tags: List[str]) -> str:
-    """Validate tag against allowed list, case-insensitive."""
-    tag = str(tag).lower().strip()
-    allowed_lower = {t.lower(): t for t in allowed_tags}
-    return allowed_lower.get(tag, "unknown" if "unknown" in allowed_lower else "none")
-
-async def tagAssignmentBatch(
-    items: list[dict],
-) -> Dict[str, Dict[str, str]]:
-    """
-    Assign semantic tags to multiple grocery items in batch.
-
-    Args:
-        items: dict with keys: item_name, shortened_name, categories
-        base_tags: Allowed base product tags (e.g., ["vinegar", "chips", "candy"])
-        flavor_tags: Allowed flavor tags (e.g., ["apple", "menthol", "paprika", "none"])
-        form_tags: Allowed form tags (e.g., ["liquid", "solid", "powder", "none"])
-        batch_size: Number of items to process per API call (default: 50)
-
-    Returns:
-        Dict mapping item_name to { "base": str, "flavor": str, "form": str }
-    """
-
-    print(f"started tag assignment with this input: {items}")
-
-
-    # Parse category strings into clean lists
+async def tagAssignmentBatch(items: list[dict]) -> Dict[str, Dict[str, str]]:
     for idx, item in enumerate(items):
         parsed = parse_category_list(item["categories"])
-        # Join back to comma-separated for the prompt
-        items[idx]["categories"] = (", ".join(parsed) if parsed else "")
+        items[idx]["categories"] = ", ".join(parsed) if parsed else ""
 
-    classifier = GroceryClassifier()
-    classifier.startServer()
-    all_results = {}
-    try:
-        for idx, item in enumerate(items):
-            try:
-                all_results[item["item_name"]] = {
-                    "base": classifier.classify(item["item_name"], item["categories"]),
-                    "flavor": "none",
-                    "form": "none",
-                }
-            except Exception as _:
-                raise Exception(f"failed for this item: {item} with exception: {_}")
-    finally:
-        classifier.stopServer()
+    names = [item["item_name"] for item in items]
+    categories_list = [
+        [c.strip() for c in item["categories"].split(",")] if item["categories"] else []
+        for item in items
+    ]
 
-    print(
-        f"Processed {len(items)} and tagged them with one of {len(classifier.tagging_classes)} classes"
+    loop = asyncio.get_event_loop()
+    results: list[str] = await loop.run_in_executor(
+        None,
+        partial(_classifier.classifyBatch, names, categories_list)
     )
 
-    return all_results
-
+    return {
+        name: {"base": tag, "flavor": "none", "form": "none"}
+        for name, tag in zip(names, results)
+    }
 
 def tagToNameBatch(tagsList: list[str], languageCode: str = "de"):
     print(f"started the tag to name batching with this input: {tagsList}")

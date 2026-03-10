@@ -1,8 +1,8 @@
 import subprocess
 import time
-import urllib.request
+from ollama import Client
+import os
 
-from openai import OpenAI
 from rich import print
 
 # ─── DEPENDENCY: llama.cpp server ────────────────────────────────────────────
@@ -19,7 +19,11 @@ from rich import print
 # Install Python dependency:  pip install openai
 # ─────────────────────────────────────────────────────────────────────────────
 
-DEFAULT_WISH_MAPPER_SERVER = "http://127.0.0.1:8081"
+DEFAULT_WISH_MAPPER_SERVER = "http://127.0.0.1:11434"
+if os.environ.get("RUNNING_IN_CONTAINER") == "true":
+    DEFAULT_WISH_MAPPER_SERVER = "http://ollama:11434"
+
+MODEL_NAME = "wish_mapper_model"
 
 
 class WishMapper:
@@ -30,8 +34,8 @@ class WishMapper:
             "Do not add explanations or extra text."
         )
 
-        print(f"[bold green]WishMapper → llama.cpp server:[/bold green] {server_url}")
-        self.client = OpenAI(base_url=f"{server_url}/v1", api_key="unused")
+        print(f"[bold green]WishMapper → ollama server:[/bold green] {server_url}")
+        self.client = Client(host=server_url, headers={})
         self._model_id: str = ""
         self._proc: subprocess.Popen | None = None
 
@@ -40,76 +44,22 @@ class WishMapper:
     def __enter__(self) -> "WishMapper":
         return self
 
-    def __exit__(self, *_) -> None:
-        self.stopServer()
-
-    # ── server lifecycle ─────────────────────────────────────────────────────
-
-    def startServer(
-        self,
-        model: str = "/app/other/models/Qwen3-VL-2B-Instruct-wish-mapping-q4_K_M.gguf",
-        port: int = 8081,
-        timeout: int = 60,
-    ) -> "WishMapper":
-        """Start the llama-server in the background and wait until it is ready."""
-        self._proc = subprocess.Popen(
-            [
-                "llama-server",
-                "-m", model,
-                "--host", "127.0.0.1",
-                "--port", str(port),
-                "--ctx-size", "1024",
-                "--log-disable",
-            ],
-            #stdout=subprocess.DEVNULL,
-            #stderr=subprocess.DEVNULL,
-        )
-        health_url = f"http://127.0.0.1:{port}/health"
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                with urllib.request.urlopen(health_url, timeout=2) as r:
-                    if r.status == 200:
-                        print(f"[bold green]WishMapper server ready on port {port}[/bold green]")
-                        models = self.client.models.list().data
-                        if not models:
-                            self._proc.terminate()
-                            self._proc = None
-                            raise RuntimeError("llama-server has no model loaded.")
-                        self._model_id = models[0].id
-                        print(f"[bold green]WishMapper → model:[/bold green] {self._model_id}")
-                        return self
-            except Exception:
-                pass
-            time.sleep(1)
-        self._proc.terminate()
-        self._proc = None
-        raise RuntimeError(f"llama-server did not become ready within {timeout}s")
-
-    def stopServer(self) -> None:
-        """Terminate the managed llama-server process and free its memory."""
-        if self._proc is not None and self._proc.poll() is None:
-            self._proc.terminate()
-            self._proc.wait()
-            print("[bold yellow]WishMapper server stopped.[/bold yellow]")
-        self._proc = None
-
     def mapWishItem(self, item_name: str, wished_items: list[str]) -> str:
         """
         Map a single item to a wished item.
         Used by server for single-item mapping.
-        
+
         Args:
             item_name: The grocery item name to map
             wished_items: List of wished item names to map to
-            
+
         Returns:
             The mapped wish item name, or 'none' if no match
         """
         # Shortcut: exact match
         if item_name in wished_items:
             return item_name
-        
+
         # ML path for single item
         batch_results = self._mapMlBatch([item_name], [wished_items])
         return batch_results[0]
@@ -118,15 +68,17 @@ class WishMapper:
         """Alias for mapWishItem - backwards compatibility"""
         return self.mapWishItem(item, wish_list)
 
-    def mapBatch(self, items: list[str], wish_lists: list[list[str]] | None = None) -> list[str]:
+    def mapBatch(
+        self, items: list[str], wish_lists: list[list[str]] | None = None
+    ) -> list[str]:
         """
         Batch mapping for multiple items.
-        
+
         Args:
             items: List of item name strings
             wish_lists: Optional parallel list of wish lists per item
                        (same length as items, or None to use empty lists)
-                       
+
         Returns:
             List of mapped wish item names
         """
@@ -160,16 +112,15 @@ class WishMapper:
         results = []
         for item, wish_list in zip(items, wish_lists):
             wish_str = ", ".join(wish_list) if wish_list else "none"
-            response = self.client.chat.completions.create(
-                model=self._model_id,
+            response = self.client.chat(
+                model=MODEL_NAME,
                 messages=[
                     {"role": "system", "content": self._system_prompt},
                     {"role": "user", "content": f"item: {item}\nwish_list: {wish_str}"},
                 ],
-                max_tokens=20,
-                temperature=0.0,
             )
-            results.append((response.choices[0].message.content or "").strip())
+            print(f"response: {response.message.content}")
+            results.append((response.message.content or "").strip())
         return results
 
 
@@ -177,13 +128,25 @@ if __name__ == "__main__":
     import time
 
     wished_items = [
-        "marmelade", "honig", "obst", "toast",
-        "milch", "käse", "joghurt", "butter",
-        "fleisch", "fisch",
-        "nudeln", "reis", "haferflocken",
+        "marmelade",
+        "honig",
+        "obst",
+        "toast",
+        "milch",
+        "käse",
+        "joghurt",
+        "butter",
+        "fleisch",
+        "fisch",
+        "nudeln",
+        "reis",
+        "haferflocken",
         "öl",
-        "getränke", "saft", "tee",
-        "süßigkeiten", "eis",
+        "getränke",
+        "saft",
+        "tee",
+        "süßigkeiten",
+        "eis",
         "snacks",
         "konserven",
         "tiefkühl",
@@ -192,18 +155,37 @@ if __name__ == "__main__":
 
     items = [
         # ── items expected to match ────────────────────────────────────────
-        "himbeer marmelade", "blütenhonig", "birnen", "french toast",
-        "vollmilch", "cheddar käse", "joghurt natur", "butter",
-        "hühnerbrust", "lachs filet", "rinderhackfleisch",
-        "spaghetti", "basmati reis", "haferflocken",
-        "olivenöl", "sonnenblumenöl",
-        "coca cola", "orangensaft", "grüner tee",
-        "schokoladentafel", "gummibärchen", "vanilleeis",
-        "kartoffelchips", "popcorn",
-        "dosentomaten", "kichererbsen dose", "mais konserve",
-        "tiefkühl pizza", "gefrorene erbsen",
-        "waschmittel", "zahnpasta",
-
+        "himbeer marmelade",
+        "blütenhonig",
+        "birnen",
+        "french toast",
+        "vollmilch",
+        "cheddar käse",
+        "joghurt natur",
+        "butter",
+        "hühnerbrust",
+        "lachs filet",
+        "rinderhackfleisch",
+        "spaghetti",
+        "basmati reis",
+        "haferflocken",
+        "olivenöl",
+        "sonnenblumenöl",
+        "coca cola",
+        "orangensaft",
+        "grüner tee",
+        "schokoladentafel",
+        "gummibärchen",
+        "vanilleeis",
+        "kartoffelchips",
+        "popcorn",
+        "dosentomaten",
+        "kichererbsen dose",
+        "mais konserve",
+        "tiefkühl pizza",
+        "gefrorene erbsen",
+        "waschmittel",
+        "zahnpasta",
         # ── hard Open Food Facts style items (should still map) ───────────
         # brand / product-name noise
         "Barilla Spaghetti n°5 500g",
@@ -251,7 +233,6 @@ if __name__ == "__main__":
         "Peso Thunfisch in eigenem Saft 185g",
         "Bonduelle Grüne Bohnen geschnitten 400g",
         "Rio Mare Thunfisch-Salat Mais 160g",
-
         # ── items NOT in wish list (expect 'none') ────────────────────────
         "Aspirin 500mg Tabletten 20 Stück",
         "Pampers Baby-Dry Windeln Größe 4",
@@ -271,20 +252,22 @@ if __name__ == "__main__":
         "WC Ente Active Gel ozean frisch 750ml",
     ]
 
-    with WishMapper().startServer() as mapper:
-        # --- Single item benchmark (server usage pattern) ---
-        start = time.perf_counter()
-        single = mapper.mapWishItem(items[0], wished_items)
-        single_time = time.perf_counter() - start
-        print(f"\n[bold]Single item:[/bold] '{items[0]}' → {single}  ({single_time:.2f}s)")
+    mapper = WishMapper()
+    # --- Single item benchmark (server usage pattern) ---
+    start = time.perf_counter()
+    single = mapper.mapWishItem(items[0], wished_items)
+    single_time = time.perf_counter() - start
+    print(f"\n[bold]Single item:[/bold] '{items[0]}' → {single}  ({single_time:.2f}s)")
 
-        # --- Batch benchmark ---
-        start = time.perf_counter()
-        wish_lists = [wished_items] * len(items)  # same wish list for all items
-        results = mapper.mapBatch(items, wish_lists)
-        batch_time = time.perf_counter() - start
+    # --- Batch benchmark ---
+    start = time.perf_counter()
+    wish_lists = [wished_items] * len(items)  # same wish list for all items
+    results = mapper.mapBatch(items, wish_lists)
+    batch_time = time.perf_counter() - start
 
-        print(f"\n[bold]Batch results ({len(items)} items in {batch_time:.2f}s, {batch_time/len(items)*1000:.0f}ms/item):[/bold]")
-        for item, mapped in zip(items, results):
-            print(f"  {item:<35} → {mapped}")
-    # server is terminated here automatically
+    print(
+        f"\n[bold]Batch results ({len(items)} items in {batch_time:.2f}s, {batch_time / len(items) * 1000:.0f}ms/item):[/bold]"
+    )
+    for item, mapped in zip(items, results):
+        print(f"  {item:<35} → {mapped}")
+# server is terminated here automatically

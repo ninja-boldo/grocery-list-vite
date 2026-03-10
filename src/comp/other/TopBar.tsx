@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, memo } from "react";
 import type { Item } from "../../App";
-import { PageModes } from "../../lib/utils.ts"
+import { PageModes, ApiItem, ApiResponse } from "../../lib/utils.ts"
 // ── Palette (mirrors Container) ────────────────────────────────────────────
 const P = {
   bg: "#0d1117",
@@ -14,7 +14,7 @@ const P = {
   subtle: "#4d5566",
 } as const;
 
-// ── MergedDropdown (reskinned) ─────────────────────────────────────────────
+// ── MergedDropdown ─────────────────────────────────────────────
 interface DropdownProps {
   subgroups: string[];
   sortOrder: string[];
@@ -232,30 +232,52 @@ const MergedDropdown = memo(
   },
 );
 
-// SearchBar TODO: expand this to do full db search via endpoint calling
 interface SearchProps {
   placeholder: string;
   itemsToRender: Item[];
   setItemsToRender: (items: Item[]) => void;
+  currentSortOrder: string,
+  pageMode: PageModes
 }
 
+
 const SearchBar = memo(
-  ({ placeholder, itemsToRender, setItemsToRender }: SearchProps) => {
+  ({ placeholder, itemsToRender, setItemsToRender, currentSortOrder, pageMode }: SearchProps) => {
     const [expanded, setExpanded] = useState(false);
     const [query, setQuery] = useState("");
     const allRef = useRef<Item[]>(itemsToRender);
     const inputRef = useRef<HTMLInputElement>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
+    const originalItemsToRender = itemsToRender
 
-    const runSearch = (q: string) => {
+
+    const fetchSearch = async (query: string): Promise<Item[]> => {
+      if(!(pageMode === PageModes.WishPage || pageMode === PageModes.HomePage)){
+        console.error("the page mode " + pageMode + " isnt searchable")
+      }
+      const isWish = pageMode === PageModes.WishPage ? true : false;
+ 
+      const params = new URLSearchParams({
+        only_wish_list: isWish.toString(),
+        sortOrder: currentSortOrder,
+        searchQuery: query,
+      });
+      const resp = await fetch(`/api/fetch_items?${params.toString()}`)
+      console.log(`fetch url: /api/fetch_items?${params.toString()}`)
+      const parsedResp = await resp.json()
+      return parsedResp.items
+    }
+
+    const runSearch = async (q: string) => {
       if (!q.trim()) {
-        setItemsToRender(allRef.current);
+        //setItemsToRender(allRef.current);
+        setItemsToRender(originalItemsToRender);
         return;
       }
+      const searchedItems: Item[] = await fetchSearch(q)
+      console.log(searchedItems)
       setItemsToRender(
-        allRef.current.filter((i) =>
-          i?.text?.toLowerCase().includes(q.toLowerCase()),
-        ),
+        searchedItems
       );
     };
 
@@ -263,6 +285,7 @@ const SearchBar = memo(
       setQuery("");
       setExpanded(false);
       setItemsToRender(allRef.current);
+      window.location.reload();
     };
 
     useEffect(() => {
@@ -441,12 +464,13 @@ interface TopBarProps {
   sidebarOpen: boolean;
   onSidebarToggle: () => void;
   subgroups: string[];
-  onFilter: ( (subgroup: string | null, sortOrder: string | undefined) => void ) | null;
+  onFilter: ( (subgroup: string | null, sortOrder: string | undefined) => void );
   onReset: () => void;
   onScanIncrease: () => void;
   onScanDecrease: () => void;
   items: Item[];
   setItems: (items: Item[]) => void;
+  currentSortOrder: string,
   mode: PageModes;
 }
 
@@ -461,6 +485,7 @@ const TopBar = ({
   onScanDecrease,
   items,
   setItems,
+  currentSortOrder,
   mode,
 }: TopBarProps) => {
   const scanBtnStyle = (): React.CSSProperties => ({
@@ -479,8 +504,8 @@ const TopBar = ({
     backgroundColor: P.surface,
     color: P.muted,
     transition: "all 0.15s",
-  });
-
+  }); 
+  
   return (
     <div
       style={{
@@ -649,10 +674,12 @@ const TopBar = ({
           placeholder="Search items…"
           itemsToRender={items}
           setItemsToRender={setItems}
+          currentSortOrder={currentSortOrder}
+          pageMode={mode}
         />
       </header>
     </div>
   );
 };
 
-export default TopBar;
+export default memo(TopBar);

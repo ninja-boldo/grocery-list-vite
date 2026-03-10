@@ -11,7 +11,7 @@ interface Props {
   classname: string | null;
   perish_dates: string[] | null;
   imageUrl: string;
-  tags: string[] | null;
+  tags: string | string[] | null;
   ean: string;
   isWishedNumber: number | null;
   onClickIncrease: (clickedNode: Props) => Promise<void>;
@@ -35,6 +35,11 @@ const Container = ({
   if (!tags) {
     tags = [];
   }
+  if(!Array.isArray(tags)){
+    tags = tags.split(",")
+  }
+
+  const checkedTags: string[] = tags;
 
   const [open, setOpen] = useState(false);
   const [isIncreasing, setIsIncreasing] = useState(false);
@@ -66,7 +71,7 @@ const Container = ({
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
-
+ 
   const dates = parseArr(perish_dates);
   const hasValidDates = dates.length > 0 && dates[0] !== "none";
   const displayName = classname && classname !== "none" ? classname : text;
@@ -87,7 +92,7 @@ const Container = ({
         onClickIncrease,
         onClickDecrease,
         ean,
-        tags,
+        tags: checkedTags,
         isWishedNumber,
       });
     } finally {
@@ -109,7 +114,7 @@ const Container = ({
         onClickIncrease,
         onClickDecrease,
         ean,
-        tags,
+        tags: checkedTags,
         isWishedNumber,
       });
     } finally {
@@ -120,7 +125,7 @@ const Container = ({
   const TEAL = "#0d9488";
   const TEAL_D = "#0f2a28";
   const TEAL_B = "#0d948850";
-  const TEAL_C = "#036348";
+  const TEAL_C = "#1a2e2b";
   const SURFACE = "#0d1117";
   const CARD = "#161b22";
   const BORDER = "#21262d";
@@ -136,7 +141,7 @@ const Container = ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    border: `1px solid ${active ? (activeColor === "teal" ? TEAL_B : "#ef444450") : BORDER}`,
+    border: `1px solid ${active ? (activeColor === "teal" ? TEAL_B : "#f43f5e40") : BORDER}`,
     borderRadius: 8,
     cursor: "pointer",
     fontSize: 16,
@@ -145,23 +150,23 @@ const Container = ({
     backgroundColor: active
       ? activeColor === "teal"
         ? TEAL_D
-        : "#4a1020"
+        : "#4c0519"
       : CARD,
     color: active
       ? activeColor === "teal"
         ? "#2dd4bf"
-        : "#f87171"
+        : "#fb7185"
       : "#6e7681",
     transition: "all 0.15s",
   });
 
   return (
-    <div className={cn("px-3 mb-2", style)}>
+    <div className={cn("px-3 m-2", style)}>
       <div
         ref={divRef}
         style={{
           backgroundColor: SURFACE,
-          border: `1px ridge ${TEAL_C}`,
+          border: `1px ridge ${open ? TEAL_C : "#1a2e2b"}`,
           borderRadius: 18,
           boxShadow: open
             ? `0 0 0 1px ${TEAL}22, 0 8px 32px ${TEAL}0e`
@@ -234,8 +239,8 @@ const Container = ({
                 if (!isDecreasing) {
                   const b = e.currentTarget as HTMLElement;
                   b.style.backgroundColor = "#1c2128";
-                  b.style.borderColor = "#ef444430";
-                  b.style.color = "#f87171";
+                  b.style.borderColor = "#f43f5e30";
+                  b.style.color = "#fb7185";
                 }
               }}
               onMouseLeave={(e) => {
@@ -341,7 +346,7 @@ const Container = ({
                       alignItems: "center",
                       justifyContent: "center",
                       overflow: "hidden",
-                      padding: 5,
+                      padding: 3,
                     }}
                   >
                     {open && (
@@ -349,11 +354,12 @@ const Container = ({
                         src={imageUrl}
                         loading="lazy"
                         decoding="async"
-                        alt=""
+                        alt={`image with url: ${imageUrl}`}
                         style={{
                           width: "100%",
                           height: "100%",
-                          objectFit: "contain",
+                          objectFit: "cover",
+                          borderRadius: "8px"
                         }}
                       />
                     )}
@@ -437,7 +443,7 @@ const Container = ({
                     Color_1={"#2dd4bf"}
                     Color_2={TEAL_D}
                   />
-                  {tags.map((text, idx) => (
+                  {checkedTags.map((text, idx) => (
                     <Badge
                       key={idx}
                       text_or_dates={text}
@@ -519,7 +525,7 @@ const Container = ({
                     width: 6,
                     height: 6,
                     borderRadius: 999,
-                    backgroundColor: "#f87171",
+                    backgroundColor: "#fb7185",
                     flexShrink: 0,
                   }}
                 />
