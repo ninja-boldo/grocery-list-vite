@@ -500,6 +500,7 @@ const fetchItems = useCallback(async () => {
       </div>
     )}
 
+
     {/* Voice Recorder */}
     <div className='flex flex-row'>
       <VoiceRecorder 
@@ -524,8 +525,9 @@ const fetchItems = useCallback(async () => {
       )}
     </div>
 
+
+
     {/* Floating Attribution Notice */}
-    <AttributionNotice floating />
 
   </div>
 );

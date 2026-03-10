@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import Badge, { BadgeType } from "./Badge";
 import CountPill from "./ContainerComp/CountPill";
+import AttributionNotice from "../utils/AttributionNotice";
 
 interface Props {
   text: string | null;
@@ -75,7 +76,7 @@ const Container = ({
   const dates = parseArr(perish_dates);
   const hasValidDates = dates.length > 0 && dates[0] !== "none";
   const displayName = classname && classname !== "none" ? classname : text;
-  const eanDisplay = ["", "0", "-1", "1"].includes(ean) ? null : ean;
+  const eanDisplay = ["", "0", "-1", "1"].includes(ean) ? "none" : ean;
 
   const handleInc = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -429,6 +430,8 @@ const Container = ({
                         >
                           {eanDisplay}
                         </span>
+
+                        <AttributionNotice compact />
                       </div>
                     )}
                   </div>

@@ -96,7 +96,7 @@ class Config:
     def get_csv_path(cls) -> str:
         if os.getenv("RUNNING_IN_CONTAINER"):
             return "/app/openfoodfacts.csv"
-        return "/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/openfoodfacts.csv"
+        return "openfoodfacts.csv"
 
 
 # Validate conflicting settings
@@ -2115,7 +2115,7 @@ async def rescanImageUrls(pool: asyncpg.Pool):
         ) as client:
             async with pool.acquire() as con:
                 for ean in eansToMod:
-                    image_url = await getImageUrlAsync(client, ean, delay=0.3)
+                    image_url = await getImageUrlAsync(client, ean, delay=1)
                     if image_url:
                         await con.execute(
                             "UPDATE item_list SET image_url = $1 WHERE ean = $2",
@@ -2406,8 +2406,6 @@ async def transcribe_endpoint(
         # Transcribe
         transcribed_text = transcribe(
             file_path=file_path,
-            model=request.app.state.whisper,
-            cloud=Config.ENABLE_WHISPER_MODEL_CLOUD,
         )
         logger.info(f"Transcription: {transcribed_text[:100]}...")
 
@@ -2534,13 +2532,20 @@ async def health_check(request: Request):
 # MAIN ENTRY POINT
 # ============================================================================
 if __name__ == "__main__":
+
+    cpuCount = os.cpu_count()
+    workerNumber = 1
+    if cpuCount:
+        workerNumber = min(cpuCount,4)
+    logger.info(f"using {workerNumber} workers")
+    
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
         port=3030,
         reload=False,
         log_level="info",
-        workers=1,
+        workers=workerNumber,
         loop="uvloop",
         http="httptools",
         access_log=True,
