@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, memo } from "react";
 import type { Item } from "../../App";
-import { PageModes, ApiItem, ApiResponse } from "../../lib/utils.ts"
+import { PageModes } from "../../lib/utils.ts"
 // ── Palette (mirrors Container) ────────────────────────────────────────────
 const P = {
   bg: "#0d1117",
@@ -30,7 +30,6 @@ const MergedDropdown = memo(
     const [isOpen, setIsOpen] = useState(false);
     const [activeTab, setActiveTab] = useState<"subs" | "sortOrder">("subs");
     const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
-    const [error, setError] = useState<string | null>(null);
 
     const ref = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -45,9 +44,11 @@ const MergedDropdown = memo(
     const currentElements = activeTab === "subs" ? subgroups : sortOrder;
 
     const handleElement = (el: string) => {
-      activeTab === "subs"
-        ? onClickElement(el, undefined)
-        : onClickElement(null, el);
+      if (activeTab === "subs") {
+        onClickElement(el, undefined);
+      } else {
+        onClickElement(null, el);
+      }
       setIsOpen(false);
     };
 
@@ -237,18 +238,21 @@ interface SearchProps {
   itemsToRender: Item[];
   setItemsToRender: (items: Item[]) => void;
   currentSortOrder: string,
-  pageMode: PageModes
+  pageMode: PageModes,
+  onSearchStateChange?: (isActive: boolean) => void;
 }
 
 
 const SearchBar = memo(
-  ({ placeholder, itemsToRender, setItemsToRender, currentSortOrder, pageMode }: SearchProps) => {
+  ({ placeholder, itemsToRender, setItemsToRender, currentSortOrder, pageMode, onSearchStateChange }: SearchProps) => {
     const [expanded, setExpanded] = useState(false);
     const [query, setQuery] = useState("");
+    const queryRef = useRef("");
     const allRef = useRef<Item[]>(itemsToRender);
+    const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const latestRequestIdRef = useRef(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
-    const originalItemsToRender = itemsToRender
 
 
     const fetchSearch = async (query: string): Promise<Item[]> => {
@@ -268,24 +272,43 @@ const SearchBar = memo(
       return parsedResp.items
     }
 
-    const runSearch = async (q: string) => {
-      if (!q.trim()) {
-        //setItemsToRender(allRef.current);
-        setItemsToRender(originalItemsToRender);
+    const runSearch = (q: string) => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+
+      const hasQuery = q.trim().length > 0;
+      onSearchStateChange?.(hasQuery);
+
+      const requestId = ++latestRequestIdRef.current;
+
+      if (!hasQuery) {
+        setItemsToRender(allRef.current);
         return;
       }
-      const searchedItems: Item[] = await fetchSearch(q)
-      console.log(searchedItems)
-      setItemsToRender(
-        searchedItems
-      );
+
+      debounceTimeoutRef.current = setTimeout(async () => {
+        try {
+          const searchedItems: Item[] = await fetchSearch(q);
+          // Ignore late responses from older queries.
+          if (requestId !== latestRequestIdRef.current) return;
+          setItemsToRender(searchedItems);
+        } catch (error) {
+          console.error("search failed", error);
+        }
+      }, 500);
     };
 
     const close = () => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+      latestRequestIdRef.current += 1;
+      onSearchStateChange?.(false);
+      queryRef.current = "";
       setQuery("");
       setExpanded(false);
       setItemsToRender(allRef.current);
-      window.location.reload();
     };
 
     useEffect(() => {
@@ -293,17 +316,45 @@ const SearchBar = memo(
     }, [expanded]);
 
     useEffect(() => {
+      if (!query.trim()) {
+        allRef.current = itemsToRender;
+      }
+    }, [itemsToRender, query]);
+
+    useEffect(() => {
+      queryRef.current = query;
+    }, [query]);
+
+    useEffect(() => {
+      return () => {
+        if (debounceTimeoutRef.current) {
+          clearTimeout(debounceTimeoutRef.current);
+        }
+      };
+    }, []);
+
+    useEffect(() => {
       const h = (e: MouseEvent) => {
         if (
           expanded &&
           wrapRef.current &&
-          !wrapRef.current.contains(e.target as Node)
-        )
-          close();
+          !wrapRef.current.contains(e.target as Node) &&
+          queryRef.current.trim().length === 0
+        ) {
+          if (debounceTimeoutRef.current) {
+            clearTimeout(debounceTimeoutRef.current);
+          }
+          latestRequestIdRef.current += 1;
+          onSearchStateChange?.(false);
+          queryRef.current = "";
+          setQuery("");
+          setExpanded(false);
+          setItemsToRender(allRef.current);
+        }
       };
       document.addEventListener("mousedown", h);
       return () => document.removeEventListener("mousedown", h);
-    }, [expanded]);
+    }, [expanded, onSearchStateChange, setItemsToRender]);
 
     if (!expanded) {
       return (
@@ -384,8 +435,10 @@ const SearchBar = memo(
           ref={inputRef}
           value={query}
           onChange={(e) => {
-            setQuery(e.target.value);
-            runSearch(e.target.value);
+            const nextQuery = e.target.value;
+            queryRef.current = nextQuery;
+            setQuery(nextQuery);
+            runSearch(nextQuery);
           }}
           onKeyDown={(e) => {
             if (e.key === "Escape") close();
@@ -402,6 +455,12 @@ const SearchBar = memo(
         {query && (
           <button
             onClick={() => {
+              if (debounceTimeoutRef.current) {
+                clearTimeout(debounceTimeoutRef.current);
+              }
+              latestRequestIdRef.current += 1;
+              onSearchStateChange?.(false);
+              queryRef.current = "";
               setQuery("");
               setItemsToRender(allRef.current);
               inputRef.current?.focus();
@@ -472,6 +531,7 @@ interface TopBarProps {
   setItems: (items: Item[]) => void;
   currentSortOrder: string,
   mode: PageModes;
+  onSearchStateChange?: (isActive: boolean) => void;
 }
 
 
@@ -487,6 +547,7 @@ const TopBar = ({
   setItems,
   currentSortOrder,
   mode,
+  onSearchStateChange,
 }: TopBarProps) => {
   const scanBtnStyle = (): React.CSSProperties => ({
     width: 36,
@@ -676,6 +737,7 @@ const TopBar = ({
           setItemsToRender={setItems}
           currentSortOrder={currentSortOrder}
           pageMode={mode}
+          onSearchStateChange={onSearchStateChange}
         />
       </header>
     </div>

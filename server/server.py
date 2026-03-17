@@ -300,7 +300,6 @@ async def ensure_schema_compliance(pool: asyncpg.Pool) -> None:
                 create_sql = (
                     f"CREATE TABLE {table_name} ({columns_def}{constraint_clause})"
                 )
-                print(f"creating table with sql query: {create_sql}")
                 await con.execute(create_sql)
                 logger.info(f"✓ Created table: {table_name}")
             else:
@@ -1243,7 +1242,7 @@ async def fetch_wish_mapping(
                 "count": row["count"],
                 "perish_dates": convert_timestamps_to_dates(row["timestamps"]),
                 "imageUrl": row["image_url"]
-                or "http://boldo.ddns.net/none_available.webp",
+                or "https://boldo.ddns.net/none_available.webp",
                 "tags": row["tags"],
             }
             for row in rows
@@ -1300,7 +1299,6 @@ async def fetch_items(
             searchQuery=searchQuery
         )
         
-        logger.info(f"time it took to get the query + params: {datetime.datetime.now() - startingTime}")
         
         rows = await request.app.state.db.fetch_with_retry(query, *params)
 
@@ -1313,13 +1311,11 @@ async def fetch_items(
                 "count": row["count"],
                 "perish_dates": convert_timestamps_to_dates(row["timestamps"]),
                 "imageUrl": row["image_url"]
-                or "http://boldo.ddns.net/none_available.webp",
+                or "https://boldo.ddns.net/none_available.webp",
                 "tags": row["tags"],
             }
             for row in rows
         ]
-        logger.info(f"fetch_items returned {len(item_list)} items")
-        logger.info(f"time it took to get to the return: {datetime.datetime.now() - startingTime}")
 
         return {"items": item_list, "count": len(item_list)}
 
@@ -2207,6 +2203,7 @@ async def add_ean_to_list(
     count_delta = safe_int(body.count, 1)
     subgroups = sanitize_string(body.subgroups, "none")
     wish_list = validate_wish_list(body.wish_list)
+    print(f"body in add ean to list: {body}")
 
     try:
         # Resolve identity AND check existence in the same connection

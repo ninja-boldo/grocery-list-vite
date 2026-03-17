@@ -7,7 +7,6 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export const transformItems = (data: ApiResponse): Item[] => {
-  console.log("item.tags:", data.items[0].tags);
   const transformed = data.items.map((item) => ({
     ean: item.ean,
     text: item.text,
@@ -19,7 +18,6 @@ export const transformItems = (data: ApiResponse): Item[] => {
     tags: item.tags.toString().split(","),
   }));
   
-  console.log("item.tags:", transformed[0].tags);
   return transformed;
 };
 

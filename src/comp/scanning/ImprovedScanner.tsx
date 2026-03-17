@@ -110,10 +110,10 @@ const sendEan = useCallback(async (eanToSend: string, quantityToSend?: number) =
   }
   lastSentRef.current = { ean: eanToSend, ts: now };
 
-  const finalCount = quantityToSend || count;
+  console.log("quantityToSend: ", quantityToSend, ", count: ", count)
+  const finalCount = count;
   const url = "/api/add_ean_to_list/"; 
   try {
-    
     const resp = await fetch(url, {
       method: "POST",
       body: JSON.stringify({

@@ -5,7 +5,6 @@ import ErrorContainer from './comp/utils/ErrorContainer';
 import { useNavigate } from 'react-router-dom';
 import SidebarComp from "./comp/other/Sidebar";
 import InfoContainer from './comp/utils/InfoContainer';
-import AttributionNotice from './comp/utils/AttributionNotice';
 import VoiceRecorder from './comp/utils/VoiceRecorder';
 import { Virtuoso } from 'react-virtuoso'
 import TopBar from './comp/other/TopBar';
@@ -48,9 +47,7 @@ async function apiCall<T>(
   let lastError: Error | null = null;
   
   for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      console.log(`Attempt ${attempt + 1}/${retries}`);
-      
+    try {      
       const response = await fetch(url, options);
       console.log("Fetch completed, status:", response.status, response.statusText);
       
@@ -114,16 +111,22 @@ function App() {
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [sortOrder, setSortOrder] = useState<string>("new-old")
   const [subgroupsToSearch, setSubgroupsToSearch] = useState<string>("");
+  const [isSearchActive, setIsSearchActive] = useState(false);
   
   const skipCountRef = useRef(0);
   const newItemsPerFetch = 20;
   const hasInitialFetchedRef = useRef(false);
+  const isSearchActiveRef = useRef(false);
 
   
   // Refs for audio recording
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-  const transcriptionTimer = useRef<NodeJS.Timeout | null>(null);
+  const transcriptionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    isSearchActiveRef.current = isSearchActive;
+  }, [isSearchActive]);
 
 
   useEffect(() => {
@@ -155,7 +158,6 @@ function App() {
 const fetchItemsWithParams = useCallback(async (subgroupsParam?: string, sortOrderParam?: string) => {
   // Prevent concurrent fetches
   if (isLoading) {
-    console.log("Fetch already in progress, skipping");
     return;
   }
   
@@ -177,19 +179,20 @@ const fetchItemsWithParams = useCallback(async (subgroupsParam?: string, sortOrd
     params.set('limit', newItemsPerFetch.toString());
     
     const url = `/api/fetch_items?${params}`;
-    console.log("Calling API with URL:", url, "Skip:", skipCountRef.current);
     
     const response = await apiCall<ApiResponse>(url);
+    const isDefaultListFetch = subgroupsParam === undefined && sortOrderParam === undefined;
+    if (isDefaultListFetch && isSearchActiveRef.current) {
+      return;
+    }
     noItemsAvailable = (response.items.length === 0 && data.length === 0) ? true : false
     console.log("API returned items:", response.items.length);
     
     if(response.items.length === 0){
       setHasMoreData(false);
-      console.log("No more items available");
     } else {
       // Update ref
       skipCountRef.current += response.items.length;
-      console.log("New skip count:", skipCountRef.current);
       
       const newItems = transformItems(response);
       
@@ -241,13 +244,9 @@ const fetchItems = useCallback(async () => {
 }, [fetchItemsWithParams]); // Add isLoading as dependency
 
   const loadMoreItems = useCallback(() => {
-    console.log("loading more items")
     // Only allow loadMore AFTER initial load is complete and not currently loading
-    if (!isInitialLoad && !isLoading) {
-      console.log("loadMoreItems called");
+    if (!isInitialLoad && !isLoading && !isSearchActiveRef.current) {
       fetchItems();
-    } else {
-      console.log("loadMoreItems skipped - initial load:", isInitialLoad, "isLoading:", isLoading);
     }
   }, [fetchItems, isInitialLoad, isLoading]);
 
@@ -405,7 +404,6 @@ const fetchItems = useCallback(async () => {
       hasInitialFetchedRef.current = true;
       fetchItems(); 
       fetchMetadata();
-      console.log("========== INITIAL USEEFFECT COMPLETE ==========");
     }
   }, [fetchItems, fetchMetadata]);
 
@@ -437,7 +435,6 @@ const fetchItems = useCallback(async () => {
     displayError = error;
   }
 
-  console.log("Rendering main UI - displayError:", displayError, "noItemsAvailable:", noItemsAvailable);
     
   return (
   <div className='h-screen '>
@@ -460,6 +457,7 @@ const fetchItems = useCallback(async () => {
           setItems={setData}
           currentSortOrder={sortOrder}
           mode={PageModes.HomePage}
+          onSearchStateChange={setIsSearchActive}
         />
 
         {/* Main Content with top padding */}
@@ -472,7 +470,7 @@ const fetchItems = useCallback(async () => {
                 style={{ height: '85vh' }}
                 data={data}
                 endReached={() => {
-                  if (hasMoreData && !isLoading) {
+                  if (hasMoreData && !isLoading && !isSearchActive) {
                     loadMoreItems();
                   }
                 }}
