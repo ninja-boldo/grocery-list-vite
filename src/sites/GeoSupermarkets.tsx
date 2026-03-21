@@ -4,6 +4,7 @@ import Map, { type Position } from "../comp/geo/Map"
 import TopBar from "@/comp/other/TopBar";
 import { PageModes } from "@/lib/utils";
 import Sidebar from "@/comp/other/Sidebar";
+import AuthPopup from "@/comp/other/AuthPopup";
 
 const GeoSupermarketSite = () => {
     const [userPos, setUserPos] = useState<Position>( {lon: 1, lat: 1, valid: false} );
@@ -12,6 +13,7 @@ const GeoSupermarketSite = () => {
     const [supermarketRadius,] = useState<number>(3000); // this is in meters
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
+    const [needReauth, setNeedReauth] = useState(false)
 
     useEffect(() => {
         console.log("trying")
@@ -21,26 +23,35 @@ const GeoSupermarketSite = () => {
     }, []);
 
 useEffect(() => {
-    if (userPos.valid) {
-        fetchCloseMarkets(userPos, supermarketRadius, setMarkedPositions);
-        setIsLoading(false)
+    if (!userPos.valid) {
+        return;
     }
-}, [userPos, supermarketRadius]);
+
+    setIsLoading(true)
+    fetchCloseMarkets(userPos, supermarketRadius, setMarkedPositions, () => setNeedReauth(true))
+        .catch((err) => setError(err?.message ?? 'Failed to fetch nearby supermarkets.'))
+        .finally(() => setIsLoading(false))
+}, [userPos, supermarketRadius, setError]);
 
     return (
         <div className="h-screen flex flex-col">
-            <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+            {
+                needReauth && <AuthPopup onAuthenticated={ () => setNeedReauth(false)} />
+            }
+            <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} setNeedReauth={setNeedReauth} />
             
             <TopBar 
                 sidebarOpen={isSidebarOpen}
                 onSidebarToggle={ () => (setIsSidebarOpen(!isSidebarOpen)) }
                 onScanIncrease={() => (null) }
                 onScanDecrease={ () => (null) }
-                onFilter={ () => (null) }
+                onFilter={ () => undefined }
                 onReset={ () => (null) }
                 items={[]}
                 setItems={ () => (null) }
-                subgroups={[]}
+                classNames={[]}
+                selectedClass={null}
+                currentSortOrder="new-old"
                 mode={PageModes.GeoPage}
             />
             {isLoading ? (

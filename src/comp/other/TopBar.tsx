@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, memo } from "react";
-import type { Item } from "../../App";
-import { PageModes } from "../../lib/utils.ts"
+import type { Item } from "../../App.tsx";
+import { PageModes, transformItems, type ApiResponse } from "../../lib/utils.ts"
+import { authApiCall } from "../../lib/authApi";
 // ── Palette (mirrors Container) ────────────────────────────────────────────
 const P = {
   bg: "#0d1117",
@@ -16,19 +17,28 @@ const P = {
 
 // ── MergedDropdown ─────────────────────────────────────────────
 interface DropdownProps {
-  subgroups: string[];
+  classNames: string[];
   sortOrder: string[];
+  selectedClass: string | null;
   onClickElement: (
-    subgroup: string | null,
+    classFilter: string | null,
     sortOrder: string | undefined,
   ) => void;
-  onClickReset: (subgroup: null, sortOrder: null) => void;
+  onClickReset: () => void;
 }
 
 const MergedDropdown = memo(
-  ({ subgroups, sortOrder, onClickElement, onClickReset }: DropdownProps) => {
+  (
+    {
+      classNames,
+      sortOrder,
+      selectedClass,
+      onClickElement,
+      onClickReset,
+    }: DropdownProps
+  ) => {
     const [isOpen, setIsOpen] = useState(false);
-    const [activeTab, setActiveTab] = useState<"subs" | "sortOrder">("subs");
+    const [activeTab, setActiveTab] = useState<"classes" | "sortOrder">("classes");
     const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
     const ref = useRef<HTMLDivElement>(null);
@@ -41,16 +51,18 @@ const MergedDropdown = memo(
       return () => document.removeEventListener("mousedown", h);
     }, []);
 
-    const currentElements = activeTab === "subs" ? subgroups : sortOrder;
+    const currentElements = activeTab === "classes" ? classNames : sortOrder;
 
     const handleElement = (el: string) => {
-      if (activeTab === "subs") {
+      if (activeTab === "classes") {
         onClickElement(el, undefined);
       } else {
         onClickElement(null, el);
       }
       setIsOpen(false);
     };
+
+    const buttonLabel = selectedClass ?? "filter";
 
     return (
       <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
@@ -59,7 +71,7 @@ const MergedDropdown = memo(
           {/* Label / reset button */}
           <button
             onClick={() => {
-              onClickReset(null, null);
+              onClickReset();
               setIsOpen(false);
             }}
             style={{
@@ -89,8 +101,8 @@ const MergedDropdown = memo(
                 ? "#5eead4"
                 : P.muted;
             }}
-          >
-            filter
+            >
+            {buttonLabel}
           </button>
           {/* Chevron toggle */}
           <button
@@ -150,7 +162,7 @@ const MergedDropdown = memo(
             <div
               style={{ display: "flex", borderBottom: `1px solid ${P.border}` }}
             >
-              {(["subs", "sortOrder"] as const).map((tab) => (
+              {(["classes", "sortOrder"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
@@ -173,7 +185,7 @@ const MergedDropdown = memo(
                     transition: "all 0.15s",
                   }}
                 >
-                  {tab === "subs" ? "Groups" : "Sort"}
+                  {tab === "classes" ? "Classes" : "Sort"}
                 </button>
               ))}
             </div>
@@ -265,11 +277,23 @@ const SearchBar = memo(
         only_wish_list: isWish.toString(),
         sortOrder: currentSortOrder,
         searchQuery: query,
+        userId: "1"
       });
-      const resp = await fetch(`/api/fetch_items?${params.toString()}`)
-      console.log(`fetch url: /api/fetch_items?${params.toString()}`)
-      const parsedResp = await resp.json()
-      return parsedResp.items
+      const parsedResp = await authApiCall<ApiResponse>(
+        `/api/fetch_items?${params.toString()}`,
+        undefined,
+        { retries: 1 },
+      );
+
+      console.log(`fetch url: /api/fetch_items?${params.toString()}`);
+      console.log("parsed resp:", parsedResp);
+
+      if (!Array.isArray(parsedResp?.items)) {
+        console.error("fetch_items returned unexpected payload", parsedResp);
+        return [];
+      }
+
+      return transformItems(parsedResp as ApiResponse);
     }
 
     const runSearch = (q: string) => {
@@ -522,8 +546,12 @@ const SearchBar = memo(
 interface TopBarProps {
   sidebarOpen: boolean;
   onSidebarToggle: () => void;
-  subgroups: string[];
-  onFilter: ( (subgroup: string | null, sortOrder: string | undefined) => void );
+  classNames: string[];
+  selectedClass: string | null;
+  onFilter: (
+    classFilter: string | null,
+    sortOrder: string | undefined,
+  ) => void;
   onReset: () => void;
   onScanIncrease: () => void;
   onScanDecrease: () => void;
@@ -538,7 +566,8 @@ interface TopBarProps {
 const TopBar = ({
   sidebarOpen,
   onSidebarToggle,
-  subgroups,
+  classNames,
+  selectedClass,
   onFilter,
   onReset,
   onScanIncrease,
@@ -652,13 +681,11 @@ const TopBar = ({
         {/* Filter dropdown */}
         {mode === PageModes.HomePage ? (
           <MergedDropdown
-            subgroups={subgroups}
+            classNames={classNames}
+            selectedClass={selectedClass}
             sortOrder={["A-Z", "Z-A", "new-old", "old-new"]}
             onClickElement={onFilter}
-            onClickReset={(a, b) => {
-              onReset();
-              return [a, b];
-            }}
+            onClickReset={onReset}
           />
         ) : (
           null

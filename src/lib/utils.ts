@@ -7,16 +7,23 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export const transformItems = (data: ApiResponse): Item[] => {
-  const transformed = data.items.map((item) => ({
-    ean: item.ean,
-    text: item.text,
-    subgroups: item.subgroups,
-    classname: item.classname,
-    count: item.count,
-    perish_dates: item.perish_dates ?? [],
-    imageUrl: item.imageUrl,
-    tags: item.tags.toString().split(","),
-  }));
+  const transformed = data.items.map((item) => {
+    const rawTags = (item.tags ?? "").toString();
+    const parsedTags = rawTags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+
+    return {
+      ean: item.ean,
+      text: item.text,
+      classname: parsedTags[0] ?? null,
+      count: item.count,
+      perish_dates: item.perish_dates ?? [],
+      imageUrl: item.imageUrl,
+      tags: parsedTags,
+    };
+  });
   
   return transformed;
 };
@@ -32,12 +39,10 @@ export enum PageModes {
 export interface ApiItem {
   ean: string;
   text: string;
-  subgroups: string | null;
-  classname: string | null;
   count: number;
   perish_dates: string[] | null;
   imageUrl: string;
-  tags: string;
+  tags: string | null;
 }
 
 export interface ApiResponse {

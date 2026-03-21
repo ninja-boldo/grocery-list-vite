@@ -6,6 +6,7 @@ const WishList        = React.lazy(() => import("./sites/WishList"));
 const ManualAdd       = React.lazy(() => import("./comp/scanning/ManualAdding")); 
 const GeoSupermarkets = React.lazy(() => import("./sites/GeoSupermarkets")); 
 const ImprovedScanner = React.lazy(() => import("./comp/scanning/ImprovedScanner")); 
+const SettingsPage    = React.lazy(() => import("./sites/Settings")); 
 
 const PageLoader = () => <div>Loading...</div>;
 
@@ -18,6 +19,7 @@ export default function AppRouter() {
         <Route path='/scanner/manual' element={<ManualAdd />} />
         <Route path='/market_mapping' element={<GeoSupermarkets />} />
         <Route path="/scanner"        element={<ImprovedScanner />} />
+        <Route path="/settings"       element={<SettingsPage />} />
       </Routes>
     </Suspense>
   );

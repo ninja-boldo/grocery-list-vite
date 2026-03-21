@@ -4,9 +4,10 @@ import Badge, { BadgeType } from "./Badge";
 import CountPill from "./ContainerComp/CountPill";
 import AttributionNotice from "../utils/AttributionNotice";
 
-interface Props {
+export interface ContainerProps {
   text: string | null;
-  subgroups: string | null;
+  subgroups?: string | null;
+  shortened_name: string | null;
   style?: string;
   count: number;
   classname: string | null;
@@ -15,13 +16,13 @@ interface Props {
   tags: string | string[] | null;
   ean: string;
   isWishedNumber: number | null;
-  onClickIncrease: (clickedNode: Props) => Promise<void>;
-  onClickDecrease: (clickedNode: Props) => Promise<void>;
+  onClickIncrease: (clickedNode: ContainerProps) => Promise<void>;
+  onClickDecrease: (clickedNode: ContainerProps) => Promise<void>;
 }
 
 const Container = ({
   text,
-  subgroups,
+  shortened_name,
   style,
   count,
   classname,
@@ -32,7 +33,7 @@ const Container = ({
   isWishedNumber,
   onClickIncrease,
   onClickDecrease,
-}: Props) => {
+}: ContainerProps) => {
   if (!tags) {
     tags = [];
   }
@@ -75,7 +76,7 @@ const Container = ({
  
   const dates = parseArr(perish_dates);
   const hasValidDates = dates.length > 0 && dates[0] !== "none";
-  const displayName = classname && classname !== "none" ? classname : text;
+  const displayName = shortened_name && shortened_name !== "none" ? shortened_name : text;
   const eanDisplay = ["", "0", "-1", "1"].includes(ean) ? "none" : ean;
 
   const handleInc = async (e: React.MouseEvent) => {
@@ -84,7 +85,7 @@ const Container = ({
     try {
       await onClickIncrease({
         text,
-        subgroups,
+        shortened_name,
         style,
         count,
         classname,
@@ -106,7 +107,7 @@ const Container = ({
     try {
       await onClickDecrease({
         text,
-        subgroups,
+        shortened_name,
         style,
         count,
         classname,

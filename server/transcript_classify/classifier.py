@@ -1,8 +1,8 @@
 import asyncio
 from functools import partial
 from typing import List, Union, Dict, Literal, Any
-from transcription.groceryClassifierClass import GroceryClassifier
-from transcription.wishMapperClass import WishMapper
+from transcript_classify.groceryClassifierClass import GroceryClassifier
+from transcript_classify.wishMapperClass import WishMapper
 from pydantic import BaseModel, Field, ValidationError
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq

@@ -4,6 +4,8 @@ import { Html5Qrcode } from 'html5-qrcode';
 import ShortPopup from '../utils/ShortPopUp';
 import TopBar from '@/comp/other/TopBar';
 import Sidebar from '@/comp/other/Sidebar';
+import AuthPopup from '@/comp/other/AuthPopup';
+import { authApiCall, hasStoredJwtToken } from '@/lib/authApi';
 import { PageModes } from '@/lib/utils';
 
 // ── Palette (mirrors main site) ─────────────────────────────────────────────
@@ -31,7 +33,6 @@ export default function ImprovedScanner() {
 
   // Parse URL parameters
   const queryParams = new URLSearchParams(location.search);
-  const subgroups = queryParams.get('subgroups') || '';
   const count = queryParams.get('count') || '1';
   const isWishList = queryParams.get('wishlist') === 'true';
 
@@ -52,13 +53,14 @@ export default function ImprovedScanner() {
   const [lastScanTime, setLastScanTime] = useState<string>('');
   const [scannedCode, setScannedCode] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [needReauth, setNeedReauth] = useState(false);
   
   const scanLockRef = useRef(false);
   const lastSentRef = useRef<{ ean?: string; ts?: number }>({});
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const scannerIdRef = useRef('qr-reader');
-  const quantityTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const scanSubmitTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const quantityTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scanSubmitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Logging helper
   const log = useCallback((message: string, data?: unknown) => {
@@ -66,6 +68,30 @@ export default function ImprovedScanner() {
       console.log(`[Scanner] ${message}`, data || '');
     }
   }, [verbose]);
+
+  useEffect(() => {
+    if (!hasStoredJwtToken()) {
+      setNeedReauth(true);
+    }
+  }, []);
+
+  const handleNeedReauth = useCallback(() => {
+    setNeedReauth(true);
+    setError('Authentication required. Please sign in again.');
+  }, []);
+
+  const apiCall = useCallback(async <T,>(
+    url: string,
+    options: RequestInit = {},
+    retries = 3,
+    onUnauthorized?: () => void,
+  ): Promise<T> =>
+    authApiCall<T>(url, options, {
+      retries,
+      retryDelayMs: 300,
+      onUnauthorized,
+    }),
+  []);
 
 
 
@@ -111,25 +137,30 @@ const sendEan = useCallback(async (eanToSend: string, quantityToSend?: number) =
   lastSentRef.current = { ean: eanToSend, ts: now };
 
   console.log("quantityToSend: ", quantityToSend, ", count: ", count)
-  const finalCount = count;
+  const parsedModeCount = Number(count);
+  const finalCount = Number.isFinite(parsedModeCount) ? parsedModeCount : 1;
+  const requestCount = typeof quantityToSend === 'number' ? quantityToSend : finalCount;
   const url = "/api/add_ean_to_list/"; 
   try {
-    const resp = await fetch(url, {
-      method: "POST",
-      body: JSON.stringify({
-        ean: eanToSend,
-        count: finalCount,
-        subgroups: subgroups,
-        wish_list: String(isWishList)
-      }),
-      headers: {
-        "Content-type": "application/json; charset=UTF-8"
-      }
-    });
-
-    if (resp.ok) {
-      
-      const data = await resp.json()
+    const data = await apiCall<{
+      known_to_db?: boolean;
+      detail?: string;
+    }>(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+        body: JSON.stringify({
+          ean: eanToSend,
+          count: requestCount,
+          wish_list: String(isWishList),
+        }),
+      },
+      1,
+      handleNeedReauth,
+    );
 
       if (data.known_to_db && data.known_to_db === true && !( String(data.detail).toLowerCase() === "failed to add item")) {
         console.log('Item recognized by database');
@@ -144,21 +175,17 @@ const sendEan = useCallback(async (eanToSend: string, quantityToSend?: number) =
           setError("")
         }, 2500);
       }
-    } else {
-      setError("ean not found")
-      console.error('Server returned an error status:', resp.status);
-      setTimeout(() => {
-          setError("")
-        }, 2500);
-    }
   } catch (err) {
+    if (err instanceof Error && err.message.includes('401')) {
+      return;
+    }
     setError("network error")
     console.error('Network error or parsing error:', err);
     setTimeout(() => {
           setError("")
         }, 2500);
   }
-}, [subgroups, count, isWishList, log]);
+}, [apiCall, count, handleNeedReauth, isWishList, log]);
 
   // Send item by name to server
   const sendByName = useCallback(async (itemName: string, quantityToSend: number) => {
@@ -166,20 +193,22 @@ const sendEan = useCallback(async (eanToSend: string, quantityToSend?: number) =
     try {
       const url = "/api/add_ean_to_list/"
       console.log('Sending item by name to server', { itemName, count: quantityToSend, url });
-      await fetch(url, {
-      method: "POST",
-      body: JSON.stringify({
-        item_name: itemName,
-        count: quantityToSend,
-        subgroups: subgroups,
-        wish_list: String(isWishList)
-      }),
-      headers: {
-        "Content-type": "application/json; charset=UTF-8"
-      }
-    }).catch(err => {
-      console.error('Error sending EAN:', err);
-    });
+      await apiCall(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json; charset=UTF-8',
+          },
+          body: JSON.stringify({
+            item_name: itemName,
+            count: quantityToSend,
+            wish_list: String(isWishList),
+          }),
+        },
+        1,
+        handleNeedReauth,
+      );
       
       
       // Haptic feedback
@@ -189,10 +218,13 @@ const sendEan = useCallback(async (eanToSend: string, quantityToSend?: number) =
 
       
     } catch (err) {
+      if (err instanceof Error && err.message.includes('401')) {
+        return;
+      }
       console.error('Error sending item:', err);
       setError('Failed to add item');
     }
-  }, [subgroups, isWishList]);
+  }, [apiCall, handleNeedReauth, isWishList]);
 
   // Handle quantity change with auto-submit timer
   const handleQuantityChange = (delta: number, isScanner = false) => {
@@ -389,18 +421,28 @@ const sendEan = useCallback(async (eanToSend: string, quantityToSend?: number) =
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: P.bg }}>
+      {needReauth && (
+        <AuthPopup
+          onAuthenticated={() => {
+            setNeedReauth(false);
+            setError('');
+          }}
+        />
+      )}
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <TopBar
         sidebarOpen={sidebarOpen}
         onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-        subgroups={[]}
-        onFilter={null}
+        classNames={[]}
+        selectedClass={null}
+        onFilter={() => undefined}
         onReset={() => null}
         onScanIncrease={() => null}
         onScanDecrease={() => null}
         items={[]}
         setItems={() => null}
+        currentSortOrder="new-old"
         mode={PageModes.GeoPage}
       />
 
