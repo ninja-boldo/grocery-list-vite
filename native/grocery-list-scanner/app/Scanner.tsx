@@ -2,8 +2,15 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import { useCallback, useRef, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import { useAuthSession } from "../lib/AuthSession";
+import { mobileApiUrl, MOBILE_LOGIN_ROUTE } from "../lib/config";
+
+type InventoryAction = "add" | "remove";
 
 export default function Scanner() {
+  const navigation = useNavigation<any>();
+  const { jwtToken, clearSession } = useAuthSession();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [ean, setEan] = useState("");
@@ -47,36 +54,74 @@ export default function Scanner() {
     setCount(1);
   }, []);
 
-  const sendEan = useCallback(async () => {
+  const openSite = useCallback(() => {
+    navigation.navigate("web");
+  }, [navigation]);
+
+  const abortScan = useCallback(() => {
+    if (!scanned || sending) return;
+    Haptics.selectionAsync();
+    resetScanner();
+    showToast(false, "Scan aborted");
+  }, [resetScanner, scanned, sending, showToast]);
+
+  const submitEan = useCallback(async (action: InventoryAction) => {
     if (sending) return;
+    if (!ean) return;
+
+    if (!jwtToken) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      showToast(false, "Session missing. Please sign in again.");
+      navigation.navigate(MOBILE_LOGIN_ROUTE);
+      return;
+    }
+
+    const scannedEan = ean;
+    const requestedCount = Math.max(1, count);
+    const countDelta = action === "remove" ? -requestedCount : requestedCount;
+
     setSending(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     resetScanner();
 
     try {
-      const resp = await fetch("https://boldo.ddns.net/api/add_ean_to_list/", {
+      const authValue = jwtToken.startsWith("Bearer ")
+        ? jwtToken
+        : `Bearer ${jwtToken}`;
+
+      const resp = await fetch(mobileApiUrl("/add_ean_to_list/"), {
         method: "POST",
         body: JSON.stringify({
-          ean,
-          count,
-          subgroups: "",
+          ean: scannedEan,
+          count: countDelta,
           wish_list: "false",
         }),
-        headers: { "Content-type": "application/json; charset=UTF-8" },
+        headers: {
+          "Content-type": "application/json; charset=UTF-8",
+          Authorization: authValue,
+        },
       });
+
+      if (resp.status === 401) {
+        clearSession();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        showToast(false, "Session expired. Please sign in again.");
+        navigation.navigate(MOBILE_LOGIN_ROUTE);
+        return;
+      }
 
       if (resp.ok) {
         const data = await resp.json();
         console.log("response: ", data);
-        const ok =
-          data.known_to_db === true &&
-          String(data.detail ?? "").toLowerCase() !== "failed to add item";
-        if (ok) {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          showToast(true, `Added ${data.product_name}`);
+        const itemLabel = String(data.product_name || scannedEan || "item");
+        const operation = String(data.operation || "").toLowerCase();
+        const isRemoveSuccess = operation === "delete" || action === "remove";
+
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (isRemoveSuccess) {
+          showToast(true, `Removed ${requestedCount}x ${itemLabel}`);
         } else {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-          showToast(false, String(data.detail || "EAN not found"));
+          showToast(true, `Added ${requestedCount}x ${itemLabel}`);
         }
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -88,7 +133,7 @@ export default function Scanner() {
     } finally {
       setSending(false);
     }
-  }, [count, ean, sending, showToast]);
+  }, [clearSession, count, ean, jwtToken, navigation, resetScanner, sending, showToast]);
 
   // ── Permission screens ───────────────────────────────────────────────
   if (!permission) return <View style={styles.container} />;
@@ -160,6 +205,44 @@ export default function Scanner() {
         </Animated.View>
       )}
 
+      {!jwtToken && (
+        <View style={styles.authBanner}>
+          <Text style={styles.authBannerText}>Sign in required to submit scans</Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.authBannerBtn,
+              pressed && { opacity: 0.85 },
+            ]}
+            onPress={() => navigation.navigate(MOBILE_LOGIN_ROUTE)}
+          >
+            <Text style={styles.authBannerBtnText}>Open login</Text>
+          </Pressable>
+        </View>
+      )}
+
+      <View style={styles.topControls}>
+        <Pressable
+          style={({ pressed }) => [styles.topBtn, pressed && { opacity: 0.85 }]}
+          onPress={openSite}
+        >
+          <Text style={styles.topBtnText}>Back to Site</Text>
+        </Pressable>
+        {scanned && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.topBtn,
+              styles.abortBtn,
+              pressed && { opacity: 0.85 },
+              sending && { opacity: 0.45 },
+            ]}
+            disabled={sending}
+            onPress={abortScan}
+          >
+            <Text style={styles.abortBtnText}>Abort Scan</Text>
+          </Pressable>
+        )}
+      </View>
+
       {/* Scanned bottom sheet */}
       {scanned && (
         <View style={styles.sheet}>
@@ -214,10 +297,24 @@ export default function Scanner() {
                 sending && { opacity: 0.5 },
               ]}
               disabled={sending}
-              onPress={sendEan}
+              onPress={() => submitEan("add")}
             >
               <Text style={styles.btnPrimaryText}>
-                {sending ? "Sending…" : "Add to List"}
+                {sending ? "Working..." : `Add ${count}`}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.btnDanger,
+                pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
+                sending && { opacity: 0.5 },
+              ]}
+              disabled={sending}
+              onPress={() => submitEan("remove")}
+            >
+              <Text style={styles.btnDangerText}>
+                {sending ? "Working..." : `Remove ${count}`}
               </Text>
             </Pressable>
           </View>
@@ -299,6 +396,75 @@ const styles = StyleSheet.create({
   toastError: { backgroundColor: "#fee2e2" },
   toastIcon: { fontSize: 16, fontWeight: "700" },
   toastText: { fontSize: 13, fontWeight: "600" },
+
+  authBanner: {
+    position: "absolute",
+    top: 110,
+    left: 18,
+    right: 18,
+    backgroundColor: "rgba(17,24,39,0.86)",
+    borderColor: "rgba(45,212,191,0.45)",
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  authBannerText: {
+    color: "#d1fae5",
+    fontSize: 12,
+    fontWeight: "600",
+    flex: 1,
+  },
+  authBannerBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(45,212,191,0.45)",
+    backgroundColor: "#0f2a28",
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+  },
+  authBannerBtnText: {
+    color: "#5eead4",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+
+  topControls: {
+    position: "absolute",
+    top: 54,
+    left: 18,
+    right: 18,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 10,
+  },
+  topBtn: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.3)",
+    backgroundColor: "rgba(17,24,39,0.76)",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  topBtnText: {
+    color: "#e5e7eb",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  abortBtn: {
+    borderColor: "rgba(248,113,113,0.55)",
+    backgroundColor: "rgba(127,29,29,0.62)",
+  },
+  abortBtnText: {
+    color: "#fecaca",
+    fontSize: 12,
+    fontWeight: "700",
+  },
 
   // bottom sheet
   sheet: {
@@ -387,4 +553,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   btnPrimaryText: { fontSize: 15, fontWeight: "700", color: "#111" },
+  btnDanger: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: "#7f1d1d",
+    borderWidth: 1,
+    borderColor: "#ef4444",
+    alignItems: "center",
+  },
+  btnDangerText: { fontSize: 15, fontWeight: "700", color: "#fee2e2" },
 });

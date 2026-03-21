@@ -217,6 +217,11 @@ function App() {
                     return;
                 }
 
+                if (!hasStoredJwtToken()) {
+                    onNeedReauth();
+                    return;
+                }
+
                 setIsLoading(true);
                 setError(null);
 

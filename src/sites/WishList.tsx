@@ -151,6 +151,11 @@ function WishList() {
 
   // Data fetching with self-healing
   const fetchItems = useCallback(async () => {
+    if (!hasStoredJwtToken()) {
+      handleNeedReauth();
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 

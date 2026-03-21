@@ -359,6 +359,46 @@ async def itemIsKnown(con: asyncpg.pool.PoolConnectionProxy, ean: str | None) ->
     return len(res) > 0
 
 
+async def resolveExistingEanFromName(
+    con: asyncpg.pool.PoolConnectionProxy,
+    userId: int,
+    item_name: str,
+) -> str | None:
+    # Prefer item IDs that already exist in the current user's inventory.
+    user_owned_ean = await con.fetchval(
+        """
+        SELECT inv.item_id
+        FROM inventory inv
+        JOIN items it ON it.item_id = inv.item_id
+        WHERE inv.user_id = $1
+          AND lower(COALESCE(it.item_name, '')) = lower($2)
+          AND inv.item_id NOT LIKE 'manual-%'
+          AND inv.item_id NOT IN ('-1', '0', '1')
+        ORDER BY inv.created_at DESC NULLS LAST
+        LIMIT 1
+        """,
+        userId,
+        item_name,
+    )
+    if user_owned_ean:
+        return user_owned_ean
+
+    # Fallback to any canonical item ID for this name.
+    global_ean = await con.fetchval(
+        """
+        SELECT it.item_id
+        FROM items it
+        WHERE lower(COALESCE(it.item_name, '')) = lower($1)
+          AND it.item_id NOT LIKE 'manual-%'
+          AND it.item_id NOT IN ('-1', '0', '1')
+        ORDER BY it.last_checked_at DESC NULLS LAST
+        LIMIT 1
+        """,
+        item_name,
+    )
+    return global_ean
+
+
 async def handleManualItems(con: asyncpg.pool.PoolConnectionProxy, item_name: str, count: int, userId: int, is_wish: bool, date: dt.datetime) -> dict:
     import hashlib
     # Use a stable hash of the item name as the item_id so that different
@@ -392,7 +432,17 @@ async def addItemToInventory(http_client: httpx.AsyncClient, pool: asyncpg.Pool,
         if not username:
             raise ValueError(f"the username shouldnt be none for this function call")
 
-        if not ean and not username:
+        if isinstance(ean, str):
+            ean = ean.strip() or None
+
+        if isinstance(item_name, str):
+            stripped_item_name = item_name.strip()
+            if stripped_item_name.lower() in {"", "none", "null", "undefined"}:
+                item_name = None
+            else:
+                item_name = stripped_item_name
+
+        if not ean and not item_name:
             return {"state": "error", "operation": "unknown", "error": "you need either the ean or the item name to be set"}
 
         dateNormalized = convertToBerlinTime(date) if date else dt.datetime.now(ZoneInfo("Europe/Berlin"))
@@ -404,16 +454,40 @@ async def addItemToInventory(http_client: httpx.AsyncClient, pool: asyncpg.Pool,
             if userId is None:
                 return {"state": "error", "operation": "unknown", "error": f"user '{username}' not found"}
 
+            if not ean and item_name:
+                resolved_ean = await resolveExistingEanFromName(con, userId, item_name)
+                if resolved_ean:
+                    logger.info(
+                        "Resolved missing ean from item_name for user %s: '%s' -> %s",
+                        username,
+                        item_name,
+                        resolved_ean,
+                    )
+                    ean = resolved_ean
+
             if count >= 1:
                 try:
                     logger.info("we are in count >= 1")
 
                     if not ean:
+                        if not item_name:
+                            return {
+                                "state": "error",
+                                "operation": "add",
+                                "error": "manual add requires item_name",
+                            }
                         return await handleManualItems(con, item_name, count, userId, is_wish, dateNormalized)
                     else:
                         itemKnown = await itemIsKnown(con, ean)
                         if not itemKnown and not item_name:
                             item_name = await getItemNameAsync(http_client, ean=ean, logger=logger, delay=0.0)
+
+                        if isinstance(item_name, str):
+                            stripped_item_name = item_name.strip()
+                            if stripped_item_name.lower() in {"", "none", "null", "undefined"}:
+                                item_name = None
+                            else:
+                                item_name = stripped_item_name
 
                         if not itemKnown:
                             await con.execute("""
@@ -432,7 +506,14 @@ async def addItemToInventory(http_client: httpx.AsyncClient, pool: asyncpg.Pool,
                             FROM generate_series(1, $5)
                         """, ean, userId, is_wish, dateNormalized, count)
 
-                        return {"state": "success", "operation": "add"}
+                        return {
+                            "state": "success",
+                            "operation": "add",
+                            "mode": "ean",
+                            "ean": ean,
+                            "product_name": item_name,
+                            "known_to_db": itemKnown,
+                        }
                 except Exception as e:
                     logger.error(f"addItemToInventory add branch failed: {e}")
                     logger.error(traceback.format_exc())
@@ -454,7 +535,13 @@ async def addItemToInventory(http_client: httpx.AsyncClient, pool: asyncpg.Pool,
                         """, effective_id, userId, abs(count))
                     else:
                         logger.info("nothing deletable")
-                    return {"state": "success", "operation": "delete"}
+                    return {
+                        "state": "success",
+                        "operation": "delete",
+                        "mode": "ean" if ean else "manual adding",
+                        "ean": ean,
+                        "product_name": item_name,
+                    }
                 except Exception as e:
                     logger.error(f"addItemToInventory delete branch failed: {e}")
                     logger.error(traceback.format_exc())
@@ -613,6 +700,16 @@ async def request_middleware(request: Request, call_next):
             print(auth_token)
             validRequest = verify_token(auth_token)
             if not validRequest:
+                logger.info(
+                    "Auth rejected: method=%s path=%s query=%s auth_present=%s ua=%s referer=%s origin=%s",
+                    request.method,
+                    request.url.path,
+                    request.url.query,
+                    auth_token != "none",
+                    request.headers.get("user-agent", ""),
+                    request.headers.get("referer", ""),
+                    request.headers.get("origin", ""),
+                )
                 return JSONResponse(
                     status_code=401,
                     content={
@@ -756,7 +853,7 @@ async def fetch_items(
                 "count": row["count"],
                 "perish_dates": [reformatTimeStamp(ts) for ts in row["perish_dates"]],
                 "imageUrl": row["image_url"] or "https://boldo.ddns.net/none_available.webp",
-                "tags": row["class"],
+                "tags": row["class"] or "",
             }
             for row in rows
         ]
@@ -1379,12 +1476,31 @@ async def rescanImageUrls(pool: asyncpg.Pool, delay: float = 1):
 async def add_ean_to_list(
     request: Request, body: AddEanRequest
 ):
-    if not body.ean and not body.item_name:
+    incoming_ean = (body.ean or "").strip()
+    ean = incoming_ean or None
+
+    incoming_item_name = (body.item_name or "").strip() if body.item_name is not None else ""
+    item_name = (
+        None
+        if incoming_item_name.lower() in {"", "none", "null", "undefined"}
+        else incoming_item_name
+    )
+
+    if not ean and not item_name:
         raise HTTPException(status_code=400, detail="Must supply ean or item_name")
 
-    item_name = body.item_name
-    count_delta = int(body.count) if body.count else 1
+    count_delta = int(body.count) if body.count is not None else 1
     is_wish = validate_wish_list(body.wish_list)
+
+    logger.info(
+        "add_ean_to_list normalized payload: raw_ean=%r raw_item_name=%r ean=%r item_name=%r count=%s wish=%s",
+        body.ean,
+        body.item_name,
+        ean,
+        item_name,
+        count_delta,
+        is_wish,
+    )
 
     print(f"body in add ean to list: {body}")
 
@@ -1394,22 +1510,24 @@ async def add_ean_to_list(
     try:
         if count_delta == 0:
             return {
-                "ean": body.ean,
+                "ean": ean,
                 "product_name": item_name,
                 "done": True,
                 "known_to_db": "could not check",
+                "mode": "ean" if ean else "manual adding",
                 "operation": "nothing",
             }
         else:
             res = await addItemToInventory(request.app.state.http_client, request.app.state.pool,
-                               ean=body.ean, username=username, item_name=item_name,
+                               ean=ean, username=username, item_name=item_name,
                                count=count_delta, is_wish=is_wish)
             logger.info(f"we have gotten this result: {res}")
             return {
-                "ean": body.ean,
-                "product_name": item_name,
+                "ean": res.get("ean", ean),
+                "product_name": res.get("product_name", item_name),
                 "done": True,
-                "known_to_db": True,
+                "known_to_db": res.get("known_to_db", True),
+                "mode": res.get("mode", "ean" if ean else "manual adding"),
                 "operation": res.get("operation", "unknown"),
             }
     except Exception as e:
