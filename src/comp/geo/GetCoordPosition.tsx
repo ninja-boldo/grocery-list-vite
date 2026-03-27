@@ -1,16 +1,21 @@
-import "../../styles/geo.css"
-import type { Position } from "./Map"
-import { authApiCall, hasStoredJwtToken } from "@/lib/authApi"
+import "../../styles/geo.css";
+import type { Position } from "./Map";
+import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
 
 interface ApiItem {
   name: string;
-  lat: number;
-  lon: number;
-  street: string;
-  housenumber: string;
-  openingHours: string;
-  website: string;
-  brand: string;
+  lat?: number;
+  lon?: number;
+  latitude?: number;
+  longitude?: number;
+  address?: string;
+  street?: string;
+  housenumber?: string;
+  postcode?: string;
+  brand?: string;
+  chain?: string;
+  opening_str?: string;
+  opening_hours?: string;
 }
 
 interface ApiResponse {
@@ -31,29 +36,46 @@ export const getUserLocation = (): Promise<GeolocationCoordinates> => {
   });
 };
 
-export const fetchCloseMarkets = async (pos: Position, radius: number, setMarkedPos: ((positions: Position[]) => void), onAuthError: () => void) => {
-  const url = `/api/get_supermarkets_close?lat=${encodeURIComponent(pos.lat)}&lon=${encodeURIComponent(pos.lon)}&radius_meters=${encodeURIComponent(radius)}`
+export const fetchCloseMarkets = async (
+  pos: Position,
+  radius: number,
+  setMarkedPos: (positions: Position[]) => void,
+  onAuthError: () => void,
+) => {
+  const url = `/api/get_supermarkets_close?lat=${encodeURIComponent(pos.lat)}&lon=${encodeURIComponent(pos.lon)}&radius_meters=${encodeURIComponent(radius)}`;
 
   if (!hasStoredJwtToken()) {
-    onAuthError()
-    return
+    onAuthError();
+    return;
   }
 
   try {
     const parsedResp = await authApiCall<ApiResponse>(url, undefined, {
       retries: 1,
       onUnauthorized: onAuthError,
-    })
+    });
 
     const markedPositions: Position[] = [];
-    parsedResp.results.forEach(item => {
-      markedPositions.push({ lat: item.lat, lon: item.lon, text: item.name })
+    parsedResp.results.forEach((item) => {
+      const lat = item.latitude ?? item.lat;
+      const lon = item.longitude ?? item.lon;
+      if (typeof lat !== "number" || typeof lon !== "number") {
+        return;
+      }
+
+      const label = (
+        item.name ||
+        item.brand ||
+        item.chain ||
+        "Supermarket"
+      ).trim();
+      markedPositions.push({ lat, lon, text: label });
     });
     setMarkedPos(markedPositions);
   } catch (err) {
-    if (err instanceof Error && err.message.includes('401')) {
-      return
+    if (err instanceof Error && err.message.includes("401")) {
+      return;
     }
     console.error("errored for this request url: " + url, err);
   }
-}
+};

@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect, memo } from "react";
 import type { Item } from "../../App.tsx";
-import { PageModes, transformItems, type ApiResponse } from "../../lib/utils.ts"
+import {
+  PageModes,
+  transformItems,
+  type ApiResponse,
+} from "../../lib/utils.ts";
 import { authApiCall } from "../../lib/authApi";
 // ── Palette (mirrors Container) ────────────────────────────────────────────
 const P = {
@@ -28,17 +32,17 @@ interface DropdownProps {
 }
 
 const MergedDropdown = memo(
-  (
-    {
-      classNames,
-      sortOrder,
-      selectedClass,
-      onClickElement,
-      onClickReset,
-    }: DropdownProps
-  ) => {
+  ({
+    classNames,
+    sortOrder,
+    selectedClass,
+    onClickElement,
+    onClickReset,
+  }: DropdownProps) => {
     const [isOpen, setIsOpen] = useState(false);
-    const [activeTab, setActiveTab] = useState<"classes" | "sortOrder">("classes");
+    const [activeTab, setActiveTab] = useState<"classes" | "sortOrder">(
+      "classes",
+    );
     const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
     const ref = useRef<HTMLDivElement>(null);
@@ -101,7 +105,7 @@ const MergedDropdown = memo(
                 ? "#5eead4"
                 : P.muted;
             }}
-            >
+          >
             {buttonLabel}
           </button>
           {/* Chevron toggle */}
@@ -249,35 +253,44 @@ interface SearchProps {
   placeholder: string;
   itemsToRender: Item[];
   setItemsToRender: (items: Item[]) => void;
-  currentSortOrder: string,
-  pageMode: PageModes,
+  currentSortOrder: string;
+  pageMode: PageModes;
   onSearchStateChange?: (isActive: boolean) => void;
 }
 
-
 const SearchBar = memo(
-  ({ placeholder, itemsToRender, setItemsToRender, currentSortOrder, pageMode, onSearchStateChange }: SearchProps) => {
+  ({
+    placeholder,
+    itemsToRender,
+    setItemsToRender,
+    currentSortOrder,
+    pageMode,
+    onSearchStateChange,
+  }: SearchProps) => {
     const [expanded, setExpanded] = useState(false);
     const [query, setQuery] = useState("");
     const queryRef = useRef("");
     const allRef = useRef<Item[]>(itemsToRender);
-    const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+      null,
+    );
     const latestRequestIdRef = useRef(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
 
-
     const fetchSearch = async (query: string): Promise<Item[]> => {
-      if(!(pageMode === PageModes.WishPage || pageMode === PageModes.HomePage)){
-        console.error("the page mode " + pageMode + " isnt searchable")
+      if (
+        !(pageMode === PageModes.WishPage || pageMode === PageModes.HomePage)
+      ) {
+        console.error("the page mode " + pageMode + " isnt searchable");
       }
       const isWish = pageMode === PageModes.WishPage ? true : false;
- 
+
       const params = new URLSearchParams({
         only_wish_list: isWish.toString(),
         sortOrder: currentSortOrder,
         searchQuery: query,
-        userId: "1"
+        userId: "1",
       });
       const parsedResp = await authApiCall<ApiResponse>(
         `/api/fetch_items?${params.toString()}`,
@@ -294,7 +307,7 @@ const SearchBar = memo(
       }
 
       return transformItems(parsedResp as ApiResponse);
-    }
+    };
 
     const runSearch = (q: string) => {
       if (debounceTimeoutRef.current) {
@@ -548,20 +561,18 @@ interface TopBarProps {
   onSidebarToggle: () => void;
   classNames: string[];
   selectedClass: string | null;
-  onFilter: (
-    classFilter: string | null,
-    sortOrder: string | undefined,
-  ) => void;
+  onFilter: (classFilter: string | null, sortOrder: string | undefined) => void;
   onReset: () => void;
   onScanIncrease: () => void;
   onScanDecrease: () => void;
   items: Item[];
   setItems: (items: Item[]) => void;
-  currentSortOrder: string,
+  currentSortOrder: string;
   mode: PageModes;
   onSearchStateChange?: (isActive: boolean) => void;
+  /** When false, renders as a simple inline bar without sticky/floating treatment */
+  floating?: boolean;
 }
-
 
 const TopBar = ({
   sidebarOpen,
@@ -577,6 +588,7 @@ const TopBar = ({
   currentSortOrder,
   mode,
   onSearchStateChange,
+  floating = true,
 }: TopBarProps) => {
   const scanBtnStyle = (): React.CSSProperties => ({
     width: 36,
@@ -594,8 +606,99 @@ const TopBar = ({
     backgroundColor: P.surface,
     color: P.muted,
     transition: "all 0.15s",
-  }); 
-  
+  });
+
+  if (!floating) {
+    return (
+      <div
+        style={{
+          width: "100%",
+          display: "flex",
+          padding: "4px 12px 8px",
+          boxSizing: "border-box",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            position: "relative",
+            minWidth: 0,
+          }}
+        >
+          {/* Filter dropdown */}
+          {mode === PageModes.HomePage ? (
+            <MergedDropdown
+              classNames={classNames}
+              selectedClass={selectedClass}
+              sortOrder={["A-Z", "Z-A", "new-old", "old-new"]}
+              onClickElement={onFilter}
+              onClickReset={onReset}
+            />
+          ) : null}
+
+          {/* Scan +/− pair */}
+          {mode === PageModes.HomePage || mode === PageModes.WishPage ? (
+            <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+              <button
+                onClick={onScanDecrease}
+                aria-label="Scan decrease"
+                style={scanBtnStyle()}
+                onMouseEnter={(e) => {
+                  const b = e.currentTarget as HTMLElement;
+                  b.style.backgroundColor = "#1c2128";
+                  b.style.borderColor = "#ef444430";
+                  b.style.color = "#f87171";
+                }}
+                onMouseLeave={(e) => {
+                  const b = e.currentTarget as HTMLElement;
+                  b.style.backgroundColor = P.surface;
+                  b.style.borderColor = P.border;
+                  b.style.color = P.muted;
+                }}
+              >
+                −
+              </button>
+              <button
+                onClick={onScanIncrease}
+                aria-label="Scan increase"
+                style={scanBtnStyle()}
+                onMouseEnter={(e) => {
+                  const b = e.currentTarget as HTMLElement;
+                  b.style.backgroundColor = "#1c2128";
+                  b.style.borderColor = P.tealB;
+                  b.style.color = "#5eead4";
+                }}
+                onMouseLeave={(e) => {
+                  const b = e.currentTarget as HTMLElement;
+                  b.style.backgroundColor = P.surface;
+                  b.style.borderColor = P.border;
+                  b.style.color = P.muted;
+                }}
+              >
+                +
+              </button>
+            </div>
+          ) : null}
+
+          {/* Flexible spacer */}
+          <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
+            <SearchBar
+              placeholder="Search items…"
+              itemsToRender={items}
+              setItemsToRender={setItems}
+              currentSortOrder={currentSortOrder}
+              pageMode={mode}
+              onSearchStateChange={onSearchStateChange}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
@@ -687,76 +790,74 @@ const TopBar = ({
             onClickElement={onFilter}
             onClickReset={onReset}
           />
-        ) : (
-          null
-        )}
+        ) : null}
 
-
+        {mode === PageModes.HomePage ? (
+          <div
+            style={{
+              width: 1,
+              height: 20,
+              backgroundColor: P.border,
+              flexShrink: 0,
+            }}
+          />
+        ) : null}
         {/* Thin separator */}
-         {(mode === PageModes.HomePage || mode == PageModes.WishPage) ? (
+        {mode === PageModes.HomePage || mode == PageModes.WishPage ? (
           <>
-          <div
-            style={{
-              width: 1,
-              height: 20,
-              backgroundColor: P.border,
-              flexShrink: 0,
-            }}
-          />
+            {/* Scan +/− pair — same visual language as Container buttons */}
+            <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+              <button
+                onClick={onScanDecrease}
+                aria-label="Scan decrease"
+                style={scanBtnStyle()}
+                onMouseEnter={(e) => {
+                  const b = e.currentTarget as HTMLElement;
+                  b.style.backgroundColor = "#1c2128";
+                  b.style.borderColor = "#ef444430";
+                  b.style.color = "#f87171";
+                }}
+                onMouseLeave={(e) => {
+                  const b = e.currentTarget as HTMLElement;
+                  b.style.backgroundColor = P.surface;
+                  b.style.borderColor = P.border;
+                  b.style.color = P.muted;
+                }}
+              >
+                −
+              </button>
+              <button
+                onClick={onScanIncrease}
+                aria-label="Scan increase"
+                style={scanBtnStyle()}
+                onMouseEnter={(e) => {
+                  const b = e.currentTarget as HTMLElement;
+                  b.style.backgroundColor = "#1c2128";
+                  b.style.borderColor = P.tealB;
+                  b.style.color = "#5eead4";
+                }}
+                onMouseLeave={(e) => {
+                  const b = e.currentTarget as HTMLElement;
+                  b.style.backgroundColor = P.surface;
+                  b.style.borderColor = P.border;
+                  b.style.color = P.muted;
+                }}
+              >
+                +
+              </button>
+            </div>
 
-          {/* Scan +/− pair — same visual language as Container buttons */}
-          <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-            <button
-              onClick={onScanDecrease}
-              aria-label="Scan decrease"
-              style={scanBtnStyle()}
-              onMouseEnter={(e) => {
-                const b = e.currentTarget as HTMLElement;
-                b.style.backgroundColor = "#1c2128";
-                b.style.borderColor = "#ef444430";
-                b.style.color = "#f87171";
+            {/* Thin separator */}
+            <div
+              style={{
+                width: 1,
+                height: 20,
+                backgroundColor: P.border,
+                flexShrink: 0,
               }}
-              onMouseLeave={(e) => {
-                const b = e.currentTarget as HTMLElement;
-                b.style.backgroundColor = P.surface;
-                b.style.borderColor = P.border;
-                b.style.color = P.muted;
-              }}
-            >
-              −
-            </button>
-            <button
-              onClick={onScanIncrease}
-              aria-label="Scan increase"
-              style={scanBtnStyle()}
-              onMouseEnter={(e) => {
-                const b = e.currentTarget as HTMLElement;
-                b.style.backgroundColor = "#1c2128";
-                b.style.borderColor = P.tealB;
-                b.style.color = "#5eead4";
-              }}
-              onMouseLeave={(e) => {
-                const b = e.currentTarget as HTMLElement;
-                b.style.backgroundColor = P.surface;
-                b.style.borderColor = P.border;
-                b.style.color = P.muted;
-              }}
-            >
-              +
-            </button>
-          </div>
-
-          {/* Thin separator */}
-          <div
-            style={{
-              width: 1,
-              height: 20,
-              backgroundColor: P.border,
-              flexShrink: 0,
-            }}
-          />
-        </>
-        ): (null) }
+            />
+          </>
+        ) : null}
         {/* Search */}
         <SearchBar
           placeholder="Search items…"

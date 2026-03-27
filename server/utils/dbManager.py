@@ -78,7 +78,7 @@ class DatabaseManager:
             except Exception as e:
                 raise e
 
-        raise last_error # type: ignore
+        raise last_error  # type: ignore
 
     async def fetch_with_retry(
         self, query: str, *args, retries: int = Config.DB_RETRY_ATTEMPTS
@@ -92,13 +92,15 @@ class DatabaseManager:
                     return await con.fetch(query, *args)
             except (asyncpg.PostgresConnectionError, asyncpg.InterfaceError) as e:
                 last_error = e
-                self.logger.warning(f"DB fetch error (attempt {attempt + 1}/{retries}): {e}")
+                self.logger.warning(
+                    f"DB fetch error (attempt {attempt + 1}/{retries}): {e}"
+                )
                 if attempt < retries - 1:
                     await asyncio.sleep(Config.DB_RETRY_DELAY * (attempt + 1))
             except Exception as e:
                 raise e
 
-        raise last_error # type: ignore
+        raise last_error  # type: ignore
 
     async def fetchrow_with_retry(self, query: str, *args) -> Optional[asyncpg.Record]:
         """Fetch single row with retry"""
@@ -124,7 +126,6 @@ class DatabaseManager:
                     await asyncio.sleep(Config.DB_RETRY_DELAY * (attempt + 1))
         return None
 
-
     def parse_db_url(
         self,
         db_url: str,
@@ -141,10 +142,8 @@ class DatabaseManager:
             env["PGPASSWORD"] = password
         return user, host, port, dbname, env
 
-
     async def run_psql_command(
-        self,
-        cmd_args: list[str], env: Optional[dict] = None
+        self, cmd_args: list[str], env: Optional[dict] = None
     ) -> tuple[int, str, str]:
         """Execute psql command asynchronously"""
         proc = await asyncio.create_subprocess_exec(
@@ -154,8 +153,7 @@ class DatabaseManager:
             env=env,
         )
         out, err = await proc.communicate()
-        return proc.returncode, out.decode(errors="ignore"), err.decode(errors="ignore") # type: ignore
-
+        return proc.returncode, out.decode(errors="ignore"), err.decode(errors="ignore")  # type: ignore
 
     def get_script_path(self, level: int = 0) -> str:
         """Get script directory path, optionally going up levels"""

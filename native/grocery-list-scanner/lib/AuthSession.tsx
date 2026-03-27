@@ -1,5 +1,12 @@
 import * as FileSystem from "expo-file-system";
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 const SESSION_FILE = `${FileSystem.documentDirectory ?? ""}scanner-auth-session.json`;
 
@@ -53,7 +60,10 @@ const loadPersistedSession = async (): Promise<StoredSession> => {
   }
 };
 
-const persistSession = async (jwtToken: string | null, username: string | null) => {
+const persistSession = async (
+  jwtToken: string | null,
+  username: string | null,
+) => {
   if (!canUseFileStorage()) return;
 
   try {
@@ -72,7 +82,11 @@ const persistSession = async (jwtToken: string | null, username: string | null) 
   }
 };
 
-export const AuthSessionProvider = ({ children }: { children: React.ReactNode }) => {
+export const AuthSessionProvider = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
   const [jwtToken, setJwtToken] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [isRestored, setIsRestored] = useState(false);
@@ -96,14 +110,17 @@ export const AuthSessionProvider = ({ children }: { children: React.ReactNode })
     };
   }, []);
 
-  const setSession = useCallback((incomingJwtToken: string | null, incomingUsername: string | null) => {
-    const nextToken = normalizeToken(incomingJwtToken);
-    const nextUsername = normalizeUsername(incomingUsername);
+  const setSession = useCallback(
+    (incomingJwtToken: string | null, incomingUsername: string | null) => {
+      const nextToken = normalizeToken(incomingJwtToken);
+      const nextUsername = normalizeUsername(incomingUsername);
 
-    setJwtToken(nextToken);
-    setUsername(nextUsername);
-    void persistSession(nextToken, nextUsername);
-  }, []);
+      setJwtToken(nextToken);
+      setUsername(nextUsername);
+      void persistSession(nextToken, nextUsername);
+    },
+    [],
+  );
 
   const clearSession = useCallback(() => {
     setJwtToken(null);
@@ -116,7 +133,11 @@ export const AuthSessionProvider = ({ children }: { children: React.ReactNode })
     [clearSession, isRestored, jwtToken, setSession, username],
   );
 
-  return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>;
+  return (
+    <AuthSessionContext.Provider value={value}>
+      {children}
+    </AuthSessionContext.Provider>
+  );
 };
 
 export const useAuthSession = () => {

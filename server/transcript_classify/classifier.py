@@ -17,7 +17,7 @@ CONFIDENCE_THRESHOLD = 0.5
 GROQ_MODEL = "openai/gpt-oss-20b"
 
 # Global instance for wish mapping (lazy-loaded)
-_wish_mapper_instance = None  
+_wish_mapper_instance = None
 
 
 def _get_llm():
@@ -26,6 +26,7 @@ def _get_llm():
     if not api_key:
         raise ValueError("GROQ_API_KEY environment variable is not set")
     from langchain_core.utils.utils import convert_to_secret_str
+
     return ChatGroq(
         model=GROQ_MODEL,
         temperature=0.1,  # Low temperature for consistent classification
@@ -115,6 +116,7 @@ class FullClassification(BaseModel):
     category_confidence: float = Field(ge=0.0, le=1.0)
     action: Literal["add", "remove", "unknown"]
     action_confidence: float = Field(ge=0.0, le=1.0)
+
 
 # --- NORMALIZATION TEMPLATES ---
 
@@ -209,6 +211,7 @@ Return EXACTLY one JSON object and nothing else, e.g.:
 
 _classifier = GroceryClassifier()
 
+
 def _normalize_classes(classes: Union[str, List[str]]) -> List[str]:
     if isinstance(classes, str):
         cls = [c.strip() for c in classes.split(",") if c.strip()]
@@ -289,6 +292,7 @@ def _classify_action(input_text: str) -> Dict[str, Any]:
         conf = 0.0
 
     from typing import get_args
+
     valid_actions = get_args(ActionClassification.model_fields["action"].annotation)
     if action not in valid_actions:
         action = "unknown"
@@ -417,14 +421,14 @@ async def tagAssignmentBatch(items: list[dict]) -> Dict[str, Dict[str, str]]:
 
     loop = asyncio.get_event_loop()
     results: list[str] = await loop.run_in_executor(
-        None,
-        partial(_classifier.classifyBatch, names, categories_list)
+        None, partial(_classifier.classifyBatch, names, categories_list)
     )
 
     return {
         name: {"base": tag, "flavor": "none", "form": "none"}
         for name, tag in zip(names, results)
     }
+
 
 def tagToNameBatch(tagsList: list[str], languageCode: str = "de"):
     print(f"started the tag to name batching with this input: {tagsList}")
@@ -463,24 +467,24 @@ def tagToNameBatch(tagsList: list[str], languageCode: str = "de"):
     return resp
 
 
-def mapWishItem(item_name: str, wished_items: list[str], min_conf: float=0.8) -> str:
-    '''
+def mapWishItem(item_name: str, wished_items: list[str], min_conf: float = 0.8) -> str:
+    """
     Map a grocery item to the most similar wished item using the fine-tuned model.
-    
+
     Args:
         item_name: The grocery item name to map
         wished_items: List of wished item names to map to
         min_conf: Minimum confidence threshold (currently unused, kept for API compatibility)
-    
+
     Returns:
         The mapped wish item name, or 'none' if no good match exists
-    '''
+    """
     global _wish_mapper_instance
-    
+
     # Lazy-load the wish mapper instance
     if _wish_mapper_instance is None:
         _wish_mapper_instance = WishMapper()
-    
+
     return _wish_mapper_instance.mapWishItem(item_name, wished_items)
 
 

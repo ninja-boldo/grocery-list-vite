@@ -1,18 +1,18 @@
-import '../App.css';
-import Container, { type ContainerProps } from './../comp/other/Container';
-import { useCallback, useEffect, useState, useMemo } from 'react';
-import ErrorContainer from './../comp/utils/ErrorContainer';
-import { useNavigate } from 'react-router-dom';
+import "../App.css";
+import Container, { type ContainerProps } from "./../comp/other/Container";
+import { useCallback, useEffect, useState, useMemo } from "react";
+import ErrorContainer from "./../comp/utils/ErrorContainer";
+import { useNavigate } from "react-router-dom";
 import type { ApiResponse } from "../lib/utils";
-import { transformItems } from '@/lib/utils';
-import { authApiCall, hasStoredJwtToken } from '@/lib/authApi';
-import InfoContainer from '../comp/utils/InfoContainer';
-import type { Item } from '../App';
-import TopBar from '@/comp/other/TopBar';
-import Sidebar from '@/comp/other/Sidebar';
-import AuthPopup from '@/comp/other/AuthPopup';
-import  { PageModes } from '../lib/utils'
- 
+import { transformItems } from "@/lib/utils";
+import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
+import InfoContainer from "../comp/utils/InfoContainer";
+import type { Item } from "../App";
+import TopBar from "@/comp/other/TopBar";
+import AppHeader from "@/comp/other/AppHeader";
+import BottomTabBar from "@/comp/other/BottomTabBar";
+import AuthPopup from "@/comp/other/AuthPopup";
+import { PageModes } from "../lib/utils";
 
 // ============================================================================
 // CONSTANTS
@@ -34,7 +34,6 @@ function WishList() {
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<Item[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [needReauth, setNeedReauth] = useState(false);
 
   useEffect(() => {
@@ -45,109 +44,126 @@ function WishList() {
 
   const handleNeedReauth = useCallback(() => {
     setNeedReauth(true);
-    setError('Authentication required. Please sign in again.');
+    setError("Authentication required. Please sign in again.");
   }, []);
 
-  const apiCall = useCallback(async <T,>(
-    url: string,
-    options: RequestInit = {},
-    retries: number = API_CONFIG.retries,
-    onUnauthorized?: () => void,
-  ): Promise<T> =>
-    authApiCall<T>(url, options, {
-      retries,
-      retryDelayMs: API_CONFIG.baseDelay,
-      timeoutMs: API_CONFIG.timeout,
-      onUnauthorized,
-    }),
-  []);
+  const apiCall = useCallback(
+    async <T,>(
+      url: string,
+      options: RequestInit = {},
+      retries: number = API_CONFIG.retries,
+      onUnauthorized?: () => void,
+    ): Promise<T> =>
+      authApiCall<T>(url, options, {
+        retries,
+        retryDelayMs: API_CONFIG.baseDelay,
+        timeoutMs: API_CONFIG.timeout,
+        onUnauthorized,
+      }),
+    [],
+  );
 
   // Navigation
   const navigateScanner = useCallback(
     (count: number = 1) => {
-      const params = new URLSearchParams({ wishlist: 'true', count: String(count), text: '' });
+      const params = new URLSearchParams({
+        wishlist: "true",
+        count: String(count),
+        text: "",
+      });
       navigate(`/scanner?${params}`);
     },
-    [navigate]
+    [navigate],
   );
 
-
   // Item count handlers with optimistic updates
-  const increaseItemCount = useCallback(async (item: ContainerProps) => {
-    if (!item.text) return;
+  const increaseItemCount = useCallback(
+    async (item: ContainerProps) => {
+      if (!item.text) return;
 
-    let previousData: Item[] = [];
+      let previousData: Item[] = [];
 
-    // Optimistic update
-    setData((prev) => {
-      previousData = prev;
-      return prev.map((i) =>
-        i.ean === item.ean && i.text === item.text ? { ...i, count: i.count + 1 } : i,
-      );
-    });
+      // Optimistic update
+      setData((prev) => {
+        previousData = prev;
+        return prev.map((i) =>
+          i.ean === item.ean && i.text === item.text
+            ? { ...i, count: i.count + 1 }
+            : i,
+        );
+      });
 
-    try {
-      await apiCall(
-        '/api/add_ean_to_list/',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-          body: JSON.stringify({
-            ean: item.ean,
-            item_name: item.text,
-            count: 1,
-            wish_list: 'true',
-          }),
-        },
-        1,
-        handleNeedReauth,
-      );
-    } catch (err) {
-      setData(previousData);
-      setError('Failed to update item count');
-      console.error('Error sending item:', err);
-    }
-  }, [apiCall, handleNeedReauth]);
-
-  const decreaseItemCount = useCallback(async (item: ContainerProps) => {
-    if (!item.text) return;
-
-    const willDelete = item.count <= 1;
-    let previousData: Item[] = [];
-
-    // Optimistic update
-    setData((prev) => {
-      previousData = prev;
-      if (willDelete) {
-        return prev.filter((i) => !(i.ean === item.ean && i.text === item.text));
+      try {
+        await apiCall(
+          "/api/add_ean_to_list/",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=UTF-8" },
+            body: JSON.stringify({
+              ean: item.ean,
+              item_name: item.text,
+              count: 1,
+              wish_list: "true",
+            }),
+          },
+          1,
+          handleNeedReauth,
+        );
+      } catch (err) {
+        setData(previousData);
+        setError("Failed to update item count");
+        console.error("Error sending item:", err);
       }
-      return prev.map((i) =>
-        i.ean === item.ean && i.text === item.text ? { ...i, count: i.count - 1 } : i,
-      );
-    });
+    },
+    [apiCall, handleNeedReauth],
+  );
 
-    try {
-      await apiCall(
-        '/api/add_ean_to_list/',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-          body: JSON.stringify({
-            ean: item.ean,
-            item_name: item.text,
-            count: -1,
-            wish_list: 'true',
-          }),
-        },
-        1,
-        handleNeedReauth,
-      );
-    } catch (err) {
-      setData(previousData);
-      setError('Failed to update item count');
-      console.error('Error sending item:', err);
-    }
-  }, [apiCall, handleNeedReauth]);
+  const decreaseItemCount = useCallback(
+    async (item: ContainerProps) => {
+      if (!item.text) return;
+
+      const willDelete = item.count <= 1;
+      let previousData: Item[] = [];
+
+      // Optimistic update
+      setData((prev) => {
+        previousData = prev;
+        if (willDelete) {
+          return prev.filter(
+            (i) => !(i.ean === item.ean && i.text === item.text),
+          );
+        }
+        return prev.map((i) =>
+          i.ean === item.ean && i.text === item.text
+            ? { ...i, count: i.count - 1 }
+            : i,
+        );
+      });
+
+      try {
+        await apiCall(
+          "/api/add_ean_to_list/",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=UTF-8" },
+            body: JSON.stringify({
+              ean: item.ean,
+              item_name: item.text,
+              count: -1,
+              wish_list: "true",
+            }),
+          },
+          1,
+          handleNeedReauth,
+        );
+      } catch (err) {
+        setData(previousData);
+        setError("Failed to update item count");
+        console.error("Error sending item:", err);
+      }
+    },
+    [apiCall, handleNeedReauth],
+  );
 
   // Data fetching with self-healing
   const fetchItems = useCallback(async () => {
@@ -161,16 +177,17 @@ function WishList() {
 
     try {
       const response = await apiCall<ApiResponse>(
-        '/api/fetch_items?only_wish_list=true',
+        "/api/fetch_items?only_wish_list=true",
         undefined,
         API_CONFIG.retries,
         handleNeedReauth,
       );
       setData(transformItems(response));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to fetch wish list';
+      const message =
+        error instanceof Error ? error.message : "Failed to fetch wish list";
       setError(message);
-      console.error('WishList fetch failed:', error);
+      console.error("WishList fetch failed:", error);
     } finally {
       setIsLoading(false);
     }
@@ -196,15 +213,13 @@ function WishList() {
           style=""
         />
       )),
-    [data, increaseItemCount, decreaseItemCount]
+    [data, increaseItemCount, decreaseItemCount],
   );
 
   // Initial data load
   useEffect(() => {
     void fetchItems();
   }, [fetchItems]);
-
-
 
   // Loading state
   if (isLoading && data.length === 0 && !needReauth) {
@@ -241,8 +256,8 @@ function WishList() {
 
     const normalized = error.toLowerCase();
     const excludedFragments = [
-      'http 401',
-      'authentication required. please sign in again.',
+      "http 401",
+      "authentication required. please sign in again.",
     ];
 
     const isExcluded = excludedFragments.some((fragment) =>
@@ -254,8 +269,17 @@ function WishList() {
 
   const noItemsAvailable = data.length === 0 && !error && !isLoading;
 
+  const username = localStorage.getItem("username") ?? "L";
+
   return (
-    <div className='h-screen'>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#0D1117",
+        color: "#E8EDF2",
+        fontFamily: "'DM Sans', system-ui, sans-serif",
+      }}
+    >
       {needReauth && (
         <AuthPopup
           onAuthenticated={() => {
@@ -265,40 +289,45 @@ function WishList() {
           }}
         />
       )}
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} setNeedReauth={setNeedReauth} />
+
+      <AppHeader
+        username={username}
+        onAvatarClick={() => setNeedReauth(true)}
+      />
+
       {displayError ? (
         <ErrorContainer text={displayError} />
       ) : (
-        <div className='h-screen'>
+        <>
           <TopBar
-            sidebarOpen={sidebarOpen}
-            onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
+            sidebarOpen={false}
+            onSidebarToggle={() => undefined}
             classNames={[]}
             selectedClass={null}
             onFilter={() => undefined}
-            onReset={() => {
-              void fetchItems();
-            }}
+            onReset={() => { void fetchItems(); }}
             onScanIncrease={() => navigateScanner(1)}
             onScanDecrease={() => navigateScanner(-1)}
             items={data}
             setItems={setData}
             currentSortOrder="new-old"
             mode={PageModes.WishPage}
+            floating={false}
           />
 
-          {/* Main Content */}
-          <div className="flex-1 p-3 sm:p-4 md:p-6">
-            <div className="max-w-4xl mx-auto">
-              {noItemsAvailable ? (
-                <InfoContainer text={"No items on your wish list.\nAdd something you'd like to buy!"} />
-              ) : (
-                containerComponents
-              )}
-            </div>
+          <div style={{ padding: "0 4px 90px" }}>
+            {noItemsAvailable ? (
+              <InfoContainer
+                text={"No items on your wish list.\nAdd something you'd like to buy!"}
+              />
+            ) : (
+              containerComponents
+            )}
           </div>
-        </div>
+        </>
       )}
+
+      <BottomTabBar />
     </div>
   );
 }

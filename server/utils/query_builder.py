@@ -5,8 +5,8 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _SORT_MODE_TO_SQL: dict[str, str] = {
-    "a-z":     "ORDER BY it.item_name ASC",
-    "z-a":     "ORDER BY it.item_name DESC",
+    "a-z": "ORDER BY it.item_name ASC",
+    "z-a": "ORDER BY it.item_name DESC",
     "new-old": "ORDER BY MAX(inv.created_at) DESC NULLS LAST",
     "old-new": "ORDER BY MIN(inv.created_at) ASC NULLS LAST",
 }
@@ -88,6 +88,7 @@ def _build_fetch_query_template(
 
     return sql
 
+
 def build_fetch_query(
     username: str | None,
     only_wish_list: Optional[str] = None,
@@ -97,15 +98,17 @@ def build_fetch_query(
     searchQuery: Optional[str] = None,
 ) -> tuple[str, list]:
     params = []
-    
+
     if not username:
         raise ValueError(f"the username param has to be not none")
     username = username.strip()
-    
-    if not username or username == "": 
-        raise Exception(f"this operation does need a specific username and not {username}")
+
+    if not username or username == "":
+        raise Exception(
+            f"this operation does need a specific username and not {username}"
+        )
     params.append(username)
-        
+
     if searchQuery and searchQuery.strip():
         params.append(f"%{searchQuery.strip()}%")
 
@@ -123,5 +126,5 @@ def build_fetch_query(
         has_skip=has_skip,
         is_search=bool(searchQuery and searchQuery.strip()),
     )
-    
+
     return query, params

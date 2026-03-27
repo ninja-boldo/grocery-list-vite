@@ -57,6 +57,11 @@ fine_tuning/
 last_run_prepared/
 llama.cpp/
 *.gguf
-other/
+other/backups
+other/models
 saves/
 llamaboard_cache/
+*.log
+europe-supermarkets.json
+parsed-supermarkets.csv
+/server/supermarkets/uploads

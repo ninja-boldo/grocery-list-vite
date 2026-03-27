@@ -8,8 +8,8 @@ export type AuthApiCallConfig = {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const getStoredJwtToken = () => {
-  const token = localStorage.getItem('jwt_auth');
-  if (!token || token === 'null' || token === 'undefined') {
+  const token = localStorage.getItem("jwt_auth");
+  if (!token || token === "null" || token === "undefined") {
     return null;
   }
   return token;
@@ -25,8 +25,8 @@ export const buildAuthHeaders = (headersInit?: HeadersInit): Headers => {
     return headers;
   }
 
-  const authValue = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
-  headers.set('Authorization', authValue);
+  const authValue = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+  headers.set("Authorization", authValue);
   return headers;
 };
 
@@ -35,19 +35,14 @@ export async function authApiCall<T>(
   options: RequestInit = {},
   config: AuthApiCallConfig = {},
 ): Promise<T> {
-  const {
-    retries = 3,
-    retryDelayMs = 300,
-    timeoutMs,
-    onUnauthorized,
-  } = config;
+  const { retries = 3, retryDelayMs = 300, timeoutMs, onUnauthorized } = config;
 
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < retries; attempt++) {
     const controller = new AbortController();
     const timeoutId =
-      typeof timeoutMs === 'number' && timeoutMs > 0
+      typeof timeoutMs === "number" && timeoutMs > 0
         ? setTimeout(() => controller.abort(), timeoutMs)
         : null;
 
@@ -61,15 +56,15 @@ export async function authApiCall<T>(
 
       if (response.status === 401) {
         onUnauthorized?.();
-        throw new Error('HTTP 401');
+        throw new Error("HTTP 401");
       }
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const contentType = response.headers.get('content-type') ?? '';
-      if (contentType.includes('application/json')) {
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
         return (await response.json()) as T;
       }
 
@@ -86,5 +81,5 @@ export async function authApiCall<T>(
     }
   }
 
-  throw lastError ?? new Error('API call failed');
+  throw lastError ?? new Error("API call failed");
 }

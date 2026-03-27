@@ -1,9 +1,9 @@
-import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
 import type { Item } from "@/App";
 
 export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
+  return twMerge(clsx(inputs));
 }
 
 export const transformItems = (data: ApiResponse): Item[] => {
@@ -24,11 +24,9 @@ export const transformItems = (data: ApiResponse): Item[] => {
       tags: parsedTags,
     };
   });
-  
+
   return transformed;
 };
-
-
 
 export enum PageModes {
   HomePage,
@@ -47,4 +45,15 @@ export interface ApiItem {
 
 export interface ApiResponse {
   items: ApiItem[];
+}
+
+export interface ApiResponseGroceryOffers {
+  name: string;
+  shortened_name: string;
+  weight_g: string;
+  volume_ml: string;
+  normal_price: number;
+  discount_price: number;
+  is_app_offer: string;
+  discount_rate?: number;
 }

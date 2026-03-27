@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import Sidebar from "@/comp/other/Sidebar";
+import AppHeader from "@/comp/other/AppHeader";
+import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
 import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
 import type { ApiResponse } from "@/lib/utils";
@@ -115,9 +115,6 @@ const aggregateStats = (response: FetchItemsResponse): InventoryStats => {
 };
 
 const Settings = () => {
-  const navigate = useNavigate();
-
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [needReauth, setNeedReauth] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [inventoryStats, setInventoryStats] =
@@ -254,8 +251,10 @@ const Settings = () => {
     <div
       style={{
         minHeight: "100vh",
-        backgroundColor: "#0d1117",
-        color: "#e6edf3",
+        background: "#0D1117",
+        color: "#E8EDF2",
+        fontFamily: "'DM Sans', system-ui, sans-serif",
+        paddingBottom: 90,
       }}
     >
       {needReauth && (
@@ -268,93 +267,12 @@ const Settings = () => {
         />
       )}
 
-      <Sidebar
-        isOpen={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        setNeedReauth={setNeedReauth}
+      <AppHeader
+        username={username}
+        onAvatarClick={() => setNeedReauth(true)}
       />
 
-      <div
-        style={{
-          position: "sticky",
-          top: 8,
-          zIndex: 30,
-          display: "flex",
-          justifyContent: "center",
-          paddingTop: 8,
-          paddingLeft: 8,
-          paddingRight: 8,
-        }}
-      >
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            width: "min(980px, 100%)",
-            padding: "10px 12px",
-            backgroundColor: "#0d1117",
-            border: "1px solid #0d948850",
-            borderRadius: 16,
-            boxShadow: "0 8px 30px #00000060",
-          }}
-        >
-          <button
-            onClick={() => setSidebarOpen((value) => !value)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 34,
-              height: 34,
-              borderRadius: 10,
-              border: "1px solid #21262d",
-              backgroundColor: sidebarOpen ? "#0f2a28" : "#161b22",
-              color: sidebarOpen ? "#5eead4" : "#8b949e",
-              cursor: "pointer",
-              lineHeight: 1,
-              flexShrink: 0,
-            }}
-            aria-label="Toggle sidebar"
-          >
-            ☰
-          </button>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div
-              style={{
-                fontSize: 16,
-                fontWeight: 700,
-                color: "#5eead4",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              Settings
-            </div>
-            <div
-              className="hidden sm:block"
-              style={{
-                fontSize: 12,
-                color: "#6e7681",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              Account security, inventory insights and quick actions
-            </div>
-          </div>
-          <button
-            onClick={() => navigate("/")}
-            style={{ ...BTN_SECONDARY, flexShrink: 0, padding: "10px 12px" }}
-          >
-            Back
-          </button>
-        </header>
-      </div>
-
-      <div className="p-3 sm:p-4 md:p-6">
+      <div style={{ padding: "0 12px" }}>
         <div className="max-w-5xl mx-auto" style={{ display: "grid", gap: 14 }}>
           {statusMessage && (
             <div
@@ -512,6 +430,8 @@ const Settings = () => {
           </section>
         </div>
       </div>
+
+      <BottomTabBar />
     </div>
   );
 };

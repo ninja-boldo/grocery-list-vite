@@ -4,7 +4,10 @@ import { WebView } from "react-native-webview";
 import { useAuthSession } from "../../lib/AuthSession";
 import { MOBILE_WEB_BASE_URL } from "../../lib/config";
 
-const buildInjectedBridgeScript = (jwtToken: string | null, username: string | null) => `
+const buildInjectedBridgeScript = (
+  jwtToken: string | null,
+  username: string | null,
+) => `
   (function () {
     var normalize = function (value) {
       if (value === null || value === undefined || value === "null" || value === "undefined") {
@@ -173,44 +176,53 @@ export default function WebComp() {
     [jwtToken, username],
   );
 
-  const openNativeScannerIfNeeded = React.useCallback((url: string) => {
-    if (url.includes("/scanner")) {
-      if (lastHandledUrlRef.current === url) {
+  const openNativeScannerIfNeeded = React.useCallback(
+    (url: string) => {
+      if (url.includes("/scanner")) {
+        if (lastHandledUrlRef.current === url) {
+          return true;
+        }
+
+        lastHandledUrlRef.current = url;
+        console.log("now going to the native scanner component");
+        navigation.navigate("scanner");
         return true;
       }
 
-      lastHandledUrlRef.current = url;
-      console.log("now going to the native scanner component");
-      navigation.navigate("scanner");
-      return true;
-    }
+      return false;
+    },
+    [navigation],
+  );
 
-    return false;
-  }, [navigation]);
+  const onBridgeMessage = React.useCallback(
+    (rawData: string) => {
+      try {
+        const parsed = JSON.parse(rawData) as {
+          url?: string;
+          jwt?: string | null;
+          username?: string | null;
+        };
 
-  const onBridgeMessage = React.useCallback((rawData: string) => {
-    try {
-      const parsed = JSON.parse(rawData) as {
-        url?: string;
-        jwt?: string | null;
-        username?: string | null;
-      };
+        if (
+          typeof parsed.jwt !== "undefined" ||
+          typeof parsed.username !== "undefined"
+        ) {
+          setSession(parsed.jwt ?? null, parsed.username ?? null);
+        }
 
-      if (typeof parsed.jwt !== "undefined" || typeof parsed.username !== "undefined") {
-        setSession(parsed.jwt ?? null, parsed.username ?? null);
+        if (parsed.url) {
+          openNativeScannerIfNeeded(parsed.url);
+        }
+
+        return;
+      } catch {
+        // Older non-JSON bridge messages can still be plain URLs.
       }
 
-      if (parsed.url) {
-        openNativeScannerIfNeeded(parsed.url);
-      }
-
-      return;
-    } catch {
-      // Older non-JSON bridge messages can still be plain URLs.
-    }
-
-    openNativeScannerIfNeeded(rawData);
-  }, [openNativeScannerIfNeeded, setSession]);
+      openNativeScannerIfNeeded(rawData);
+    },
+    [openNativeScannerIfNeeded, setSession],
+  );
 
   useFocusEffect(
     React.useCallback(() => {

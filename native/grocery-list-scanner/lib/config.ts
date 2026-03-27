@@ -3,9 +3,9 @@ const RAW_API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ??
   process.env.EXPO_PUBLIC_SERVER_BASE_URL ??
   //"http://192.168.1.163:3030";
-   "https://boldo.ddns.net/api";
+  "https://boldo.ddns.net/api";
 
-const RAW_WEB_BASE_URL = "https://boldo.ddns.net"
+const RAW_WEB_BASE_URL = "https://boldo.ddns.net";
 const RAW_API_PREFIX = process.env.EXPO_PUBLIC_API_PREFIX ?? "";
 
 const normalizeUrl = (rawUrl: string) => {
@@ -18,7 +18,7 @@ const normalizeUrl = (rawUrl: string) => {
 
   return withProtocol.replace(/\/+$/, "");
 };
- 
+
 export const MOBILE_API_BASE_URL = normalizeUrl(RAW_API_BASE_URL);
 export const MOBILE_WEB_BASE_URL = normalizeUrl(RAW_WEB_BASE_URL);
 
@@ -42,6 +42,7 @@ export const mobileApiUrl = (path: string) => {
 // Set to "true" only when your server hosts a web UI route for login/navigation.
 // Set to "false" for backend-only servers that expose /token + API endpoints.
 export const MOBILE_USE_WEBVIEW_AUTH =
-  (process.env.EXPO_PUBLIC_USE_WEBVIEW_AUTH ?? "false").toLowerCase() === "true";
+  (process.env.EXPO_PUBLIC_USE_WEBVIEW_AUTH ?? "false").toLowerCase() ===
+  "true";
 
 export const MOBILE_LOGIN_ROUTE = MOBILE_USE_WEBVIEW_AUTH ? "web" : "auth";

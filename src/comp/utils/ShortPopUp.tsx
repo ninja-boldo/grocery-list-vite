@@ -36,9 +36,7 @@ const ShortPopup = ({ text, variant }: Props) => {
       >
         <div className={`w-2 h-2 mt-1.5 rounded-full ${s.dot}`} />
         <div className="flex flex-col">
-          <p className={`${s.text} text-sm font-semibold`}>
-            {text}
-          </p>
+          <p className={`${s.text} text-sm font-semibold`}>{text}</p>
           <p className={`${s.sub} text-xs font-medium`}>
             {variant === "error" ? "Something went wrong" : "Success"}
           </p>

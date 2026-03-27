@@ -21,16 +21,20 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 # --- Models ---
 
+
 class Token(BaseModel):
     access_token: str
     token_type: str
 
+
 class TokenData(BaseModel):
     username: str | None = None
+
 
 class User(BaseModel):
     username: str
     disabled: bool = False
+
 
 class UserInDB(User):
     hashed_password: str
@@ -38,17 +42,21 @@ class UserInDB(User):
 
 # --- Password helpers ---
 
+
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
+
 def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
 
 # Defined after get_password_hash
 DUMMY_HASH = get_password_hash("dummy")
 
 
 # --- DB ---
+
 
 async def get_user(con: asyncpg.Connection, username: str | None) -> UserInDB | None:
     if not username:
@@ -63,11 +71,13 @@ async def get_user(con: asyncpg.Connection, username: str | None) -> UserInDB | 
 
 # --- Token helpers ---
 
+
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode["exp"] = expire
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
 
 def verify_token(token: str) -> str | None:
     try:
@@ -82,11 +92,23 @@ def verify_token(token: str) -> str | None:
 # --- Auth logic ---
 
 
-async def add_user_to_db(con: asyncpg.pool.PoolConnectionProxy, username: str, password: str) -> None:
+async def add_user_to_db(
+    con: asyncpg.pool.PoolConnectionProxy, username: str, password: str
+) -> None:
     hashed_passwd = get_password_hash(password)
-    await con.execute("insert into users (username, password_hash) values ($1, $2)", username, hashed_passwd)
-    
-async def authenticate_user(con: asyncpg.pool.PoolConnectionProxy, username: str, password: str, createUserIfNeeded: bool = True) -> UserInDB | bool:
+    await con.execute(
+        "insert into users (username, password_hash) values ($1, $2)",
+        username,
+        hashed_passwd,
+    )
+
+
+async def authenticate_user(
+    con: asyncpg.pool.PoolConnectionProxy,
+    username: str,
+    password: str,
+    createUserIfNeeded: bool = True,
+) -> UserInDB | bool:
 
     user = await get_user(con, username)
     print(user)
@@ -94,12 +116,13 @@ async def authenticate_user(con: asyncpg.pool.PoolConnectionProxy, username: str
         if not createUserIfNeeded:
             verify_password(password, DUMMY_HASH)  # constant-time rejection
             return False
-        else: 
+        else:
             await add_user_to_db(con, username, password)
             user = await get_user(con, username)
     if not verify_password(password, user.hashed_password):
         return False
     return user
+
 
 async def get_current_user(
     request: Request,
@@ -124,6 +147,7 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
     return user
+
 
 async def get_current_active_user(
     current_user: Annotated[UserInDB, Depends(get_current_user)],

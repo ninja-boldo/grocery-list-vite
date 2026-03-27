@@ -1,8 +1,8 @@
 from google import genai
 from google.genai import types
 
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from utils.types import *
+from typing import Optional
 import dotenv
 import os
 
@@ -13,45 +13,23 @@ Extract all offers from the catalogue and return ONLY valid JSON matching the sc
 Requirements:
 - name: exact product name from catalogue, unchanged
 - shortened_name: condensed name with brand, product type, and key specs (e.g., "Driscoll Himbeeren 100g")
-- weight_or_volume: integer in grams (solids) or milliliters (liquids), null if N/A
+- weight_g: integer in grams if the product is sold by weight, null otherwise
+- volume_ml: integer in milliliters if the product is sold by volume, null otherwise
+  (exactly one of weight_g / volume_ml should be non-null; both null if neither applies, e.g. a voucher)
 - normal_price: regular price as float
 - discount_price: discounted price as float
 - discount_rate: discount as decimal (0.32 for 32%, not "32%" or "-32%")
 - is_app_offer: true if app-exclusive, false otherwise
 
+Splitting rules — each of the following creates a SEPARATE offer object:
+1. App vs non-app: if a product has both a regular price and an app price, emit two objects
+   (one with is_app_offer=false, one with is_app_offer=true)
+2. Weight/volume variants: if a product lists multiple sizes (e.g. "100g - 160g"), emit one
+   object per size, each with the correct weight_g or volume_ml set
+3. Combine both rules: a product with two sizes AND an app price yields four objects
+
 Return a JSON array of offer objects.
 """
-
-
-class Offer(BaseModel):
-    name: str = Field(
-        description="The full product name exactly as shown in catalogue"
-    )
-    shortened_name: str = Field(
-        description="Condensed name with brand, type, and specifications (weight/volume/count)"
-    )
-    weight_or_volume: Optional[int] = Field(
-        default=None,
-        description="Weight in grams or volume in milliliters as integer, null if not applicable"
-    )
-    normal_price: float = Field(
-        description="Regular price without discount"
-    )
-    discount_price: float = Field(
-        description="Price after discount applied"
-    )
-    discount_rate: float = Field(
-        description="Discount rate as decimal (e.g., 0.32 for 32% off)"
-    )
-    is_app_offer: bool = Field(
-        description="True if offer requires app, false otherwise"
-    )
-
-
-class CatalogueResponse(BaseModel):
-    offers: List[Offer] = Field(
-        description="List of all offers extracted from the catalogue"
-    )
 
 
 class CatalogueClassifier:
@@ -62,9 +40,11 @@ class CatalogueClassifier:
         self.env_file_path: str = env_file_path
         dotenv.load_dotenv(self.env_file_path)
         self.api_key: Optional[str] = os.getenv("google_api_key_ml")
-        
+
         if not self.api_key:
-            error_msg = f"Variable 'google_api_key_ml' not found in {self.env_file_path}"
+            error_msg = (
+                f"Variable 'google_api_key_ml' not found in {self.env_file_path}"
+            )
             if throw_exception_on_error:
                 raise KeyError(error_msg)
             else:
@@ -79,9 +59,7 @@ class CatalogueClassifier:
             with open(img_path, "rb") as f:
                 return f.read()
         except Exception as e:
-            raise Exception(
-                f"Failed to load image at {img_path}: {e}"
-            ) from e
+            raise Exception(f"Failed to load image at {img_path}: {e}") from e
 
     def classify_catalogue(
         self, img_path: str, verbose: bool = False
@@ -104,14 +82,16 @@ class CatalogueClassifier:
                 "response_schema": CatalogueResponse,
             },
         )
-        
+
         if verbose:
             print("Received response from inference API")
 
         if not response.text:
             raise Exception(f"No valid response received for image: {img_path}")
 
-        catalogue_data: CatalogueResponse = CatalogueResponse.model_validate_json(response.text)
+        catalogue_data: CatalogueResponse = CatalogueResponse.model_validate_json(
+            response.text
+        )
 
         if verbose:
             print(f"\nExtracted {len(catalogue_data.offers)} offers:")
@@ -125,10 +105,7 @@ class CatalogueClassifier:
 
 if __name__ == "__main__":
     classifier = CatalogueClassifier()
-    
+
     content: CatalogueResponse = classifier.classify_catalogue(
-        "/Users/bennetjollenbeck/Downloads/im.png", 
-        verbose=True
+        "other/catalogue.png", verbose=True
     )
-    
-        

@@ -1,16 +1,16 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
-import { loadEnv } from 'vite';
-import path from 'path';                          
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import { loadEnv } from "vite";
+import path from "path";
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '');
+  const env = loadEnv(mode, process.cwd(), "");
 
   return {
-    base: '/',
+    base: "/",
     plugins: [react(), tailwindcss()],
-    resolve: {                                     
+    resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
       },
@@ -22,10 +22,10 @@ export default defineConfig(({ mode }) => {
       cors: true,
       allowedHosts: true,
       proxy: {
-        '/api': {
-          target: env.VITE_API_BASE_URL || 'http://localhost:3030',
+        "/api": {
+          target: env.VITE_API_BASE_URL || "http://localhost:3030",
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, ''),
+          rewrite: (path) => path.replace(/^\/api/, ""),
         },
       },
     },
@@ -33,10 +33,10 @@ export default defineConfig(({ mode }) => {
       host: true,
       port: 4040,
       proxy: {
-        '/api': {
-          target: 'http://localhost:3030', 
+        "/api": {
+          target: "http://localhost:3030",
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, ''),
+          rewrite: (path) => path.replace(/^\/api/, ""),
         },
       },
     },

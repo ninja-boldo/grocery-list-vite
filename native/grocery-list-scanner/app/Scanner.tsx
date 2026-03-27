@@ -65,75 +65,87 @@ export default function Scanner() {
     showToast(false, "Scan aborted");
   }, [resetScanner, scanned, sending, showToast]);
 
-  const submitEan = useCallback(async (action: InventoryAction) => {
-    if (sending) return;
-    if (!ean) return;
+  const submitEan = useCallback(
+    async (action: InventoryAction) => {
+      if (sending) return;
+      if (!ean) return;
 
-    if (!jwtToken) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      showToast(false, "Session missing. Please sign in again.");
-      navigation.navigate(MOBILE_LOGIN_ROUTE);
-      return;
-    }
-
-    const scannedEan = ean;
-    const requestedCount = Math.max(1, count);
-    const countDelta = action === "remove" ? -requestedCount : requestedCount;
-
-    setSending(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    resetScanner();
-
-    try {
-      const authValue = jwtToken.startsWith("Bearer ")
-        ? jwtToken
-        : `Bearer ${jwtToken}`;
-
-      const resp = await fetch(mobileApiUrl("/add_ean_to_list/"), {
-        method: "POST",
-        body: JSON.stringify({
-          ean: scannedEan,
-          count: countDelta,
-          wish_list: "false",
-        }),
-        headers: {
-          "Content-type": "application/json; charset=UTF-8",
-          Authorization: authValue,
-        },
-      });
-
-      if (resp.status === 401) {
-        clearSession();
+      if (!jwtToken) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        showToast(false, "Session expired. Please sign in again.");
+        showToast(false, "Session missing. Please sign in again.");
         navigation.navigate(MOBILE_LOGIN_ROUTE);
         return;
       }
 
-      if (resp.ok) {
-        const data = await resp.json();
-        console.log("response: ", data);
-        const itemLabel = String(data.product_name || scannedEan || "item");
-        const operation = String(data.operation || "").toLowerCase();
-        const isRemoveSuccess = operation === "delete" || action === "remove";
+      const scannedEan = ean;
+      const requestedCount = Math.max(1, count);
+      const countDelta = action === "remove" ? -requestedCount : requestedCount;
 
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        if (isRemoveSuccess) {
-          showToast(true, `Removed ${requestedCount}x ${itemLabel}`);
-        } else {
-          showToast(true, `Added ${requestedCount}x ${itemLabel}`);
+      setSending(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      resetScanner();
+
+      try {
+        const authValue = jwtToken.startsWith("Bearer ")
+          ? jwtToken
+          : `Bearer ${jwtToken}`;
+
+        const resp = await fetch(mobileApiUrl("/add_ean_to_list/"), {
+          method: "POST",
+          body: JSON.stringify({
+            ean: scannedEan,
+            count: countDelta,
+            wish_list: "false",
+          }),
+          headers: {
+            "Content-type": "application/json; charset=UTF-8",
+            Authorization: authValue,
+          },
+        });
+
+        if (resp.status === 401) {
+          clearSession();
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          showToast(false, "Session expired. Please sign in again.");
+          navigation.navigate(MOBILE_LOGIN_ROUTE);
+          return;
         }
-      } else {
+
+        if (resp.ok) {
+          const data = await resp.json();
+          console.log("response: ", data);
+          const itemLabel = String(data.product_name || scannedEan || "item");
+          const operation = String(data.operation || "").toLowerCase();
+          const isRemoveSuccess = operation === "delete" || action === "remove";
+
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          if (isRemoveSuccess) {
+            showToast(true, `Removed ${requestedCount}x ${itemLabel}`);
+          } else {
+            showToast(true, `Added ${requestedCount}x ${itemLabel}`);
+          }
+        } else {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          showToast(false, `Server error ${resp.status}`);
+        }
+      } catch {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        showToast(false, `Server error ${resp.status}`);
+        showToast(false, "Network error");
+      } finally {
+        setSending(false);
       }
-    } catch {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      showToast(false, "Network error");
-    } finally {
-      setSending(false);
-    }
-  }, [clearSession, count, ean, jwtToken, navigation, resetScanner, sending, showToast]);
+    },
+    [
+      clearSession,
+      count,
+      ean,
+      jwtToken,
+      navigation,
+      resetScanner,
+      sending,
+      showToast,
+    ],
+  );
 
   // ── Permission screens ───────────────────────────────────────────────
   if (!permission) return <View style={styles.container} />;
@@ -207,7 +219,9 @@ export default function Scanner() {
 
       {!jwtToken && (
         <View style={styles.authBanner}>
-          <Text style={styles.authBannerText}>Sign in required to submit scans</Text>
+          <Text style={styles.authBannerText}>
+            Sign in required to submit scans
+          </Text>
           <Pressable
             style={({ pressed }) => [
               styles.authBannerBtn,

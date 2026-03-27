@@ -84,7 +84,9 @@ export default function Auth() {
         >
           <View style={styles.card}>
             <Text style={styles.title}>Sign in</Text>
-            <Text style={styles.subtitle}>Authenticate against your API server.</Text>
+            <Text style={styles.subtitle}>
+              Authenticate against your API server.
+            </Text>
 
             <TextInput
               value={username}
@@ -131,7 +133,9 @@ export default function Auth() {
               <Text style={styles.demoHintStrong}>demo</Text>
             </Text>
 
-            <Text style={styles.serverText}>Login URL: {mobileApiUrl("/token")}</Text>
+            <Text style={styles.serverText}>
+              Login URL: {mobileApiUrl("/token")}
+            </Text>
           </View>
         </ScrollView>
       </TouchableWithoutFeedback>
