@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -34,6 +35,43 @@ class AddSupermarketRequest(BaseModel):
     postcode: Optional[int] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+
+
+class QuantityInfo(BaseModel):
+    product_quantity: Optional[int]
+    product_quantity_unit: Optional[str]
+
+
+class ItemInfo(BaseModel):
+    product_name: str
+    quantity: Optional[str] = None
+    product_quantity: Optional[int] = None
+    product_quantity_unit: Optional[str] = None
+
+
+class ItemInfoParsed(BaseModel):
+    product_name: str
+    quantity: QuantityInfo
+    failedData: Optional[bool]
+
+
+class UnitRetrieveItem(BaseModel):
+    item_name: str
+    categories: Optional[str] = None
+
+
+class AmountAndUnit(BaseModel):
+    unit: str
+    amount: int
+
+
+@dataclass
+class ClassificationResult:
+    item: str
+    cls: Optional[str]  # None if below threshold
+    score: float
+    below_threshold: bool
+    top3: list[tuple[str, float]]  # always populated regardless of threshold
 
 
 class Offer(BaseModel):
@@ -77,6 +115,33 @@ class AddCatalogueRequest(BaseModel):
     postcode: Optional[str] = None
 
 
+class Ingredient(BaseModel):
+    amount: Optional[int] = None
+    unit: Optional[str] = None
+    name: str
+    count: Optional[int] = None
+
+
+class Recipe(BaseModel):
+    recipe_id: int
+    base_time: Optional[int] = None
+    default_portions: Optional[int] = None
+    tags: Optional[list[str]] = None
+    ingredients: list[Ingredient] = []
+    emoji: Optional[str] = None
+
+
+class AddRecipe(BaseModel):
+    name: str
+    emoji: str
+    baseTime: int
+    baseServings: Optional[int] = 2
+    tags: Optional[list[str]] = []
+    favorited: Optional[bool] = False
+    Ingredients: list[Ingredient]
+    steps: list[str]
+
+
 class AddEanRequest(BaseModel):
     """Request model for add_ean_to_list endpoint (legacy)"""
 
@@ -84,6 +149,7 @@ class AddEanRequest(BaseModel):
     item_name: Optional[str] = None
     count: Optional[int] = 1
     wish_list: Optional[str] = None
+    quantity_data: Optional[QuantityInfo] = None
 
 
 class ChangePasswordRequest(BaseModel):

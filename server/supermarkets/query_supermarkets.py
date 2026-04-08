@@ -68,7 +68,9 @@ def _extractCoordsFromValue(geometry: object) -> tuple[float, float]:
     raise ValueError(f"Unsupported geometry type: {type(geometry)}")
 
 
-def _featureToRecord(feature: dict) -> tuple[float, float, str | None, str | None, str | None, str | None] | None:
+def _featureToRecord(
+    feature: dict,
+) -> tuple[float, float, str | None, str | None, str | None, str | None] | None:
     geometry = feature.get("geometry")
     properties = feature.get("properties")
 
@@ -96,7 +98,9 @@ def _featureToRecord(feature: dict) -> tuple[float, float, str | None, str | Non
     )
 
 
-def _rowToRecord(row: dict) -> tuple[float, float, str | None, str | None, str | None, str | None] | None:
+def _rowToRecord(
+    row: dict,
+) -> tuple[float, float, str | None, str | None, str | None, str | None] | None:
     name = _normalize_text(row.get("name")) or _normalize_text(row.get("brand"))
     if name is None:
         return None
@@ -127,7 +131,9 @@ def _rowToRecord(row: dict) -> tuple[float, float, str | None, str | None, str |
 def iterSupermarketRecordBatches(
     parquetFile: str,
     batchSize: int = PARQUET_BATCH_SIZE,
-) -> Iterator[list[tuple[float, float, str | None, str | None, str | None, str | None]]]:
+) -> Iterator[
+    list[tuple[float, float, str | None, str | None, str | None, str | None]]
+]:
     parquet_path = Path(parquetFile).resolve()
     if not parquet_path.exists():
         raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
@@ -223,7 +229,9 @@ async def handleSupermarketsDbLoad(
                     logger.info(f"loaded {inserted} supermarkets so far")
 
             count = int(await con.fetchval(f"SELECT count(*) FROM {tablename}") or 0)
-            logger.info(f"supermarket import complete: inserted={inserted}, total={count}")
+            logger.info(
+                f"supermarket import complete: inserted={inserted}, total={count}"
+            )
         finally:
             await con.fetchval(
                 "SELECT pg_advisory_unlock($1)", SUPERMARKETS_IMPORT_LOCK_ID

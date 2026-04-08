@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 type AuthPopupProps = {
     onAuthenticated?: () => void;
@@ -9,7 +9,6 @@ const AuthPopup = ({ onAuthenticated }: AuthPopupProps) => {
     const [password, setPassword] = useState("")
     const [error, setError] = useState<string | null>(null)
     const [isSubmitting, setIsSubmitting] = useState(false)
-    const authRef = useRef<HTMLDivElement>(null);
 
     const sendAuthReq = async () => {
         if (!username || !password) {
@@ -50,16 +49,6 @@ const AuthPopup = ({ onAuthenticated }: AuthPopupProps) => {
         }
     }
 
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-          if (authRef.current && !authRef.current.contains(event.target as Node)) {
-            onAuthenticated?.()
-          }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-      }, []);
-
     return (
         <div
             style={{
@@ -75,10 +64,8 @@ const AuthPopup = ({ onAuthenticated }: AuthPopupProps) => {
                 backdropFilter: 'blur(10px) saturate(125%)',
                 WebkitBackdropFilter: 'blur(10px) saturate(125%)',
             }}
-            
         >
             <div
-                ref={authRef}
                 style={{
                     width: 'min(440px, 100%)',
                     borderRadius: '16px',

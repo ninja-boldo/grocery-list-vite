@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from datetime import datetime
 import json
 import logging
@@ -13,10 +14,21 @@ from dateutil import parser
 from fastapi import Request
 import httpx
 import requests
+import re
+import hashlib
 
 from supermarkets.classifier import CatalogueClassifier
 from utils.password_helper import verify_token
-from utils.types import *
+from utils.types import (
+    AddCatalogueRequest,
+    AddSupermarketRequest,
+    Ingredient,
+    ItemInfo,
+    ItemInfoParsed,
+    Offer,
+    QuantityInfo,
+    AddRecipe,
+)
 
 
 def convert_timestamps_to_dates(timestamps_json: str) -> list[str]:
@@ -111,9 +123,162 @@ async def obtainSupermarketId(
         }
 
 
+async def getUserIds(con: asyncpg.pool.PoolConnectionProxy) -> list[int]:
+    res = await con.fetch("select distinct(user_id) as uid from inventory")
+    return [int(r["uid"]) for r in res]
+
+
+async def getAllUserItems(
+    con: asyncpg.pool.PoolConnectionProxy,
+) -> dict[int, dict[str, dict]]:
+    """Fetch all users' inventory in a single query. Returns {user_id: {'wish': {...}, 'pantry': {...}}}"""
+    res = await con.fetch(
+        """select inv.user_id, inv.item_id, it.item_name, inv.is_wish 
+           from inventory inv 
+           join items it on it.item_id = inv.item_id"""
+    )
+    users: dict[int, dict[str, dict]] = {}
+    for r in res:
+        uid = int(r["user_id"])
+        if uid not in users:
+            users[uid] = {"wish": {}, "pantry": {}}
+        if r["is_wish"]:
+            users[uid]["wish"][r["item_id"]] = r["item_name"]
+        else:
+            users[uid]["pantry"][r["item_id"]] = r["item_name"]
+    return users
+
+
+async def getAllExistingMappings(
+    con: asyncpg.pool.PoolConnectionProxy,
+) -> set[tuple[str, str]]:
+    """Get all existing (wish_list_hash, pantry_list_hash) combinations that have been mapped."""
+    res = await con.fetch(
+        "select distinct wish_list_hash, pantry_list_hash from wish_mapping"
+    )
+    return {(r["wish_list_hash"], r["pantry_list_hash"]) for r in res}
+
+
+async def getCurrentWishListUser(
+    con: asyncpg.pool.PoolConnectionProxy, user_id: int
+) -> dict:
+    res = await con.fetch(
+        """select inv.item_id as item_id, it.item_name as item_name 
+           from inventory inv 
+           join items it on it.item_id = inv.item_id 
+           where inv.user_id = $1 and inv.is_wish = true""",
+        user_id,
+    )
+    return {r["item_id"]: r["item_name"] for r in res}
+
+
+async def getCurrentPantryListUser(
+    con: asyncpg.pool.PoolConnectionProxy, user_id: int
+) -> dict:
+    res = await con.fetch(
+        """select inv.item_id as item_id, it.item_name as item_name 
+           from inventory inv 
+           join items it on it.item_id = inv.item_id 
+           where inv.user_id = $1 and inv.is_wish = false""",
+        user_id,
+    )
+    return {r["item_id"]: r["item_name"] for r in res}
+
+
+async def checkPartialCategorisation(
+    con: asyncpg.pool.PoolConnectionProxy,
+    wishHash: str,
+    pantryHash: str,
+) -> dict[tuple[str, str], dict[str, dict]]:
+    """Return all pantry items that need categorisation, keyed by (wish_hash, pantry_hash)."""
+    res = await con.fetch(
+        """select inv.user_id, inv.item_id, it.item_name, wm.wish_list_hash, wm.pantry_list_hash
+           from inventory inv 
+           join items it on it.item_id = inv.item_id 
+           left join wish_mapping wm on wm.item_id = inv.item_id 
+           where inv.is_wish = false 
+           and wm.item_id is not null"""
+    )
+    result: dict[tuple[str, str], dict[str, dict]] = {}
+    for r in res:
+        key = (r["wish_list_hash"], r["pantry_list_hash"])
+        if key not in result:
+            result[key] = {}
+        result[key][r["item_id"]] = r["item_name"]
+    return result
+
+
+async def buildWishPantryLists(
+    con, sinkLabel: str | None = None
+) -> tuple[list[str], list[list[str]], dict, list[tuple[str, str]]]:
+    queryMapping = await getStateAwareLists(con)
+    return craftWishItemLists(queryMapping, sinkLabel)
+
+
+async def getStateAwareLists(con: asyncpg.pool.PoolConnectionProxy):
+    all_users_items = await getAllUserItems(con)
+    existing_mappings = await getAllExistingMappings(con)
+
+    classifyMap: dict = {}
+
+    for user_id, user_data in all_users_items.items():
+        currentPantryListDict: dict = user_data["pantry"]
+        currentWishListDict: dict = user_data["wish"]
+
+        wishHash: str = hashListState(list(currentWishListDict.values()))
+        pantryHash: str = hashListState(list(currentPantryListDict.values()))
+
+        if (wishHash, pantryHash) not in existing_mappings:
+            classifyMap[user_id] = {
+                "pantry": currentPantryListDict,
+                "wish": list(currentWishListDict.values()),
+                "wish_ids": currentWishListDict,
+                "wish_hash": wishHash,
+                "pantry_hash": pantryHash,
+            }
+
+    return classifyMap
+
+
+def craftWishItemLists(
+    queryMapping: dict, sinkLabel: str | None = None
+) -> tuple[list[str], list[list[str]], dict, list[tuple[str, str]]]:
+    item_to_id = {}
+
+    if sinkLabel:
+        item_to_id[sinkLabel] = generateManualItemId(sinkLabel)
+
+    item_names = []
+    wished_lists = []
+    hash_per_item = []
+
+    for user_id in queryMapping.keys():
+        userDict = queryMapping.get(user_id, {})
+        pantry_items = userDict.get("pantry", {})
+        wish_list = userDict.get("wish", [])
+        wish_ids = userDict.get("wish_ids", {})
+        wish_hash = userDict.get("wish_hash", "")
+        pantry_hash = userDict.get("pantry_hash", "")
+
+        # Add wish item names -> IDs to the mapping
+        for item_id, item_name in wish_ids.items():
+            item_to_id[item_name] = item_id
+
+        if sinkLabel:
+            wish_list = wish_list + [sinkLabel]
+
+        for item_id, item_name in pantry_items.items():
+            item_names.append(item_name)
+            item_to_id[item_name] = item_id
+            wished_lists.append(wish_list)
+            hash_per_item.append((wish_hash, pantry_hash))
+
+    return item_names, wished_lists, item_to_id, hash_per_item
+
+
 async def addOffersBatch(
     con: asyncpg.pool.PoolConnectionProxy,
-    offers: List[Offer],
+    offers: list[Offer],
     supermarketId: int,
     logger: logging.Logger,
 ):
@@ -333,27 +498,142 @@ def getUsernameFromReq(request: Request):
     return username.lower() if username else None
 
 
+def hashListState(
+    wish_list: list[str], encode_b64: bool = True, byte_len: int = 6
+) -> str:
+    wish_list_str = ",".join(sorted(wish_list))
+    h = hashlib.blake2b(wish_list_str.encode(), digest_size=byte_len)
+    if encode_b64:
+        return base64.urlsafe_b64encode(h.digest()).decode()  # urlsafe: no +/
+    return h.hexdigest()
+
+
+async def insertIngredientAndMap(
+    con: asyncpg.pool.PoolConnectionProxy, recipe_id: int, ing: Ingredient
+) -> None:
+    ing_id = await con.fetchval(
+        """
+        INSERT INTO ingredients (name, amount, unit)
+        VALUES ($1, $2, $3)
+        RETURNING ingredient_id
+        """,
+        ing.name,
+        ing.amount,
+        ing.unit,
+    )
+
+    await con.execute(
+        """
+        INSERT INTO recipe_ingredient_map (recipe_id, ingredient_id, count)
+        VALUES ($1, $2, $3)
+        """,
+        recipe_id,
+        ing_id,
+        ing.count,
+    )
+
+
+async def insertRecipe(
+    con: asyncpg.pool.PoolConnectionProxy,
+    userId: int,
+    recipe: AddRecipe,
+) -> int:
+    recipe_id = await con.fetchval(
+        """
+        INSERT INTO recipes (user_id, base_time, default_portions, tags, steps, emoji)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING recipe_id
+        """,
+        userId,
+        recipe.baseTime,
+        recipe.baseServings,
+        recipe.tags,
+        recipe.steps,
+        recipe.emoji,
+    )
+
+    async with con.transaction():
+        for ing in recipe.Ingredients:
+            await insertIngredientAndMap(con, recipe_id, ing)
+
+    return recipe_id
+
+
+async def addRecipeToDb(
+    con: asyncpg.pool.PoolConnectionProxy, userId: int, recipe: AddRecipe
+) -> dict:
+    try:
+        async with con.transaction():
+            recipe_id = await insertRecipe(con, userId, recipe)
+            for ing in recipe.Ingredients:
+                await insertIngredientAndMap(con, recipe_id, ing)
+
+        return {"status": "ok", "recipe_id": recipe_id}
+
+    except Exception as e:
+        return {"status": "error", "message": f"failed with this error: {e}"}
+
+
+def handleUsernameNoneAfterAuth():
+    return {
+        "status": "error",
+        "message": """
+                        failed with this error: couldnt retrieve username although you authenticated correctly.
+                        as this quite weird please open an issue with the failure code 245341432 for the server error 
+                        as identifier. 
+                        """,
+        "code": "500",
+    }
+
+
+async def getIdFromUsername(
+    con: asyncpg.pool.PoolConnectionProxy, username: str
+) -> int:
+    res = await con.fetchrow("select user_id from users where username = $1 ", username)
+    if res is None:
+        raise ValueError(
+            f"the username {username} isnt existent in the db => no user id to retrieve"
+        )
+    userId = int(res.get("user_id") or -1)
+    if userId == -1:
+        raise Exception(f"couldnt find a user id for this username: {username}")
+    return userId
+
+
+def generateManualItemId(itemName: str) -> str:
+    return "manual-" + hashlib.sha1(itemName.lower().strip().encode()).hexdigest()[:12]
+
+
 async def handleManualItems(
     con: asyncpg.pool.PoolConnectionProxy,
     item_name: str,
     count: int,
     userId: int,
     is_wish: bool,
+    quantity: QuantityInfo | None,
     date: dt.datetime,
     logger: logging.Logger,
 ) -> dict:
-    import hashlib
 
-    # Use a stable hash of the item name as the item_id so that different
-    # manual items don't all collapse onto the same "-1" row in inventory joins.
-    item_id = (
-        "manual-" + hashlib.sha1(item_name.lower().strip().encode()).hexdigest()[:12]
-    )
+    item_id = generateManualItemId(item_name)
     try:
+        if not quantity:
+            quantity = QuantityInfo(product_quantity=-1, product_quantity_unit="none")
+            """
+            return {
+                "state": "error",
+                "operation": "add",
+                "mode": "manual adding",
+                "error": "there was no quantity data supplied for the given item",
+                "suggestion": "ask the user for manual quantity entry data",
+            }"""
+
         await con.execute(
-            "INSERT INTO items (item_id, item_name) VALUES ($1, $2) ON CONFLICT (item_id) DO NOTHING",
+            "INSERT INTO items (item_id, item_name, amount, unit) VALUES ($1, $2, $3, $4) ON CONFLICT (item_id) DO NOTHING",
             item_id,
             item_name,
+            quantity.product_quantity,
+            quantity.product_quantity_unit,
         )
         await con.execute(
             "INSERT INTO item_classification (item_id) VALUES ($1) ON CONFLICT (item_id) DO NOTHING",
@@ -384,6 +664,101 @@ async def handleManualItems(
         }
 
 
+def parseQuantityString(s: str) -> QuantityInfo | None:
+    
+    multi = re.search(
+        r"(\d+)\s*[xX×]\s*(\d+(?:[.,]\d+)?)\s*(kg|g|mg|l|ml|cl|liter|litre|ltr|gr|gram|stück)\b",
+        s,
+        re.IGNORECASE,
+    )
+    if multi:
+        count = int(multi.group(1))
+        amount = float(multi.group(2).replace(",", "."))
+        unit = multi.group(3).lower()
+        return _normalise(count * amount, unit)
+
+    # Fraction: ½l, ¼kg
+    fraction = re.search(r"([½⅓¼¾⅔])\s*(kg|g|mg|l|ml|cl|stück)\b", s, re.IGNORECASE)
+    if fraction:
+        frac_map = {"½": 0.5, "⅓": 1 / 3, "¼": 0.25, "¾": 0.75, "⅔": 2 / 3}
+        amount = frac_map[fraction.group(1)]
+        return _normalise(amount, fraction.group(2).lower())
+
+    # Standard: 500g, 1.5 l, 1,5l, 500 ML
+    single = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*(kg|g|mg|l|ml|cl|liter|litre|ltr|gr|gram|stück)\b",
+        s,
+        re.IGNORECASE,
+    )
+    if single:
+        amount = float(single.group(1).replace(",", "."))
+        return _normalise(amount, single.group(2).lower())
+
+    return None
+
+
+def _normalise(amount: float, unit: str) -> QuantityInfo:
+    ALIASES = {
+        "liter": "l",
+        "litre": "l",
+        "ltr": "l",
+        "gr": "g",
+        "gram": "g",
+        "grams": "g",
+    }
+    unit = ALIASES.get(unit, unit)
+
+    if unit == "kg":
+        return QuantityInfo(
+            product_quantity=int(amount * 1000), product_quantity_unit="g"
+        )
+    elif unit == "l":
+        return QuantityInfo(
+            product_quantity=int(amount * 1000), product_quantity_unit="ml"
+        )
+    elif unit == "cl":
+        return QuantityInfo(
+            product_quantity=int(amount * 10), product_quantity_unit="ml"
+        )
+    else:
+        return QuantityInfo(product_quantity=int(amount), product_quantity_unit=unit)
+
+
+def normalizeItemInfo(itemInfo: ItemInfo | None) -> ItemInfoParsed:
+
+    failedItemInfo: ItemInfoParsed = ItemInfoParsed(
+        product_name="none",
+        quantity=QuantityInfo(product_quantity=-1, product_quantity_unit="none"),
+        failedData=True,
+    )
+    if not itemInfo:
+        return failedItemInfo
+    it = None
+    if not (itemInfo.product_quantity or itemInfo.product_quantity_unit):
+        if itemInfo.quantity:
+            info: QuantityInfo | None = parseQuantityString(itemInfo.quantity)
+            if not info:
+                return failedItemInfo  # couldnt retrieve the info
+            it = itemInfo
+        else:
+            return failedItemInfo  # couldnt retrieve the info
+    else:
+        it = itemInfo  # everything already fine
+
+    if not it:
+        return failedItemInfo
+    parsedItem = ItemInfoParsed(
+        product_name=it.product_name,
+        quantity=QuantityInfo(
+            product_quantity=it.product_quantity,
+            product_quantity_unit=it.product_quantity_unit,
+        ),
+        failedData=False,
+    )
+
+    return parsedItem
+
+
 async def addItemToInventory(
     http_client: httpx.AsyncClient,
     pool: asyncpg.Pool,
@@ -392,13 +767,13 @@ async def addItemToInventory(
     item_name: str | None,
     count: int,
     is_wish: bool,
+    quantity: QuantityInfo | None,
     logger: logging.Logger,
     date: dt.datetime | None = None,
 ) -> dict:
     try:
-        logger.info("we are in addItemToInventory")
         if not username:
-            raise ValueError(f"the username shouldnt be none for this function call")
+            raise ValueError("the username shouldnt be none for this function call")
 
         if isinstance(ean, str):
             ean = ean.strip() or None
@@ -462,15 +837,36 @@ async def addItemToInventory(
                             count,
                             userId,
                             is_wish,
-                            dateNormalized,
+                            date=dateNormalized,
+                            quantity=quantity,
                             logger=logger,
                         )
                     else:
                         itemKnown = await itemIsKnown(con, ean)
                         if not itemKnown and not item_name:
-                            item_name = await getItemNameAsync(
+                            itemInfo: ItemInfo | None = await getInfoAsync(
                                 http_client, ean=ean, logger=logger, delay=0.0
                             )
+
+                            itemInfoParsed: ItemInfoParsed = normalizeItemInfo(itemInfo)
+
+                            if itemInfoParsed.failedData is True:
+                                if itemInfoParsed.product_name != "none":
+                                    return {
+                                        "state": "error",
+                                        "operation": "add",
+                                        "error": f"couldnt retrieve additonal info for {itemInfoParsed.product_name}",
+                                        "suggestion": "perhaps query the user for the quantity",
+                                    }
+                                else:
+                                    return {
+                                        "state": "error",
+                                        "operation": "add",
+                                        "error": f"couldnt retrieve the item name for ean: {ean}",
+                                        "suggestion": "add this item manually",
+                                    }
+
+                            item_name = itemInfoParsed.product_name
 
                         if isinstance(item_name, str):
                             stripped_item_name = item_name.strip()
@@ -485,14 +881,17 @@ async def addItemToInventory(
                                 item_name = stripped_item_name
 
                         if not itemKnown:
+                            logger.info(f"got this item info: {itemInfo}")
                             await con.execute(
                                 """
-                                    INSERT INTO items (item_id, item_name, last_checked_at)
-                                    VALUES ($1, $2, now())
+                                    INSERT INTO items (item_id, item_name, last_checked_at, amount, unit)
+                                    VALUES ($1, $2, now(), $3, $4)
                                     ON CONFLICT (item_id) DO NOTHING
                                 """,
                                 ean,
                                 item_name,
+                                itemInfoParsed.quantity.product_quantity,
+                                itemInfoParsed.quantity.product_quantity_unit,
                             )
                             await con.execute(
                                 "INSERT INTO item_classification (item_id) VALUES ($1) ON CONFLICT (item_id) DO NOTHING",
@@ -518,7 +917,8 @@ async def addItemToInventory(
                             "mode": "ean",
                             "ean": ean,
                             "product_name": item_name,
-                            "known_to_db": itemKnown,
+                            "known_to_db": True,
+                            "first_to_add_item": itemKnown,
                         }
                 except Exception as e:
                     logger.error(f"addItemToInventory add branch failed: {e}")
@@ -577,20 +977,22 @@ async def addItemToInventory(
         return {"state": "error", "operation": "unknown", "error": str(e)}
 
 
-async def getItemNameAsync(
+async def getInfoAsync(
     client: httpx.AsyncClient, ean: str, logger: logging.Logger, delay: float = 0.5
-):
+) -> ItemInfo | None:
     try:
         await asyncio.sleep(delay)
         res = await client.get(
-            f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=product_name",
+            f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=product_name,quantity,product_quantity,product_quantity_unit",
             timeout=5.0,
         )
         data = res.json()
         if not data["status_verbose"] == "product found":
             logger.error(f"couldnt resolve item name for ean {ean}")
-            return "none"
-        return data["product"]["product_name"]
+            return None
+        logger.warning(f"got this data: {data.get('product')}")
+        parsed = ItemInfo.model_validate_json(json.dumps(data.get("product")))
+        return parsed
     except Exception as e:
         raise Exception(f"failed with this error: {e}")
 

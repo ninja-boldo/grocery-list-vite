@@ -1,22 +1,8 @@
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, useRef } from "react";
 import AppHeader from "@/comp/other/AppHeader";
 import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
 import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
-import type { ApiResponse } from "@/lib/utils";
-
-type InventoryStats = {
-  distinctItems: number;
-  totalCount: number;
-  lowStockItems: number;
-  uniqueTags: number;
-  expiringSoonItems: number;
-};
-
-type FetchItemsResponse = ApiResponse & {
-  distinct_items?: number;
-  accumulated_count?: number;
-};
 
 const CARD_STYLE: React.CSSProperties = {
   backgroundColor: "#161b22",
@@ -63,63 +49,44 @@ const BTN_SECONDARY: React.CSSProperties = {
   minHeight: 38,
 };
 
-const emptyStats: InventoryStats = {
-  distinctItems: 0,
-  totalCount: 0,
-  lowStockItems: 0,
-  uniqueTags: 0,
-  expiringSoonItems: 0,
+// ─── Planner settings helpers ─────────────────────────────────────────────────
+const LS_PLANNER = "planner_settings";
+
+interface PlannerSettings { globalPersons: number; thresholds: { quick: number; normal: number }; }
+
+const readPlannerSettings = (): PlannerSettings => {
+  try { const raw = localStorage.getItem(LS_PLANNER); return raw ? JSON.parse(raw) : { globalPersons: 2, thresholds: { quick: 20, normal: 35 } }; }
+  catch { return { globalPersons: 2, thresholds: { quick: 20, normal: 35 } }; }
 };
 
-const parseDate = (value: string) => {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
+// Small stepper atom (self-contained, no external dependency)
+const SettingsStepper = ({ value, onChange, min = 1, max = 99, compact = true }: { value: number; onChange: (v: number) => void; min?: number; max?: number; compact?: boolean }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: compact ? 6 : 10 }}>
+    <button onClick={() => onChange(Math.max(min, value - 1))}
+      style={{ width: 28, height: 28, borderRadius: 8, background: "#21262d", border: "1px solid #2a313b", color: "#e6edf3", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>−</button>
+    <span style={{ minWidth: 28, textAlign: "center", fontSize: 15, fontWeight: 700, color: "#5eead4" }}>{value}</span>
+    <button onClick={() => onChange(Math.min(max, value + 1))}
+      style={{ width: 28, height: 28, borderRadius: 8, background: "#21262d", border: "1px solid #2a313b", color: "#e6edf3", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>+</button>
+  </div>
+);
 
-const aggregateStats = (response: FetchItemsResponse): InventoryStats => {
-  const now = Date.now();
-  const soonThreshold = now + 1000 * 60 * 60 * 24 * 3;
-  const uniqueTags = new Set<string>();
-
-  let expiringSoonItems = 0;
-  response.items.forEach((item) => {
-    const rawTags = (item.tags ?? "").toString();
-    rawTags
-      .split(",")
-      .map((tag) => tag.trim())
-      .filter(Boolean)
-      .forEach((tag) => uniqueTags.add(tag));
-
-    const hasSoonDate = (item.perish_dates ?? []).some((dateString) => {
-      const date = parseDate(dateString);
-      if (!date) return false;
-      const ts = date.getTime();
-      return ts >= now && ts <= soonThreshold;
-    });
-
-    if (hasSoonDate) {
-      expiringSoonItems += 1;
-    }
-  });
-
-  return {
-    distinctItems: response.distinct_items ?? response.items.length,
-    totalCount:
-      response.accumulated_count ??
-      response.items.reduce((sum, item) => sum + Number(item.count || 0), 0),
-    lowStockItems: response.items.filter((item) => Number(item.count || 0) <= 1)
-      .length,
-    uniqueTags: uniqueTags.size,
-    expiringSoonItems,
-  };
-};
+// ─────────────────────────────────────────────────────────────────────────────
 
 const Settings = () => {
+  // Planner settings
+  const [plannerSettings, setPlannerSettings] = useState<PlannerSettings>(readPlannerSettings);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const updatePlanner = useCallback((updated: PlannerSettings) => {
+    setPlannerSettings(updated);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      try { localStorage.setItem(LS_PLANNER, JSON.stringify(updated)); } catch { /* ignore */ }
+    }, 300);
+  }, []);
+
+  useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
   const [needReauth, setNeedReauth] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [inventoryStats, setInventoryStats] =
-    useState<InventoryStats>(emptyStats);
-  const [wishStats, setWishStats] = useState<InventoryStats>(emptyStats);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusVariant, setStatusVariant] = useState<"ok" | "error">("ok");
 
@@ -144,41 +111,6 @@ const Settings = () => {
     setStatusVariant("error");
     setStatusMessage("Authentication required. Please sign in again.");
   }, []);
-
-  const fetchStats = useCallback(async () => {
-    setIsLoading(true);
-    setStatusMessage(null);
-
-    try {
-      const [itemsResp, wishResp] = await Promise.all([
-        authApiCall<FetchItemsResponse>(
-          "/api/fetch_items?only_wish_list=false",
-          undefined,
-          { retries: 1, onUnauthorized: handleNeedReauth },
-        ),
-        authApiCall<FetchItemsResponse>(
-          "/api/fetch_items?only_wish_list=true",
-          undefined,
-          { retries: 1, onUnauthorized: handleNeedReauth },
-        ),
-      ]);
-
-      setInventoryStats(aggregateStats(itemsResp));
-      setWishStats(aggregateStats(wishResp));
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("401")) {
-        return;
-      }
-      setStatusVariant("error");
-      setStatusMessage("Failed to load stats. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [handleNeedReauth]);
-
-  useEffect(() => {
-    void fetchStats();
-  }, [fetchStats]);
 
   const handlePasswordSubmit = useCallback(
     async (event: React.FormEvent) => {
@@ -262,15 +194,11 @@ const Settings = () => {
           onAuthenticated={() => {
             setNeedReauth(false);
             setStatusMessage(null);
-            void fetchStats();
           }}
         />
       )}
 
-      <AppHeader
-        username={username}
-        onAvatarClick={() => setNeedReauth(true)}
-      />
+      <AppHeader username={username} />
 
       <div style={{ padding: "0 12px" }}>
         <div className="max-w-5xl mx-auto" style={{ display: "grid", gap: 14 }}>
@@ -303,13 +231,74 @@ const Settings = () => {
               <button onClick={() => setNeedReauth(true)} style={BTN_PRIMARY}>
                 Re-authenticate
               </button>
-              <button
-                onClick={() => void fetchStats()}
-                style={BTN_PRIMARY}
-                disabled={isLoading}
-              >
-                {isLoading ? "Refreshing..." : "Refresh stats"}
-              </button>
+            </div>
+          </section>
+
+          {/* ── Wochenplaner ── */}
+          <section style={CARD_STYLE}>
+            <h2 style={{ margin: 0, fontSize: 16, color: "#5eead4" }}>Wochenplaner</h2>
+            <p style={{ margin: "6px 0 14px", fontSize: 12, color: "#8b949e" }}>
+              Einstellungen für Rezeptverwaltung und Wochenplan.
+            </p>
+
+            {/* Standardportionen */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 14, marginBottom: 14, borderBottom: "1px solid #21262d" }}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#e6edf3" }}>Standardportionen</div>
+                <div style={{ fontSize: 12, color: "#8b949e", marginTop: 2 }}>Gilt für neue Wochenplan-Slots. Pro Slot überschreibbar.</div>
+              </div>
+              <SettingsStepper
+                value={plannerSettings.globalPersons}
+                onChange={(v) => updatePlanner({ ...plannerSettings, globalPersons: v })}
+                min={1} max={20}
+              />
+            </div>
+
+            {/* Tagestyp-Grenzen */}
+            <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.8px", color: "#4A5568", marginBottom: 10 }}>Tagestyp-Grenzen (Min.)</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 16 }}>⚡</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3" }}>Schnelltag</div>
+                  <div style={{ fontSize: 11, color: "#8b949e" }}>Max. Zeit für schnelle Gerichte</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <SettingsStepper
+                  value={plannerSettings.thresholds.quick}
+                  onChange={(v) => updatePlanner({ ...plannerSettings, thresholds: { ...plannerSettings.thresholds, quick: Math.min(v, plannerSettings.thresholds.normal - 5) } })}
+                  min={5} max={60}
+                />
+                <span style={{ fontSize: 12, color: "#8b949e", minWidth: 24 }}>min</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 16 }}>🏠</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3" }}>Normaltag</div>
+                  <div style={{ fontSize: 11, color: "#8b949e" }}>Max. Zeit für normale Gerichte</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <SettingsStepper
+                  value={plannerSettings.thresholds.normal}
+                  onChange={(v) => updatePlanner({ ...plannerSettings, thresholds: { ...plannerSettings.thresholds, normal: Math.max(v, plannerSettings.thresholds.quick + 5) } })}
+                  min={10} max={120}
+                />
+                <span style={{ fontSize: 12, color: "#8b949e", minWidth: 24 }}>min</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", opacity: 0.5 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 16 }}>🌿</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3" }}>Entspannt</div>
+                  <div style={{ fontSize: 11, color: "#8b949e" }}>Alle Rezepte, keine Begrenzung</div>
+                </div>
+              </div>
+              <span style={{ fontSize: 13, color: "#8b949e", fontWeight: 700 }}>∞</span>
             </div>
           </section>
 
@@ -361,72 +350,6 @@ const Settings = () => {
                 </button>
               </div>
             </form>
-          </section>
-
-          <section
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))",
-              gap: 10,
-            }}
-          >
-            <div style={CARD_STYLE}>
-              <div style={{ fontSize: 12, color: "#6e7681" }}>
-                Inventory items
-              </div>
-              <div style={{ fontSize: 28, color: "#e6edf3", fontWeight: 700 }}>
-                {inventoryStats.distinctItems}
-              </div>
-              <div style={{ fontSize: 12, color: "#8b949e" }}>
-                Total count: {inventoryStats.totalCount}
-              </div>
-            </div>
-
-            <div style={CARD_STYLE}>
-              <div style={{ fontSize: 12, color: "#6e7681" }}>
-                Wish list items
-              </div>
-              <div style={{ fontSize: 28, color: "#e6edf3", fontWeight: 700 }}>
-                {wishStats.distinctItems}
-              </div>
-              <div style={{ fontSize: 12, color: "#8b949e" }}>
-                Total count: {wishStats.totalCount}
-              </div>
-            </div>
-
-            <div style={CARD_STYLE}>
-              <div style={{ fontSize: 12, color: "#6e7681" }}>Low stock</div>
-              <div style={{ fontSize: 28, color: "#f59e0b", fontWeight: 700 }}>
-                {inventoryStats.lowStockItems}
-              </div>
-              <div style={{ fontSize: 12, color: "#8b949e" }}>
-                Items with count {"<="} 1
-              </div>
-            </div>
-
-            <div style={CARD_STYLE}>
-              <div style={{ fontSize: 12, color: "#6e7681" }}>
-                Expiring soon
-              </div>
-              <div style={{ fontSize: 28, color: "#38bdf8", fontWeight: 700 }}>
-                {inventoryStats.expiringSoonItems}
-              </div>
-              <div style={{ fontSize: 12, color: "#8b949e" }}>
-                Within next 3 days
-              </div>
-            </div>
-
-            <div style={CARD_STYLE}>
-              <div style={{ fontSize: 12, color: "#6e7681" }}>
-                Unique categories
-              </div>
-              <div style={{ fontSize: 28, color: "#22c55e", fontWeight: 700 }}>
-                {inventoryStats.uniqueTags}
-              </div>
-              <div style={{ fontSize: 12, color: "#8b949e" }}>
-                Based on item tags
-              </div>
-            </div>
           </section>
         </div>
       </div>

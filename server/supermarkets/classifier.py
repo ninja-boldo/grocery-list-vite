@@ -1,7 +1,7 @@
 from google import genai
 from google.genai import types
 
-from utils.types import *
+from utils.types import CatalogueResponse
 from typing import Optional
 import dotenv
 import os

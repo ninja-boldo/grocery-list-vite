@@ -16,6 +16,8 @@ export interface ContainerProps {
   tags: string | string[] | null;
   ean: string;
   isWishedNumber: number | null;
+  /** Wish-list only: inventory items matched to this entry */
+  mapped_items?: { count: number; item_name: string }[];
   onClickIncrease: (clickedNode: ContainerProps) => Promise<void>;
   onClickDecrease: (clickedNode: ContainerProps) => Promise<void>;
 }
@@ -31,6 +33,7 @@ const Container = ({
   tags,
   ean,
   isWishedNumber,
+  mapped_items,
   onClickIncrease,
   onClickDecrease,
 }: ContainerProps) => {
@@ -542,6 +545,93 @@ const Container = ({
                 >
                   No valid dates (code 42)
                 </span>
+              </div>
+            )}
+
+            {/* ── Mapped inventory items (wish-list only) ── */}
+            {mapped_items && mapped_items.length > 0 && (
+              <div
+                style={{
+                  margin: "0 12px 12px",
+                  padding: "9px 11px",
+                  backgroundColor: TEAL_D,
+                  border: `1px solid ${TEAL_B}`,
+                  borderRadius: 10,
+                }}
+              >
+                {/* Header row */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    marginBottom: 7,
+                  }}
+                >
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke={TEAL}
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: "0.08em",
+                      textTransform: "uppercase",
+                      color: "#2dd4bf",
+                    }}
+                  >
+                    In Inventory
+                  </span>
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontSize: 10,
+                      color: "#4d5566",
+                    }}
+                  >
+                    {mapped_items.reduce((s, m) => s + m.count, 0)} total
+                  </span>
+                </div>
+
+                {/* Item pills */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                  {mapped_items.map((m, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "3px 8px",
+                        borderRadius: 20,
+                        backgroundColor: CARD,
+                        border: `1px solid ${TEAL_B}`,
+                        fontSize: 12,
+                        color: "#c9d1d9",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span style={{ fontWeight: 500 }}>{m.item_name}</span>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: "#2dd4bf",
+                          fontWeight: 600,
+                        }}
+                      >
+                        ×{m.count}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

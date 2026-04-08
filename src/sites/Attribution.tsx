@@ -1,12 +1,11 @@
+import { memo } from "react";
+import AppHeader from "@/comp/other/AppHeader";
 import BottomTabBar from "@/comp/other/BottomTabBar";
-import Sidebar from "@/comp/other/Sidebar";
-import { useState } from "react";
 
 const sources = [
   {
     name: "OpenStreetMap",
     url: "https://www.openstreetmap.org/copyright",
-    logo: null,
     description:
       "Map and supermarket location data is derived from OpenStreetMap, a collaborative project to create a free editable map of the world.",
     license: "Open Database License (ODbL) 1.0",
@@ -16,7 +15,6 @@ const sources = [
   {
     name: "Photon",
     url: "https://photon.komoot.io",
-    logo: null,
     description:
       "Geocoding (address → coordinates) is powered by Photon, an open-source geocoder built on OpenStreetMap data, operated by Komoot.",
     license: "Open Database License (ODbL) 1.0",
@@ -26,7 +24,6 @@ const sources = [
   {
     name: "Open Food Facts",
     url: "https://world.openfoodfacts.org",
-    logo: null,
     description:
       "Product information, EAN barcodes, nutritional data, and product images are sourced from Open Food Facts, a free and open database of food products.",
     license: "Open Database License (ODbL) 1.0",
@@ -35,60 +32,60 @@ const sources = [
   },
 ];
 
-export default function AttributionPage() {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+const P = {
+  bg: "#0D1117",
+  surface: "#161b22",
+  border: "#21262d",
+  teal: "#1D9E75",
+  tealB: "#0d948850",
+  text: "#e6edf3",
+  muted: "#8b949e",
+  subtle: "#4d5566",
+};
+
+function AttributionPage() {
+  const username = localStorage.getItem("username") ?? "L";
 
   return (
     <div
       style={{
         minHeight: "100vh",
-        backgroundColor: "#0d1117",
-        color: "#e6edf3",
-        fontFamily: "system-ui, sans-serif",
-        padding: "48px 24px",
+        backgroundColor: P.bg,
+        color: P.text,
+        fontFamily: "'DM Sans', system-ui, sans-serif",
+        paddingBottom: 90,
       }}
     >
-      {isSidebarOpen && (
-        <Sidebar
-          isOpen={isSidebarOpen}
-          onClose={() => setIsSidebarOpen(false)}
-        />
-      )}
-      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+      <AppHeader username={username} />
+
+      <div style={{ padding: "0 16px", maxWidth: 640, margin: "0 auto" }}>
         {/* Header */}
-        <div style={{ marginBottom: 40 }}>
+        <div style={{ marginBottom: 28 }}>
           <h1
             style={{
-              fontSize: 22,
+              fontSize: 20,
               fontWeight: 600,
-              color: "#e6edf3",
-              margin: "0 0 8px",
+              color: P.text,
+              margin: "0 0 6px",
             }}
           >
             Attributions
           </h1>
-          <p
-            style={{
-              fontSize: 14,
-              color: "#8b949e",
-              margin: 0,
-              lineHeight: 1.6,
-            }}
-          >
+          <p style={{ fontSize: 13, color: P.muted, margin: 0, lineHeight: 1.6 }}>
             This app is built on open data. We're grateful to the communities
             that make these resources freely available.
           </p>
         </div>
 
         {/* Source cards */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {sources.map((src) => (
             <div
               key={src.name}
               style={{
-                backgroundColor: "#161b22",
-                border: "1px solid #21262d",
-                borderRadius: 12,
+                backgroundColor: P.surface,
+                border: `1px solid ${P.border}`,
+                borderRadius: 14,
                 overflow: "hidden",
               }}
             >
@@ -96,12 +93,11 @@ export default function AttributionPage() {
               <div
                 style={{
                   height: 3,
-                  backgroundColor: "#0d9488",
-                  borderRadius: "12px 12px 0 0",
+                  background: `linear-gradient(90deg, ${P.teal}, transparent)`,
                 }}
               />
 
-              <div style={{ padding: "18px 20px" }}>
+              <div style={{ padding: "16px 18px" }}>
                 {/* Name + link */}
                 <div
                   style={{
@@ -112,9 +108,7 @@ export default function AttributionPage() {
                     gap: 12,
                   }}
                 >
-                  <span
-                    style={{ fontSize: 15, fontWeight: 600, color: "#e6edf3" }}
-                  >
+                  <span style={{ fontSize: 14, fontWeight: 600, color: P.text }}>
                     {src.name}
                   </span>
                   <a
@@ -122,14 +116,14 @@ export default function AttributionPage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
-                      fontSize: 12,
-                      color: "#2dd4bf",
+                      fontSize: 11,
+                      color: "#5eead4",
                       textDecoration: "none",
-                      border: "1px solid rgba(13,148,136,0.35)",
+                      border: `1px solid ${P.tealB}`,
                       borderRadius: 6,
-                      padding: "2px 9px",
+                      padding: "3px 9px",
                       flexShrink: 0,
-                      transition: "background 0.15s",
+                      fontWeight: 500,
                     }}
                   >
                     Visit ↗
@@ -140,8 +134,8 @@ export default function AttributionPage() {
                 <p
                   style={{
                     fontSize: 13,
-                    color: "#8b949e",
-                    margin: "0 0 14px",
+                    color: P.muted,
+                    margin: "0 0 12px",
                     lineHeight: 1.6,
                   }}
                 >
@@ -154,21 +148,19 @@ export default function AttributionPage() {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "space-between",
-                    borderTop: "1px solid #21262d",
-                    paddingTop: 12,
+                    borderTop: `1px solid ${P.border}`,
+                    paddingTop: 10,
                     gap: 12,
                   }}
                 >
-                  <span style={{ fontSize: 11, color: "#4d5566" }}>
-                    {src.note}
-                  </span>
+                  <span style={{ fontSize: 11, color: P.subtle }}>{src.note}</span>
                   <a
                     href={src.licenseUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{
                       fontSize: 11,
-                      color: "#6e7681",
+                      color: P.muted,
                       textDecoration: "none",
                       fontFamily: "monospace",
                       flexShrink: 0,
@@ -180,15 +172,14 @@ export default function AttributionPage() {
               </div>
             </div>
           ))}
-          <BottomTabBar />
         </div>
 
         {/* Footer note */}
         <p
           style={{
             fontSize: 12,
-            color: "#4d5566",
-            marginTop: 32,
+            color: P.subtle,
+            marginTop: 28,
             lineHeight: 1.6,
             textAlign: "center",
           }}
@@ -199,12 +190,16 @@ export default function AttributionPage() {
             href="https://opendatacommons.org/licenses/odbl/1-0/"
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: "#6e7681", textDecoration: "underline" }}
+            style={{ color: P.muted, textDecoration: "underline" }}
           >
             ODbL 1.0
           </a>
         </p>
       </div>
+
+      <BottomTabBar />
     </div>
   );
 }
+
+export default memo(AttributionPage);

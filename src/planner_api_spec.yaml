@@ -1,0 +1,478 @@
+openapi: 3.0.3
+info:
+  title: Grocery App – Wochenplaner API
+  description: >
+    Neue Endpunkte für Rezeptverwaltung, Wochenplan und Planer-Einstellungen.
+    Alle Endpunkte erfordern JWT-Authentifizierung (gleiche Auth wie bestehende API).
+  version: 1.0.0
+
+servers:
+  - url: /api
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Ingredient:
+      type: object
+      required: [id, name, amount, unit]
+      properties:
+        id:       { type: integer, example: 1 }
+        name:     { type: string,  example: "Hähnchenbrust" }
+        amount:   { type: number,  format: float, example: 300 }
+        unit:     { type: string,  example: "g" }
+
+    Recipe:
+      type: object
+      required: [id, name, emoji, baseTime, baseServings, tags, favorited, ingredients, steps]
+      properties:
+        id:           { type: integer, example: 42 }
+        name:         { type: string,  example: "Hähnchen Bowl" }
+        emoji:        { type: string,  example: "🍗" }
+        baseTime:     { type: integer, description: "Kochzeit in Minuten (für baseServings)", example: 25 }
+        baseServings: { type: integer, description: "Referenz-Portionsgröße", example: 2 }
+        tags:
+          type: array
+          items: { type: string }
+          example: ["Mittagessen", "Highprotein"]
+        favorited:    { type: boolean, example: true }
+        ingredients:
+          type: array
+          items: { $ref: '#/components/schemas/Ingredient' }
+        steps:
+          type: array
+          items: { type: string }
+          example: ["Reis kochen.", "Hähnchen braten."]
+
+    RecipeInput:
+      description: Payload zum Erstellen/Aktualisieren eines Rezepts (ohne id)
+      allOf:
+        - $ref: '#/components/schemas/Recipe'
+        - properties:
+            id:
+              readOnly: true
+
+    MealSlot:
+      type: object
+      nullable: true
+      properties:
+        recipeId: { type: integer, example: 42 }
+        servings: { type: integer, example: 3 }
+
+    DayPlan:
+      type: object
+      properties:
+        breakfast: { $ref: '#/components/schemas/MealSlot' }
+        lunch:     { $ref: '#/components/schemas/MealSlot' }
+        dinner:    { $ref: '#/components/schemas/MealSlot' }
+
+    DaySettings:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [quick, normal, relaxed]
+          example: normal
+        blocked:
+          type: object
+          properties:
+            breakfast: { type: boolean, example: false }
+            lunch:     { type: boolean, example: false }
+            dinner:    { type: boolean, example: false }
+
+    WeekPlan:
+      type: object
+      description: Schlüssel sind Tageskürzel Mo–So
+      properties:
+        Mo: { $ref: '#/components/schemas/DayPlan' }
+        Di: { $ref: '#/components/schemas/DayPlan' }
+        Mi: { $ref: '#/components/schemas/DayPlan' }
+        Do: { $ref: '#/components/schemas/DayPlan' }
+        Fr: { $ref: '#/components/schemas/DayPlan' }
+        Sa: { $ref: '#/components/schemas/DayPlan' }
+        So: { $ref: '#/components/schemas/DayPlan' }
+
+    WeekDaySettings:
+      type: object
+      description: Schlüssel sind Tageskürzel Mo–So
+      properties:
+        Mo: { $ref: '#/components/schemas/DaySettings' }
+        Di: { $ref: '#/components/schemas/DaySettings' }
+        Mi: { $ref: '#/components/schemas/DaySettings' }
+        Do: { $ref: '#/components/schemas/DaySettings' }
+        Fr: { $ref: '#/components/schemas/DaySettings' }
+        Sa: { $ref: '#/components/schemas/DaySettings' }
+        So: { $ref: '#/components/schemas/DaySettings' }
+
+    PlannerSettings:
+      type: object
+      required: [globalPersons, thresholds]
+      properties:
+        globalPersons:
+          type: integer
+          minimum: 1
+          maximum: 20
+          example: 2
+        thresholds:
+          type: object
+          required: [quick, normal]
+          properties:
+            quick:
+              type: integer
+              description: "Max. Kochzeit in Min. für Schnelltag"
+              minimum: 5
+              maximum: 60
+              example: 20
+            normal:
+              type: integer
+              description: "Max. Kochzeit in Min. für Normaltag"
+              minimum: 10
+              maximum: 120
+              example: 35
+
+    ShoppingItem:
+      type: object
+      properties:
+        name:       { type: string,  example: "Lachsfilet" }
+        amount:     { type: number,  format: float, example: 400 }
+        unit:       { type: string,  example: "g" }
+        fromRecipe: { type: string,  example: "Lachsfilet mit Brokkoli", nullable: true }
+
+    Error:
+      type: object
+      properties:
+        detail: { type: string, example: "Recipe not found" }
+
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Recipes ──────────────────────────────────────────────────────────────────
+  /recipes:
+    get:
+      summary: Alle Rezepte des Nutzers abrufen
+      operationId: listRecipes
+      tags: [Recipes]
+      responses:
+        '200':
+          description: Liste aller Rezepte
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recipes:
+                    type: array
+                    items: { $ref: '#/components/schemas/Recipe' }
+        '401': { description: Unauthorized }
+
+    post:
+      summary: Neues Rezept erstellen
+      operationId: createRecipe
+      tags: [Recipes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecipeInput' }
+      responses:
+        '201':
+          description: Rezept erstellt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Recipe' }
+        '400':
+          description: Validierungsfehler
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Unauthorized }
+
+  /recipes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+
+    put:
+      summary: Rezept aktualisieren
+      operationId: updateRecipe
+      tags: [Recipes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecipeInput' }
+      responses:
+        '200':
+          description: Aktualisiertes Rezept
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Recipe' }
+        '404':
+          description: Rezept nicht gefunden
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Unauthorized }
+
+    delete:
+      summary: Rezept löschen
+      operationId: deleteRecipe
+      tags: [Recipes]
+      responses:
+        '204': { description: Gelöscht }
+        '404':
+          description: Rezept nicht gefunden
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Unauthorized }
+
+  # ── Week Plan ─────────────────────────────────────────────────────────────────
+  /week_plan:
+    get:
+      summary: Aktuellen Wochenplan abrufen
+      operationId: getWeekPlan
+      tags: [WeekPlan]
+      responses:
+        '200':
+          description: Wochenplan + Tageseinstellungen
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  week:        { $ref: '#/components/schemas/WeekPlan' }
+                  daySettings: { $ref: '#/components/schemas/WeekDaySettings' }
+        '401': { description: Unauthorized }
+
+    put:
+      summary: Ganzen Wochenplan ersetzen
+      description: >
+        Überschreibt den kompletten Plan. Beim Auto-Generieren im Client
+        wird der fertige Plan in einem Aufruf gespeichert.
+      operationId: replaceWeekPlan
+      tags: [WeekPlan]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                week:        { $ref: '#/components/schemas/WeekPlan' }
+                daySettings: { $ref: '#/components/schemas/WeekDaySettings' }
+      responses:
+        '200': { description: Plan gespeichert }
+        '401': { description: Unauthorized }
+
+  /week_plan/{day}/{meal}:
+    parameters:
+      - name: day
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [Mo, Di, Mi, Do, Fr, Sa, So]
+      - name: meal
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [breakfast, lunch, dinner]
+
+    put:
+      summary: Einzelnen Mahlzeitenslot setzen oder aktualisieren
+      operationId: upsertSlot
+      tags: [WeekPlan]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MealSlot' }
+      responses:
+        '200': { description: Slot gespeichert }
+        '401': { description: Unauthorized }
+
+    delete:
+      summary: Mahlzeitenslot leeren
+      operationId: clearSlot
+      tags: [WeekPlan]
+      responses:
+        '204': { description: Slot geleert }
+        '401': { description: Unauthorized }
+
+  # ── Planner Settings ──────────────────────────────────────────────────────────
+  /planner_settings:
+    get:
+      summary: Planer-Einstellungen abrufen
+      operationId: getPlannerSettings
+      tags: [Settings]
+      responses:
+        '200':
+          description: Aktuelle Einstellungen
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlannerSettings' }
+        '401': { description: Unauthorized }
+
+    put:
+      summary: Planer-Einstellungen speichern
+      operationId: updatePlannerSettings
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlannerSettings' }
+      responses:
+        '200':
+          description: Gespeicherte Einstellungen
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlannerSettings' }
+        '400':
+          description: Validierungsfehler (z.B. quick >= normal)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Unauthorized }
+
+  # ── Verified Products (Golden Record) ────────────────────────────────────────
+  # Speichert verifizierte Packungsgrößen, die der Nutzer beim Scannen eingibt.
+  # Wird beim nächsten Scan desselben EAN vorrangig vor Open Food Facts genutzt.
+  /verified_products:
+    post:
+      summary: Packungsinhalt eines Produkts speichern
+      description: >
+        Wenn das Backend beim Hinzufügen eines EAN die Packungsgröße nicht kennt
+        (`quantity_known: false`), wird dem Nutzer ein Modal gezeigt. Die hier
+        eingetragene Menge wird dauerhaft in der eigenen `VerifiedProducts`-Tabelle
+        gespeichert und beim nächsten Scan desselben EAN bevorzugt ausgeliefert.
+      operationId: saveVerifiedProduct
+      tags: [VerifiedProducts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ean, quantity, unit]
+              properties:
+                ean:
+                  type: string
+                  description: Barcode des Produkts
+                  example: "4006040055136"
+                item_name:
+                  type: string
+                  description: Produktname aus dem letzten Scan (zur Prüfung / Darstellung)
+                  example: "Milch 3,5%"
+                quantity:
+                  type: number
+                  format: float
+                  description: Packungsinhalt (Zahl)
+                  example: 1000
+                unit:
+                  type: string
+                  description: Einheit des Inhalts
+                  example: "ml"
+      responses:
+        '200':
+          description: Gespeicherter Datensatz
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:       { type: integer, example: 7 }
+                  ean:      { type: string,  example: "4006040055136" }
+                  quantity: { type: number,  format: float, example: 1000 }
+                  unit:     { type: string,  example: "ml" }
+                  source:   { type: string,  example: "user", description: "Immer 'user' für nutzerseitig verifizierte Einträge" }
+                  createdAt:
+                    type: string
+                    format: date-time
+        '400':
+          description: Validierungsfehler (z.B. quantity ≤ 0)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Unauthorized }
+
+    get:
+      summary: Verifizierte Packungsgröße für einen EAN abrufen
+      description: >
+        Gibt die nutzerseitig gespeicherte (oder per Crowd-Voting konsolidierte)
+        Packungsgröße zurück. Das Backend nutzt diesen Wert bevorzugt vor OFF.
+      operationId: getVerifiedProduct
+      tags: [VerifiedProducts]
+      parameters:
+        - name: ean
+          in: query
+          required: true
+          schema: { type: string }
+          description: EAN des Produkts
+          example: "4006040055136"
+      responses:
+        '200':
+          description: Bekannter Eintrag
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ean:           { type: string,  example: "4006040055136" }
+                  quantity:      { type: number,  format: float, example: 1000 }
+                  unit:          { type: string,  example: "ml" }
+                  source:        { type: string,  example: "user", description: "'user' oder 'off' (Open Food Facts)" }
+                  quantity_known: { type: boolean, example: true }
+        '404':
+          description: Kein bekannter Eintrag – `quantity_known` wird im add_ean_to_list-Aufruf als `false` signalisiert
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { description: Unauthorized }
+
+  # ── add_ean_to_list – Erweiterung um quantity_known ──────────────────────────
+  # Hinweis: Die bestehende Route /api/add_ean_to_list/ muss um das Feld
+  # `quantity_known` in der Antwort erweitert werden:
+  #
+  #   quantity_known: boolean
+  #     true  → Packungsgröße bekannt (aus VerifiedProducts oder OFF)
+  #     false → Unbekannt; Client zeigt dem Nutzer das Eingabe-Modal
+  #
+  # Das Feld ist rückwärtskompatibel (fehlendes Feld = true angenommen).
+
+  # ── Shopping List (optional – alternativ bleibt client-side) ──────────────────
+  /planner_shopping_list:
+    get:
+      summary: Fehlende Zutaten für aktuellen Wochenplan berechnen
+      description: >
+        Der Server berechnet anhand des gespeicherten Wochenplans und des
+        Inventars des Nutzers, welche Zutaten fehlen. Entspricht der
+        client-seitigen collectMissing()-Logik, aber server-authoritative.
+      operationId: getPlannerShoppingList
+      tags: [ShoppingList]
+      responses:
+        '200':
+          description: Fehlende Zutaten aggregiert nach Name
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ShoppingItem' }
+                  generatedAt:
+                    type: string
+                    format: date-time
+        '401': { description: Unauthorized }

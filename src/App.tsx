@@ -34,11 +34,14 @@ export interface Item {
   perish_dates: string[];
   imageUrl: string;
   tags: string[];
+  /** Wish-list only: inventory items matched to this entry */
+  mapped_items?: { count: number; item_name: string }[];
 }
 
 // ============================================================================
 // Constants
 // ============================================================================
+const PHONE_WIDTH = 500;
 const PLACEHOLDER_ITEM_COUNT = 15;
 const TRANSCRIPTION_TIMEOUT = 10000;
 const RETRY_ATTEMPTS = 3;
@@ -103,6 +106,7 @@ type GroceryItemsHookResult = {
 function App() {
   const navigate = useNavigate();
 
+  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -110,6 +114,13 @@ function App() {
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [needReauth, setNeedReauth] = useState(false);
 
+  const isMobile = windowWidth <= PHONE_WIDTH;
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   useEffect(() => {
     if (!hasStoredJwtToken()) {
@@ -578,10 +589,7 @@ function App() {
         />
       )}
 
-      <AppHeader
-        username={username}
-        onAvatarClick={() => setNeedReauth(true)}
-      />
+      <AppHeader username={username} />
 
       {displayError ? (
         <ErrorContainer text={displayError} />

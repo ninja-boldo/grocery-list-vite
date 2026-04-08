@@ -195,15 +195,6 @@ const MapComponent = ({
       formData.append("catalogue", payload.file);
       formData.append("lat", String(catalogueTarget.lat));
       formData.append("lon", String(catalogueTarget.lon));
-      formData.append("name", payload.name);
-      formData.append("address", payload.address);
-      formData.append("postcode", payload.postcode);
-      if (payload.city) {
-        formData.append("city", payload.city);
-      }
-      if (payload.categories) {
-        formData.append("categories", payload.categories);
-      }
 
       await authApiCall("/api/post_catalogue", {
         method: "POST",
@@ -321,7 +312,6 @@ const MapComponent = ({
 
       <CatalogueUploadModal
         isOpen={isCatalogueOpen}
-        position={catalogueTarget}
         onClose={closeSubmitCatalogue}
         submitCatalogue={submitCatalogue}
       />

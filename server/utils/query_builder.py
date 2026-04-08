@@ -1,5 +1,4 @@
 import logging
-from functools import lru_cache
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -11,15 +10,6 @@ _SORT_MODE_TO_SQL: dict[str, str] = {
     "old-new": "ORDER BY MIN(inv.created_at) ASC NULLS LAST",
 }
 _DEFAULT_SORT = "new-old"
-
-
-@lru_cache(maxsize=32)
-def get_distinct_query(field: str) -> str:
-    """Cached query builder for distinct field values."""
-    return (
-        f"SELECT DISTINCT {field} FROM item_list "
-        f"WHERE {field} != '' AND {field} IS NOT NULL ORDER BY {field}"
-    )
 
 
 def convertSortToSql(sortMode: str | None = None) -> str:
@@ -40,19 +30,20 @@ def _build_fetch_query_template(
     has_limit: bool,
     has_skip: bool,
     is_search: bool,
+    username_param_idx: int = 1,
 ) -> str:
-    param_idx = 1
-    conditions = ["users.username = $1"]
+    param_idx = username_param_idx
+    conditions = [f"users.username = ${param_idx}"]
 
     if only_wish_list == "true":
-        conditions.append("NOT (inv.is_wish IS NULL OR inv.is_wish = FALSE)")
+        conditions.append("inv.is_wish = TRUE")
     else:
         conditions.append("(inv.is_wish IS NULL OR inv.is_wish = FALSE)")
 
     if is_search:
         param_idx += 1
         conditions.append(
-            f"(it.item_name ILIKE ${param_idx} OR it.shortened_name ILIKE ${param_idx} OR COALESCE(classify.class, '') ILIKE ${param_idx})"
+            f"(it.item_name ILIKE ${param_idx} OR it.shortened_name ILIKE ${param_idx} OR COALESCE(classify.class, '') ILIKE ${param_idx} OR it.item_id ILIKE ${param_idx})"
         )
 
     where_clause = f"WHERE {' AND '.join(conditions)}"
@@ -65,22 +56,60 @@ def _build_fetch_query_template(
 
     sort_sql = convertSortToSql(sortOrder)
 
-    # For array_agg ordering we always want created_at DESC inside the aggregate
+    if only_wish_list == "true":
+        wished_join = """
+            LEFT JOIN (
+            SELECT
+                agg.mapped_wish_name,
+                jsonb_agg(jsonb_build_object(
+                'item_name', agg.item_name,
+                'count', agg.total_count
+                )) AS mapped_items
+            FROM (
+                SELECT
+                wish_items.item_name AS mapped_wish_name,
+                pantry_items.item_name,
+                SUM(i.count) AS total_count
+                FROM inventory i
+                JOIN users u ON u.user_id = i.user_id
+                JOIN items pantry_items ON pantry_items.item_id = i.item_id
+                JOIN (
+                    SELECT DISTINCT item_id, wish_item_id
+                    FROM wish_mapping
+                ) wm ON wm.item_id = i.item_id
+                JOIN items wish_items ON wish_items.item_id = wm.wish_item_id
+                WHERE (i.is_wish IS NULL OR i.is_wish = FALSE)
+                AND wish_items.item_name != 'other'
+                AND u.username = $1
+                GROUP BY wish_items.item_name, pantry_items.item_name
+            ) agg
+            GROUP BY agg.mapped_wish_name
+            ) wished ON wished.mapped_wish_name = it.item_name"""
+
+        wished_group_by = ", wished.mapped_items"
+    else:
+        wished_join = ""
+        wished_group_by = ""
+
+    extra_cols = ",\n  wished.mapped_items" if only_wish_list == "true" else ""
+
     sql = (
-        f"SELECT "
-        f"  inv.item_id AS ean, "
-        f"  SUM(inv.count) AS count, "
-        f"  it.shortened_name AS shortened_name, "
-        f"  it.item_name, "
-        f"  classify.class, "
-        f"  it.image_url, "
-        f"  array_agg(inv.created_at ORDER BY inv.created_at DESC NULLS LAST) AS perish_dates "
+        f"SELECT"
+        f"  inv.item_id AS ean,"
+        f"  SUM(inv.count) AS count,"
+        f"  it.shortened_name AS shortened_name,"
+        f"  it.item_name,"
+        f"  classify.class,"
+        f"  it.image_url,"
+        f"  array_agg(inv.created_at ORDER BY inv.created_at DESC NULLS LAST) AS perish_dates"
+        f"{extra_cols} "
         f"FROM inventory inv "
         f"JOIN items it ON it.item_id = inv.item_id "
         f"JOIN users ON users.user_id = inv.user_id "
         f"LEFT JOIN item_classification classify ON classify.item_id = inv.item_id "
+        f"{wished_join} "
         f"{where_clause} "
-        f"GROUP BY inv.item_id, it.item_name, it.shortened_name, classify.class, it.image_url "
+        f"GROUP BY inv.item_id, it.item_name, it.shortened_name, classify.class, it.image_url{wished_group_by} "
         f"{sort_sql} "
         f"{limit_clause} "
         f"{offset_clause}"
@@ -100,7 +129,7 @@ def build_fetch_query(
     params = []
 
     if not username:
-        raise ValueError(f"the username param has to be not none")
+        raise ValueError("the username param has to be not none")
     username = username.strip()
 
     if not username or username == "":

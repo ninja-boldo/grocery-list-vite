@@ -618,6 +618,9 @@ const TopBar = ({
           boxSizing: "border-box",
         }}
       >
+        {/* position:relative here so SearchBar's inset:0 covers the full row.
+            minHeight keeps the div from collapsing to 0 when SearchBar
+            switches to position:absolute (which removes it from flow). */}
         <div
           style={{
             display: "flex",
@@ -626,9 +629,10 @@ const TopBar = ({
             width: "100%",
             position: "relative",
             minWidth: 0,
+            minHeight: 36,
           }}
         >
-          {/* Filter dropdown */}
+          {/* Filter dropdown — only on HomePage */}
           {mode === PageModes.HomePage ? (
             <MergedDropdown
               classNames={classNames}
@@ -639,61 +643,18 @@ const TopBar = ({
             />
           ) : null}
 
-          {/* Scan +/− pair */}
-          {mode === PageModes.HomePage || mode === PageModes.WishPage ? (
-            <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-              <button
-                onClick={onScanDecrease}
-                aria-label="Scan decrease"
-                style={scanBtnStyle()}
-                onMouseEnter={(e) => {
-                  const b = e.currentTarget as HTMLElement;
-                  b.style.backgroundColor = "#1c2128";
-                  b.style.borderColor = "#ef444430";
-                  b.style.color = "#f87171";
-                }}
-                onMouseLeave={(e) => {
-                  const b = e.currentTarget as HTMLElement;
-                  b.style.backgroundColor = P.surface;
-                  b.style.borderColor = P.border;
-                  b.style.color = P.muted;
-                }}
-              >
-                −
-              </button>
-              <button
-                onClick={onScanIncrease}
-                aria-label="Scan increase"
-                style={scanBtnStyle()}
-                onMouseEnter={(e) => {
-                  const b = e.currentTarget as HTMLElement;
-                  b.style.backgroundColor = "#1c2128";
-                  b.style.borderColor = P.tealB;
-                  b.style.color = "#5eead4";
-                }}
-                onMouseLeave={(e) => {
-                  const b = e.currentTarget as HTMLElement;
-                  b.style.backgroundColor = P.surface;
-                  b.style.borderColor = P.border;
-                  b.style.color = P.muted;
-                }}
-              >
-                +
-              </button>
-            </div>
-          ) : null}
+          {/* Spacer pushes search icon to the right */}
+          <div style={{ flex: 1 }} />
 
-          {/* Flexible spacer */}
-          <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
-            <SearchBar
-              placeholder="Search items…"
-              itemsToRender={items}
-              setItemsToRender={setItems}
-              currentSortOrder={currentSortOrder}
-              pageMode={mode}
-              onSearchStateChange={onSearchStateChange}
-            />
-          </div>
+          {/* SearchBar — collapsed = 32×32 icon; expanded = position:absolute inset:0 */}
+          <SearchBar
+            placeholder="Search items…"
+            itemsToRender={items}
+            setItemsToRender={setItems}
+            currentSortOrder={currentSortOrder}
+            pageMode={mode}
+            onSearchStateChange={onSearchStateChange}
+          />
         </div>
       </div>
     );

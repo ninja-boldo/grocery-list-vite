@@ -1,41 +1,55 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Html5Qrcode } from "html5-qrcode";
-import ShortPopup from "../utils/ShortPopUp";
-import TopBar from "@/comp/other/TopBar";
-import Sidebar from "@/comp/other/Sidebar";
+import AppHeader from "@/comp/other/AppHeader";
+import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
 import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
-import { PageModes } from "@/lib/utils";
 
-// ── Palette (mirrors main site) ─────────────────────────────────────────────
+// ── Palette ─────────────────────────────────────────────────────────────────
 const P = {
-  bg: "#18181b",
+  bg: "#0D1117",
   surface: "#161b22",
   border: "#21262d",
-  teal: "#0d9488",
+  teal: "#1D9E75",
   tealD: "#0f2a28",
   tealB: "#0d948850",
   text: "#e6edf3",
   muted: "#6e7681",
   subtle: "#4d5566",
+  red: "#ef4444",
+  redD: "#2a1111",
+  redB: "#ef444430",
 } as const;
 
-//TODO: implement jwt webtockens to e.g. savely let there be multiple users
-// + implement classification or general shortening of the names of the items
-// e.g. gut und guenstig joghurt becomes joghurt (perhaps just use langchain + ollama as background job)
 type ScanMode = "auto" | "manual";
+
+type ScanResult = {
+  ean?: string;
+  itemName?: string;
+  detail: string;
+  known: boolean;
+  count: number;
+  isAdd: boolean;
+  isWish: boolean;
+};
+
+// Pending product whose package quantity is unknown — triggers the quantity modal
+type PendingQuantity = {
+  ean: string;
+  itemName: string;
+};
+
+const QUANTITY_UNITS = ["g", "kg", "ml", "L", "Stück", "cl", "EL", "TL"] as const;
 
 export default function ImprovedScanner() {
   const navHook = useNavigate();
   const location = useLocation();
 
-  // Parse URL parameters
   const queryParams = new URLSearchParams(location.search);
   const count = queryParams.get("count") || "1";
   const isWishList = queryParams.get("wishlist") === "true";
 
-  // State management
   const [headline, setHeadline] = useState("");
   const [mode, setMode] = useState<ScanMode>("auto");
   const [ean, setEan] = useState("");
@@ -51,19 +65,23 @@ export default function ImprovedScanner() {
   const [scanCount, setScanCount] = useState(0);
   const [lastScanTime, setLastScanTime] = useState<string>("");
   const [scannedCode, setScannedCode] = useState<string>("");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [needReauth, setNeedReauth] = useState(false);
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+
+  // ── Quantity modal state ──────────────────────────────────────────────────
+  const [pendingQuantity, setPendingQuantity] = useState<PendingQuantity | null>(null);
+  const [qtyAmount, setQtyAmount] = useState<string>("100");
+  const [qtyUnit, setQtyUnit] = useState<string>("g");
+  const [qtySaving, setQtySaving] = useState(false);
 
   const scanLockRef = useRef(false);
   const lastSentRef = useRef<{ ean?: string; ts?: number }>({});
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const scannerIdRef = useRef("qr-reader");
   const quantityTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scanSubmitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
+  const scanSubmitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resultTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Logging helper
   const log = useCallback(
     (message: string, data?: unknown) => {
       if (verbose) {
@@ -99,26 +117,52 @@ export default function ImprovedScanner() {
     [],
   );
 
+  const showResult = useCallback((result: ScanResult) => {
+    if (resultTimeoutRef.current) clearTimeout(resultTimeoutRef.current);
+    setScanResult(result);
+    resultTimeoutRef.current = setTimeout(() => setScanResult(null), 6000);
+  }, []);
+
+  // Save verified product quantity to the golden record endpoint
+  const saveVerifiedProduct = useCallback(async () => {
+    if (!pendingQuantity) return;
+    const amount = parseFloat(qtyAmount);
+    if (!isFinite(amount) || amount <= 0) return;
+
+    setQtySaving(true);
+    try {
+      await apiCall(
+        "/api/verified_products",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=UTF-8" },
+          body: JSON.stringify({
+            ean: pendingQuantity.ean,
+            item_name: pendingQuantity.itemName,
+            quantity: amount,
+            unit: qtyUnit,
+          }),
+        },
+        1,
+        handleNeedReauth,
+      );
+    } catch (err) {
+      console.error("Failed to save verified product:", err);
+    } finally {
+      setQtySaving(false);
+      setPendingQuantity(null);
+    }
+  }, [apiCall, handleNeedReauth, pendingQuantity, qtyAmount, qtyUnit]);
+
   const hardStopCamera = async () => {
     const qr = html5QrCodeRef.current;
     if (!qr) return;
-
     try {
-      if (qr.isScanning) {
-        await qr.stop();
-      }
-
-      // HARD KILL MEDIA STREAMS
+      if (qr.isScanning) await qr.stop();
       const videoElem = document.querySelector("video");
       const stream = videoElem?.srcObject as MediaStream | null;
-
-      stream?.getTracks().forEach((track) => {
-        track.stop();
-      });
-
-      if (videoElem) {
-        videoElem.srcObject = null;
-      }
+      stream?.getTracks().forEach((track) => track.stop());
+      if (videoElem) videoElem.srcObject = null;
     } catch (e) {
       console.warn("Hard stop failed:", e);
     } finally {
@@ -126,12 +170,9 @@ export default function ImprovedScanner() {
     }
   };
 
-  // Send EAN to server
   const sendEan = useCallback(
     async (eanToSend: string, quantityToSend?: number) => {
       const now = Date.now();
-
-      // Debounce/Duplicate logic
       if (
         lastSentRef.current.ean === eanToSend &&
         now - (lastSentRef.current.ts || 0) < 1000
@@ -141,23 +182,22 @@ export default function ImprovedScanner() {
       }
       lastSentRef.current = { ean: eanToSend, ts: now };
 
-      console.log("quantityToSend: ", quantityToSend, ", count: ", count);
       const parsedModeCount = Number(count);
       const finalCount = Number.isFinite(parsedModeCount) ? parsedModeCount : 1;
       const requestCount =
         typeof quantityToSend === "number" ? quantityToSend : finalCount;
-      const url = "/api/add_ean_to_list/";
+
       try {
         const data = await apiCall<{
           known_to_db?: boolean;
           detail?: string;
+          item_name?: string;
+          quantity_known?: boolean;
         }>(
-          url,
+          "/api/add_ean_to_list/",
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json; charset=UTF-8",
-            },
+            headers: { "Content-Type": "application/json; charset=UTF-8" },
             body: JSON.stringify({
               ean: eanToSend,
               count: requestCount,
@@ -169,52 +209,56 @@ export default function ImprovedScanner() {
         );
 
         if (
-          data.known_to_db &&
           data.known_to_db === true &&
           !(String(data.detail).toLowerCase() === "failed to add item")
         ) {
-          console.log("Item recognized by database");
           setShowSuccess(true);
-          setTimeout(() => {
-            setShowSuccess(false);
-          }, 2500);
+          setTimeout(() => setShowSuccess(false), 2500);
+          showResult({
+            ean: eanToSend,
+            itemName: data.item_name,
+            detail: data.detail ?? "Item processed successfully",
+            known: true,
+            count: requestCount,
+            isAdd: requestCount > 0,
+            isWish: isWishList,
+          });
+          // If the backend doesn't know the package quantity, ask the user
+          if (data.quantity_known === false && data.item_name) {
+            setPendingQuantity({ ean: eanToSend, itemName: data.item_name });
+            setQtyAmount("100");
+            setQtyUnit("g");
+          }
         } else {
-          setError("ean not found");
-          setTimeout(() => {
-            setError("");
-          }, 2500);
+          setError("EAN not found in database");
+          showResult({
+            ean: eanToSend,
+            detail: data.detail ?? "EAN not recognized",
+            known: false,
+            count: requestCount,
+            isAdd: requestCount > 0,
+            isWish: isWishList,
+          });
+          setTimeout(() => setError(""), 2500);
         }
       } catch (err) {
-        if (err instanceof Error && err.message.includes("401")) {
-          return;
-        }
-        setError("network error");
-        console.error("Network error or parsing error:", err);
-        setTimeout(() => {
-          setError("");
-        }, 2500);
+        if (err instanceof Error && err.message.includes("401")) return;
+        setError("Network error");
+        console.error("Network error:", err);
+        setTimeout(() => setError(""), 2500);
       }
     },
-    [apiCall, count, handleNeedReauth, isWishList, log],
+    [apiCall, count, handleNeedReauth, isWishList, log, showResult],
   );
 
-  // Send item by name to server
   const sendByName = useCallback(
     async (itemName: string, quantityToSend: number) => {
       try {
-        const url = "/api/add_ean_to_list/";
-        console.log("Sending item by name to server", {
-          itemName,
-          count: quantityToSend,
-          url,
-        });
         await apiCall(
-          url,
+          "/api/add_ean_to_list/",
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json; charset=UTF-8",
-            },
+            headers: { "Content-Type": "application/json; charset=UTF-8" },
             body: JSON.stringify({
               item_name: itemName,
               count: quantityToSend,
@@ -225,53 +269,43 @@ export default function ImprovedScanner() {
           handleNeedReauth,
         );
 
-        // Haptic feedback
         if ("vibrate" in navigator) {
-          try {
-            navigator.vibrate(200);
-          } catch {
-            /* ignore */
-          }
+          try { navigator.vibrate(200); } catch { /* ignore */ }
         }
+
+        showResult({
+          itemName,
+          detail: `"${itemName}" added to ${isWishList ? "wish list" : "inventory"}`,
+          known: true,
+          count: quantityToSend,
+          isAdd: true,
+          isWish: isWishList,
+        });
+        setManualName("");
       } catch (err) {
-        if (err instanceof Error && err.message.includes("401")) {
-          return;
-        }
+        if (err instanceof Error && err.message.includes("401")) return;
         console.error("Error sending item:", err);
         setError("Failed to add item");
       }
     },
-    [apiCall, handleNeedReauth, isWishList],
+    [apiCall, handleNeedReauth, isWishList, showResult],
   );
 
-  // Handle quantity change with auto-submit timer
   const handleQuantityChange = (delta: number, isScanner = false) => {
     if (isScanner) {
-      const newQuantity = Math.max(1, scanQuantity + delta);
-      setScanQuantity(newQuantity);
+      setScanQuantity((prev) => Math.max(1, prev + delta));
     } else {
-      const newQuantity = Math.max(1, manualQuantity + delta);
-      setManualQuantity(newQuantity);
-
-      // Clear existing timeout
-      if (quantityTimeoutRef.current) {
-        clearTimeout(quantityTimeoutRef.current);
-      }
+      setManualQuantity((prev) => Math.max(1, prev + delta));
+      if (quantityTimeoutRef.current) clearTimeout(quantityTimeoutRef.current);
     }
   };
 
-  // Handle manual submission
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Clear any pending timeout
-    if (quantityTimeoutRef.current) {
-      clearTimeout(quantityTimeoutRef.current);
-    }
+    if (quantityTimeoutRef.current) clearTimeout(quantityTimeoutRef.current);
 
     if (inputMode === "ean") {
       if (manualEan && /^\d{8,14}$/.test(manualEan)) {
-        log("Manual EAN submit", { ean: manualEan, quantity: manualQuantity });
         sendEan(manualEan, manualQuantity);
       } else {
         setError("Please enter a valid barcode (8-14 digits)");
@@ -279,10 +313,6 @@ export default function ImprovedScanner() {
       }
     } else {
       if (manualName.trim()) {
-        log("Manual name submit", {
-          name: manualName,
-          quantity: manualQuantity,
-        });
         sendByName(manualName.trim(), manualQuantity);
       } else {
         setError("Please enter an item name");
@@ -291,23 +321,17 @@ export default function ImprovedScanner() {
     }
   };
 
-  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
-      if (quantityTimeoutRef.current) {
-        clearTimeout(quantityTimeoutRef.current);
-      }
-      if (scanSubmitTimeoutRef.current) {
-        clearTimeout(scanSubmitTimeoutRef.current);
-      }
+      if (quantityTimeoutRef.current) clearTimeout(quantityTimeoutRef.current);
+      if (scanSubmitTimeoutRef.current) clearTimeout(scanSubmitTimeoutRef.current);
+      if (resultTimeoutRef.current) clearTimeout(resultTimeoutRef.current);
     };
   }, []);
 
-  // Initialize HTML5 QR Code scanner (only in auto mode)
   useEffect(() => {
     const deleteFrom = isWishList ? "wish" : "item";
-    const newHeadline =
-      count === "1" ? `add ${deleteFrom}` : `delete ${deleteFrom}`;
+    const newHeadline = count === "1" ? `Add ${deleteFrom}` : `Remove ${deleteFrom}`;
     setHeadline(newHeadline);
     if (mode !== "auto") return;
 
@@ -317,69 +341,39 @@ export default function ImprovedScanner() {
         const html5QrCode = new Html5Qrcode(scannerIdRef.current);
         html5QrCodeRef.current = html5QrCode;
 
-        const config = {
-          fps: 10,
-          qrbox: { width: 250, height: 250 },
-          aspectRatio: 1.0,
-        };
+        const config = { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
 
         const onScanSuccess = (decodedText: string) => {
           setScanCount((prev) => prev + 1);
           setLastScanTime(new Date().toLocaleTimeString());
           log("Scan success", decodedText);
-          // This lives outside onScanSuccess
-
-          if (scanLockRef.current) return; // ignore if we're in cooldown
-
-          scanLockRef.current = true; // lock scanning
-
-          console.log("Processing", decodedText);
-
+          if (scanLockRef.current) return;
+          scanLockRef.current = true;
           if (/^\d{8,14}$/.test(decodedText)) {
             setEan(decodedText);
             setScannedCode(decodedText);
             setScanning(false);
-
-            setTimeout(() => {
-              scanLockRef.current = false;
-            }, 1000);
-
-            //sendEan(decodedText, scanQuantity)
+            setTimeout(() => { scanLockRef.current = false; }, 1000);
           } else {
             log("Invalid barcode format", decodedText);
           }
         };
 
         const onScanError = (errorMessage: string) => {
-          // Only log if verbose to avoid console spam
-          if (verbose) {
-            log("Scan error (normal during scanning)", errorMessage);
-          }
+          if (verbose) log("Scan error (normal during scanning)", errorMessage);
         };
 
-        // Try to use rear camera
         try {
-          await html5QrCode.start(
-            { facingMode: "environment" },
-            config,
-            onScanSuccess,
-            onScanError,
-          );
+          await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanError);
           setScanning(true);
           setError("");
           log("Scanner started with rear camera");
         } catch (err) {
           log("Rear camera failed, trying any camera", err);
-          // Fallback to any available camera
           try {
             const devices = await Html5Qrcode.getCameras();
             if (devices && devices.length > 0) {
-              await html5QrCode.start(
-                devices[0].id,
-                config,
-                onScanSuccess,
-                onScanError,
-              );
+              await html5QrCode.start(devices[0].id, config, onScanSuccess, onScanError);
               setScanning(true);
               setError("");
               log("Scanner started with fallback camera");
@@ -409,7 +403,7 @@ export default function ImprovedScanner() {
     };
   }, [mode, sendEan, log, verbose, scanQuantity]);
 
-  // ── Shared style helpers ───────────────────────────────────────────────────
+  // ── Style helpers ─────────────────────────────────────────────────────────
   const inputStyle: React.CSSProperties = {
     display: "block",
     width: "100%",
@@ -461,8 +455,10 @@ export default function ImprovedScanner() {
     transition: "all 0.15s",
   };
 
+  const username = localStorage.getItem("username") ?? "L";
+
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: P.bg }}>
+    <div style={{ minHeight: "100vh", backgroundColor: P.bg, paddingBottom: 90 }}>
       {needReauth && (
         <AuthPopup
           onAuthenticated={() => {
@@ -471,39 +467,18 @@ export default function ImprovedScanner() {
           }}
         />
       )}
-      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <TopBar
-        sidebarOpen={sidebarOpen}
-        onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-        classNames={[]}
-        selectedClass={null}
-        onFilter={() => undefined}
-        onReset={() => null}
-        onScanIncrease={() => null}
-        onScanDecrease={() => null}
-        items={[]}
-        setItems={() => null}
-        currentSortOrder="new-old"
-        mode={PageModes.GeoPage}
-      />
+      <AppHeader username={username} />
 
       <div className="p-3 sm:p-4 md:p-6">
         <div className="max-w-lg mx-auto">
-          {/* Title row: back + headline + mode toggle + verbose */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginBottom: 16,
-            }}
-          >
+          {/* Title row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
             {/* Back */}
             <button
               onClick={async () => {
                 await hardStopCamera();
-                navHook("/");
+                navHook(-1 as never);
               }}
               style={{
                 all: "unset",
@@ -549,6 +524,11 @@ export default function ImprovedScanner() {
               }}
             >
               {headline}
+              {isWishList && (
+                <span style={{ marginLeft: 6, fontSize: 11, color: P.muted, fontWeight: 400 }}>
+                  · Wish List
+                </span>
+              )}
             </span>
 
             {/* Mode toggle */}
@@ -607,18 +587,102 @@ export default function ImprovedScanner() {
               }}
               title="Toggle verbose logging"
             >
-              <svg
-                width="13"
-                height="13"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                strokeWidth="2"
-              >
+              <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
                 <path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
               </svg>
             </button>
           </div>
+
+          {/* ── Scan result card ── */}
+          {scanResult && (
+            <div
+              style={{
+                backgroundColor: scanResult.known ? P.tealD : P.redD,
+                border: `1px solid ${scanResult.known ? P.tealB : P.redB}`,
+                borderRadius: 14,
+                padding: "14px 16px",
+                marginBottom: 12,
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 12,
+              }}
+            >
+              {/* Icon */}
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: "50%",
+                  backgroundColor: scanResult.known ? "#0f2a28" : "#3a1010",
+                  border: `1px solid ${scanResult.known ? P.tealB : P.redB}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                {scanResult.known ? (
+                  <svg width="14" height="14" fill="none" stroke="#5eead4" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" fill="none" stroke="#f87171" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                )}
+              </div>
+
+              {/* Details */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: scanResult.known ? "#5eead4" : "#f87171", marginBottom: 4 }}>
+                  {scanResult.known
+                    ? scanResult.isAdd
+                      ? `Added to ${scanResult.isWish ? "Wish List" : "Inventory"}`
+                      : `Removed from ${scanResult.isWish ? "Wish List" : "Inventory"}`
+                    : "Not recognized"}
+                </div>
+
+                {scanResult.itemName && (
+                  <div style={{ fontSize: 14, fontWeight: 500, color: P.text, marginBottom: 3 }}>
+                    {scanResult.itemName}
+                  </div>
+                )}
+
+                <div style={{ fontSize: 12, color: P.muted }}>
+                  {scanResult.detail}
+                </div>
+
+                <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
+                  {scanResult.ean && (
+                    <span style={{ fontSize: 11, color: P.subtle, fontFamily: "monospace" }}>
+                      EAN {scanResult.ean}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 11, color: P.subtle }}>
+                    × {scanResult.count}
+                  </span>
+                </div>
+              </div>
+
+              {/* Dismiss */}
+              <button
+                onClick={() => setScanResult(null)}
+                style={{
+                  all: "unset",
+                  color: P.muted,
+                  cursor: "pointer",
+                  fontSize: 18,
+                  lineHeight: 1,
+                  flexShrink: 0,
+                  padding: "0 2px",
+                }}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.color = P.text)}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.color = P.muted)}
+              >
+                ×
+              </button>
+            </div>
+          )}
 
           {mode === "auto" ? (
             /* ── Auto scanner ── */
@@ -646,37 +710,19 @@ export default function ImprovedScanner() {
                 {/* Status */}
                 <div style={{ marginTop: 10, textAlign: "center" }}>
                   {showSuccess ? (
-                    <span
-                      style={{
-                        color: "#5eead4",
-                        fontSize: 13,
-                        fontWeight: 500,
-                      }}
-                    >
+                    <span style={{ color: "#5eead4", fontSize: 13, fontWeight: 500 }}>
                       ✓ Added successfully!
                     </span>
                   ) : error ? (
-                    <span style={{ color: "#f87171", fontSize: 13 }}>
-                      {error}
-                    </span>
+                    <span style={{ color: "#f87171", fontSize: 13 }}>{error}</span>
                   ) : ean ? (
-                    <span
-                      style={{
-                        color: "#5eead4",
-                        fontSize: 13,
-                        fontFamily: "monospace",
-                      }}
-                    >
+                    <span style={{ color: "#5eead4", fontSize: 13, fontFamily: "monospace" }}>
                       Code: {ean}
                     </span>
                   ) : scanning ? (
-                    <span style={{ color: P.muted, fontSize: 13 }}>
-                      ● Scanning...
-                    </span>
+                    <span style={{ color: P.muted, fontSize: 13 }}>● Scanning...</span>
                   ) : (
-                    <span style={{ color: P.subtle, fontSize: 13 }}>
-                      Point at barcode
-                    </span>
+                    <span style={{ color: P.subtle, fontSize: 13 }}>Point at barcode</span>
                   )}
                 </div>
                 {verbose && (
@@ -689,16 +735,8 @@ export default function ImprovedScanner() {
                       border: `1px solid ${P.tealB}`,
                     }}
                   >
-                    <p
-                      style={{
-                        margin: 0,
-                        fontSize: 11,
-                        color: P.teal,
-                        fontFamily: "monospace",
-                      }}
-                    >
-                      Scans: {scanCount} | Last: {lastScanTime || "N/A"} |
-                      Status: {scanning ? "Active" : "Stopped"}
+                    <p style={{ margin: 0, fontSize: 11, color: P.teal, fontFamily: "monospace" }}>
+                      Scans: {scanCount} | Last: {lastScanTime || "N/A"} | Status: {scanning ? "Active" : "Stopped"}
                     </p>
                   </div>
                 )}
@@ -714,40 +752,15 @@ export default function ImprovedScanner() {
                     padding: 16,
                   }}
                 >
-                  <p
-                    style={{
-                      margin: "0 0 12px",
-                      textAlign: "center",
-                      color: "#5eead4",
-                      fontSize: 12,
-                      fontWeight: 500,
-                    }}
-                  >
+                  <p style={{ margin: "0 0 12px", textAlign: "center", color: "#5eead4", fontSize: 12, fontWeight: 500 }}>
                     Adjust Quantity
                   </p>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      justifyContent: "center",
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleQuantityChange(-1, true)}
-                      style={qtyBtnStyle(false)}
-                    >
-                      −
-                    </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "center" }}>
+                    <button type="button" onClick={() => handleQuantityChange(-1, true)} style={qtyBtnStyle(false)}>−</button>
                     <input
                       type="number"
                       value={scanQuantity}
-                      onChange={(e) =>
-                        setScanQuantity(
-                          Math.max(1, parseInt(e.target.value) || 1),
-                        )
-                      }
+                      onChange={(e) => setScanQuantity(Math.max(1, parseInt(e.target.value) || 1))}
                       min="1"
                       style={{
                         width: 80,
@@ -762,34 +775,19 @@ export default function ImprovedScanner() {
                         outline: "none",
                       }}
                     />
-                    <button
-                      type="button"
-                      onClick={() => handleQuantityChange(1, true)}
-                      style={qtyBtnStyle(true)}
-                    >
-                      +
-                    </button>
+                    <button type="button" onClick={() => handleQuantityChange(1, true)} style={qtyBtnStyle(true)}>+</button>
                   </div>
                   <button
                     type="button"
                     onClick={() => {
-                      if (scanSubmitTimeoutRef.current)
-                        clearTimeout(scanSubmitTimeoutRef.current);
+                      if (scanSubmitTimeoutRef.current) clearTimeout(scanSubmitTimeoutRef.current);
                       sendEan(scannedCode, scanQuantity);
                     }}
                     style={submitBtnStyle}
                   >
-                    Submit Now
+                    Submit
                   </button>
                 </div>
-              )}
-
-              {error !== "" && <ShortPopup text={error} variant="error" />}
-              {showSuccess && (
-                <ShortPopup
-                  text="mapped ean successfully :)"
-                  variant="success"
-                />
               )}
 
               <p style={{ textAlign: "center", color: P.subtle, fontSize: 12 }}>
@@ -834,8 +832,7 @@ export default function ImprovedScanner() {
                       fontWeight: 500,
                       cursor: "pointer",
                       transition: "all 0.15s",
-                      backgroundColor:
-                        inputMode === m ? P.tealD : "transparent",
+                      backgroundColor: inputMode === m ? P.tealD : "transparent",
                       border: `1px solid ${inputMode === m ? P.tealB : "transparent"}`,
                       color: inputMode === m ? "#5eead4" : P.muted,
                     }}
@@ -845,20 +842,10 @@ export default function ImprovedScanner() {
                 ))}
               </div>
 
-              <form
-                onSubmit={handleManualSubmit}
-                style={{ display: "flex", flexDirection: "column", gap: 12 }}
-              >
+              <form onSubmit={handleManualSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {inputMode === "name" ? (
                   <div>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: 12,
-                        color: P.muted,
-                        marginBottom: 6,
-                      }}
-                    >
+                    <label style={{ display: "block", fontSize: 12, color: P.muted, marginBottom: 6 }}>
                       Item Name
                     </label>
                     <input
@@ -868,90 +855,42 @@ export default function ImprovedScanner() {
                       placeholder="e.g. Milk, Bread, Apples..."
                       autoFocus
                       style={inputStyle}
-                      onFocus={(e) =>
-                        (e.currentTarget.style.borderColor = P.teal)
-                      }
-                      onBlur={(e) =>
-                        (e.currentTarget.style.borderColor = P.border)
-                      }
+                      onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
+                      onBlur={(e) => (e.currentTarget.style.borderColor = P.border)}
                     />
                   </div>
                 ) : (
                   <div>
-                    <label
-                      style={{
-                        display: "block",
-                        fontSize: 12,
-                        color: P.muted,
-                        marginBottom: 6,
-                      }}
-                    >
+                    <label style={{ display: "block", fontSize: 12, color: P.muted, marginBottom: 6 }}>
                       Barcode (EAN)
                     </label>
                     <input
                       type="text"
                       value={manualEan}
-                      onChange={(e) =>
-                        setManualEan(e.target.value.replace(/\D/g, ""))
-                      }
+                      onChange={(e) => setManualEan(e.target.value.replace(/\D/g, ""))}
                       placeholder="e.g. 4006040055136"
                       maxLength={14}
                       autoFocus
                       style={{ ...inputStyle, fontFamily: "monospace" }}
-                      onFocus={(e) =>
-                        (e.currentTarget.style.borderColor = P.teal)
-                      }
-                      onBlur={(e) =>
-                        (e.currentTarget.style.borderColor = P.border)
-                      }
+                      onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
+                      onBlur={(e) => (e.currentTarget.style.borderColor = P.border)}
                     />
-                    <p
-                      style={{
-                        margin: "4px 0 0",
-                        fontSize: 11,
-                        color: P.subtle,
-                        textAlign: "center",
-                      }}
-                    >
+                    <p style={{ margin: "4px 0 0", fontSize: 11, color: P.subtle, textAlign: "center" }}>
                       {manualEan.length} / 14 digits
                     </p>
                   </div>
                 )}
 
                 <div>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: 12,
-                      color: P.muted,
-                      marginBottom: 8,
-                    }}
-                  >
+                  <label style={{ display: "block", fontSize: 12, color: P.muted, marginBottom: 8 }}>
                     Quantity
                   </label>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      justifyContent: "center",
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleQuantityChange(-1)}
-                      style={qtyBtnStyle(false)}
-                    >
-                      −
-                    </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "center" }}>
+                    <button type="button" onClick={() => handleQuantityChange(-1)} style={qtyBtnStyle(false)}>−</button>
                     <input
                       type="number"
                       value={manualQuantity}
-                      onChange={(e) =>
-                        setManualQuantity(
-                          Math.max(1, parseInt(e.target.value) || 1),
-                        )
-                      }
+                      onChange={(e) => setManualQuantity(Math.max(1, parseInt(e.target.value) || 1))}
                       min="1"
                       style={{
                         width: 80,
@@ -966,44 +905,33 @@ export default function ImprovedScanner() {
                         outline: "none",
                       }}
                     />
-                    <button
-                      type="button"
-                      onClick={() => handleQuantityChange(1)}
-                      style={qtyBtnStyle(true)}
-                    >
-                      +
-                    </button>
+                    <button type="button" onClick={() => handleQuantityChange(1)} style={qtyBtnStyle(true)}>+</button>
                   </div>
                 </div>
 
-                {error !== "" && <ShortPopup text={error} variant="error" />}
-                {showSuccess && (
-                  <ShortPopup
-                    text="mapped ean successfully :)"
-                    variant="success"
-                  />
+                {error && (
+                  <div style={{ padding: "8px 12px", backgroundColor: P.redD, border: `1px solid ${P.redB}`, borderRadius: 10, fontSize: 13, color: "#f87171" }}>
+                    {error}
+                  </div>
                 )}
 
                 <button
                   type="submit"
                   disabled={
-                    (inputMode === "ean" &&
-                      (!manualEan || manualEan.length < 8)) ||
+                    (inputMode === "ean" && (!manualEan || manualEan.length < 8)) ||
                     (inputMode === "name" && !manualName.trim()) ||
                     showSuccess
                   }
                   style={{
                     ...submitBtnStyle,
                     opacity:
-                      (inputMode === "ean" &&
-                        (!manualEan || manualEan.length < 8)) ||
+                      (inputMode === "ean" && (!manualEan || manualEan.length < 8)) ||
                       (inputMode === "name" && !manualName.trim()) ||
                       showSuccess
                         ? 0.4
                         : 1,
                     cursor:
-                      (inputMode === "ean" &&
-                        (!manualEan || manualEan.length < 8)) ||
+                      (inputMode === "ean" && (!manualEan || manualEan.length < 8)) ||
                       (inputMode === "name" && !manualName.trim()) ||
                       showSuccess
                         ? "not-allowed"
@@ -1015,23 +943,8 @@ export default function ImprovedScanner() {
               </form>
 
               {verbose && (
-                <div
-                  style={{
-                    marginTop: 12,
-                    padding: "7px 10px",
-                    backgroundColor: P.bg,
-                    borderRadius: 8,
-                    border: `1px solid ${P.tealB}`,
-                  }}
-                >
-                  <p
-                    style={{
-                      margin: 0,
-                      fontSize: 11,
-                      color: P.teal,
-                      fontFamily: "monospace",
-                    }}
-                  >
+                <div style={{ marginTop: 12, padding: "7px 10px", backgroundColor: P.bg, borderRadius: 8, border: `1px solid ${P.tealB}` }}>
+                  <p style={{ margin: 0, fontSize: 11, color: P.teal, fontFamily: "monospace" }}>
                     Mode: {inputMode} | Quantity: {manualQuantity}
                   </p>
                 </div>
@@ -1040,6 +953,77 @@ export default function ImprovedScanner() {
           )}
         </div>
       </div>
+
+      {/* ── Quantity modal ── */}
+      {pendingQuantity && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 300, display: "flex", alignItems: "flex-end", backdropFilter: "blur(4px)" }}
+          onClick={() => setPendingQuantity(null)}
+        >
+          <div
+            style={{ background: P.surface, borderRadius: "24px 24px 0 0", padding: "20px 20px 48px", width: "100%", maxWidth: 480, margin: "0 auto" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Handle */}
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: P.border, margin: "0 auto 18px" }} />
+
+            {/* Header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <svg width="16" height="16" fill="none" stroke="#5eead4" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span style={{ fontSize: 15, fontWeight: 700, color: P.text }}>Packungsinhalt unbekannt</span>
+            </div>
+            <p style={{ margin: "0 0 18px", fontSize: 13, color: P.muted }}>
+              Wie viel enthält eine Packung „{pendingQuantity.itemName}"? Deine Angabe hilft dir beim Wochenplaner.
+            </p>
+
+            {/* Amount + unit row */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ display: "block", fontSize: 11, color: P.muted, marginBottom: 5 }}>Menge</label>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="any"
+                  value={qtyAmount}
+                  onChange={(e) => setQtyAmount(e.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", background: P.bg, border: `1px solid ${P.tealB}`, borderRadius: 10, color: P.text, fontSize: 16, fontWeight: 700, outline: "none" }}
+                />
+              </div>
+              <div style={{ width: 110 }}>
+                <label style={{ display: "block", fontSize: 11, color: P.muted, marginBottom: 5 }}>Einheit</label>
+                <select
+                  value={qtyUnit}
+                  onChange={(e) => setQtyUnit(e.target.value)}
+                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", background: P.bg, border: `1px solid ${P.border}`, borderRadius: 10, color: P.text, fontSize: 14, outline: "none", cursor: "pointer" }}
+                >
+                  {QUANTITY_UNITS.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <button
+              onClick={() => void saveVerifiedProduct()}
+              disabled={qtySaving || !qtyAmount || parseFloat(qtyAmount) <= 0}
+              style={{ width: "100%", padding: 13, borderRadius: 13, background: "#0d9488", color: "#fff", fontSize: 14, fontWeight: 800, border: "none", cursor: "pointer", marginBottom: 10, fontFamily: "inherit", opacity: qtySaving ? 0.6 : 1, transition: "opacity 0.15s" }}
+            >
+              {qtySaving ? "Wird gespeichert…" : "Speichern"}
+            </button>
+            <button
+              onClick={() => setPendingQuantity(null)}
+              style={{ width: "100%", padding: 12, borderRadius: 13, background: P.surface, color: P.muted, fontSize: 13, fontWeight: 700, border: `1px solid ${P.border}`, cursor: "pointer", fontFamily: "inherit" }}
+            >
+              Überspringen
+            </button>
+          </div>
+        </div>
+      )}
+
+      <BottomTabBar />
     </div>
   );
 }

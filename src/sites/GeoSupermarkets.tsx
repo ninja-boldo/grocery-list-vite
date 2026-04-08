@@ -1,11 +1,9 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   fetchCloseMarkets,
   getUserLocation,
 } from "@/comp/geo/GetCoordPosition";
 import Map, { type Position } from "../comp/geo/Map";
-import TopBar from "@/comp/other/TopBar";
-import { PageModes } from "@/lib/utils";
 import AppHeader from "@/comp/other/AppHeader";
 import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
@@ -13,6 +11,20 @@ import AddSupermarketModal, {
   type AddSupermarketPayload,
 } from "@/comp/geo/AddSupermarketModal";
 import { authApiCall } from "@/lib/authApi";
+import FeedbackToast, { useFeedbackToast } from "@/comp/utils/FeedbackToast";
+
+// ── Palette ────────────────────────────────────────────────────────────────
+const P = {
+  bg: "#0D1117",
+  surface: "#161b22",
+  border: "#21262d",
+  teal: "#1D9E75",
+  tealD: "#0f2a28",
+  tealB: "#0d948850",
+  text: "#e6edf3",
+  muted: "#6e7681",
+  subtle: "#4d5566",
+} as const;
 
 const formatMeters = (meters: number) => {
   if (meters >= 1000) {
@@ -35,53 +47,61 @@ const GeoSupermarketSite = () => {
   });
   const [markedPositions, setMarkedPositions] = useState<Position[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [supermarketRadius, setSupermarketRadius] = useState<number>(3000);
-  const [showRadiusControls, setShowRadiusControls] = useState<boolean>(false);
+
+  // displayRadius updates immediately (for the slider UI);
+  // debouncedRadius trails by 500 ms and triggers the API fetch.
+  const [displayRadius, setDisplayRadius] = useState<number>(3000);
+  const [debouncedRadius, setDebouncedRadius] = useState<number>(3000);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [needReauth, setNeedReauth] = useState(false);
   const [addSupermarketIsActive, setAddSupermarketIsActive] = useState(false);
-  const [addMarketFeedback, setAddMarketFeedback] = useState<string | null>(
-    null,
-  );
+
+  const [toast, showToast, clearToast] = useFeedbackToast(5000);
+
+  // Radius slider: update display value immediately, debounce API trigger
+  const handleRadiusChange = (value: number) => {
+    setDisplayRadius(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedRadius(value), 500);
+  };
 
   const handleAddSupermarket = async (payload: AddSupermarketPayload) => {
     const response = await authApiCall<AddMarketResponse>(
       "/api/add_new_market",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       },
     );
 
     if (response.status !== "success") {
+      showToast(response.message ?? "Backend rejected market upload.", "error");
       throw new Error(response.message ?? "Backend rejected market upload.");
     }
 
-    setAddMarketFeedback(
-      response.detail ?? "Backend received your supermarket successfully.",
+    showToast(
+      response.detail ?? "Supermarket submitted successfully.",
+      "success",
     );
 
     if (userPos.valid) {
       await fetchCloseMarkets(
         userPos,
-        supermarketRadius,
+        debouncedRadius,
         setMarkedPositions,
         () => setNeedReauth(true),
       );
     }
   };
 
+  // Get user location once
   useEffect(() => {
     getUserLocation()
       .then((coords) => {
-        setUserPos({
-          lat: coords.latitude,
-          lon: coords.longitude,
-          valid: true,
-        });
+        setUserPos({ lat: coords.latitude, lon: coords.longitude, valid: true });
         setError(null);
       })
       .catch((err) => {
@@ -90,35 +110,22 @@ const GeoSupermarketSite = () => {
       });
   }, []);
 
+  // Fetch markets when location or debounced radius changes
   useEffect(() => {
-    if (!userPos.valid) {
-      return;
-    }
-
+    if (!userPos.valid) return;
     setIsLoading(true);
     setError(null);
-    fetchCloseMarkets(userPos, supermarketRadius, setMarkedPositions, () =>
+    fetchCloseMarkets(userPos, debouncedRadius, setMarkedPositions, () =>
       setNeedReauth(true),
     )
       .catch((err) =>
         setError(err?.message ?? "Failed to fetch nearby supermarkets."),
       )
       .finally(() => setIsLoading(false));
-  }, [userPos, supermarketRadius, setError]);
+  }, [userPos, debouncedRadius]);
 
-  useEffect(() => {
-    if (!addMarketFeedback) {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      setAddMarketFeedback(null);
-    }, 4500);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [addMarketFeedback]);
+  // Cleanup debounce timer
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   const username = localStorage.getItem("username") ?? "L";
 
@@ -126,44 +133,75 @@ const GeoSupermarketSite = () => {
     <div
       style={{
         minHeight: "100vh",
-        background: "#0D1117",
-        color: "#E8EDF2",
+        background: P.bg,
+        color: P.text,
         fontFamily: "'DM Sans', system-ui, sans-serif",
-        paddingBottom: 80,
+        paddingBottom: 90,
       }}
     >
       {needReauth && <AuthPopup onAuthenticated={() => setNeedReauth(false)} />}
 
-      <AppHeader
-        username={username}
-        onAvatarClick={() => setNeedReauth(true)}
-      />
-      <main style={{ width: "100%", padding: "8px 12px" }}>
+      <AppHeader username={username} />
+
+      <FeedbackToast toast={toast} onDismiss={clearToast} />
+
+      <main style={{ width: "100%", padding: "0 12px" }}>
         {error && (
-          <div className="rounded-xl border border-[#ff8f8f66] bg-[#2a1111bf] px-3 py-2 text-xs sm:text-sm text-[#ffb8b8]">
+          <div
+            style={{
+              marginBottom: 10,
+              padding: "10px 14px",
+              backgroundColor: "#2a1111",
+              border: "1px solid #ef444430",
+              borderRadius: 12,
+              fontSize: 13,
+              color: "#fca5a5",
+            }}
+          >
             {error}
           </div>
         )}
 
-        {addMarketFeedback && (
-          <div className="mt-2 rounded-xl border border-[#7ef5c655] bg-[#0f2f27bf] px-3 py-2 text-xs sm:text-sm text-[#c8ffef]">
-            {addMarketFeedback}
-          </div>
-        )}
-
-        <div className="mx-auto w-full max-w-4xl">
+        <div style={{ maxWidth: 800, margin: "0 auto" }}>
+          {/* Map container */}
           {isLoading ? (
-            <div className="rounded-2xl border border-[#85f2cf24] bg-[#122120d4] p-7 text-center">
-              <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-[#70f0c2] border-r-transparent" />
-              <p className="mt-2 text-xs sm:text-sm text-[#9ccbc5]">
+            <div
+              style={{
+                background: P.surface,
+                border: `1px solid ${P.border}`,
+                borderRadius: 18,
+                padding: "32px 16px",
+                textAlign: "center",
+              }}
+            >
+              <div
+                style={{
+                  display: "inline-block",
+                  width: 24,
+                  height: 24,
+                  borderRadius: "50%",
+                  border: `2px solid ${P.teal}`,
+                  borderRightColor: "transparent",
+                  animation: "spin 0.8s linear infinite",
+                }}
+              />
+              <p style={{ marginTop: 10, fontSize: 13, color: P.muted }}>
                 Loading map and nearby supermarkets...
               </p>
             </div>
           ) : (
-            <div className="w-full rounded-2xl border border-[#82e9d333] bg-[#0f1d1cbf] p-0 shadow-[0_8px_24px_rgba(0,0,0,0.24)]">
+            <div
+              style={{
+                background: P.surface,
+                border: `1px solid ${P.border}`,
+                borderRadius: 18,
+                overflow: "hidden",
+                boxShadow: "0 8px 32px #00000040",
+              }}
+            >
               <Map
                 key={`${userPos.lat}-${userPos.lon}`}
-                height="65vh"
+                height="62vh"
                 zoom={12}
                 centerPos={userPos}
                 markedPositions={markedPositions}
@@ -171,60 +209,147 @@ const GeoSupermarketSite = () => {
             </div>
           )}
 
-          <div className="mt-3 flex flex-wrap items-center justify-center gap-2 sm:gap-3">
-            <button
-              onClick={() => setShowRadiusControls((prev) => !prev)}
-              className="rounded-full border border-[#7ef5c655] bg-[#132726] px-3 py-1.5 text-xs sm:text-sm text-[#d5fff5] hover:bg-[#1a3432] transition-colors"
-            >
-              {showRadiusControls
-                ? "Hide radius"
-                : `Adjust radius (${formatMeters(supermarketRadius)})`}
-            </button>
-            <button
-              onClick={() => {
-                setAddMarketFeedback(null);
-                setAddSupermarketIsActive(true);
+          {/* Controls card */}
+          <div
+            style={{
+              marginTop: 10,
+              background: P.surface,
+              border: `1px solid ${P.border}`,
+              borderRadius: 16,
+              padding: "14px 16px",
+            }}
+          >
+            {/* Radius control */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 8,
               }}
-              className="rounded-full border border-[#7ef5c655] bg-[#132726] px-3 py-1.5 text-xs sm:text-sm text-[#d5fff5] hover:bg-[#1a3432] transition-colors"
             >
-              Add supermarket
-            </button>
-          </div>
-
-          {showRadiusControls && (
-            <section className="mx-auto mt-3 w-full max-w-sm rounded-xl border border-[#7ef5c640] bg-[linear-gradient(135deg,#112322,#1d1614)] px-3 py-3 sm:px-4">
-              <div className="flex items-center justify-between gap-3">
-                <label
-                  htmlFor="radius-slider"
-                  className="text-xs uppercase tracking-[0.2em] text-[#8cb5b0]"
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.08em",
+                  color: P.subtle,
+                  textTransform: "uppercase",
+                }}
+              >
+                Radius
+              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span
+                  style={{ fontSize: 14, fontWeight: 700, color: P.teal }}
                 >
-                  Radius
-                </label>
+                  {formatMeters(displayRadius)}
+                </span>
                 <button
-                  onClick={() => setSupermarketRadius(3000)}
-                  className="rounded-full border border-[#90f4d855] bg-[#142826] px-3 py-1 text-xs text-[#c4f7eb] hover:bg-[#1a3533] transition-colors"
+                  onClick={() => {
+                    setDisplayRadius(3000);
+                    handleRadiusChange(3000);
+                  }}
+                  style={{
+                    all: "unset",
+                    boxSizing: "border-box",
+                    padding: "3px 10px",
+                    borderRadius: 8,
+                    border: `1px solid ${P.border}`,
+                    backgroundColor: P.bg,
+                    color: P.muted,
+                    fontSize: 11,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.borderColor = P.tealB;
+                    (e.currentTarget as HTMLElement).style.color = "#5eead4";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.borderColor = P.border;
+                    (e.currentTarget as HTMLElement).style.color = P.muted;
+                  }}
                 >
-                  Default
+                  Reset
                 </button>
               </div>
-              <input
-                id="radius-slider"
-                type="range"
-                min={500}
-                max={10000}
-                step={250}
-                value={supermarketRadius}
-                onChange={(event) =>
-                  setSupermarketRadius(Number(event.target.value))
-                }
-                className="mt-2 w-full accent-[#7ef5c6]"
-              />
-              <div className="mt-1 flex justify-between text-[11px] text-[#789694]">
-                <span>500 m</span>
-                <span>10 km</span>
-              </div>
-            </section>
-          )}
+            </div>
+
+            <input
+              id="radius-slider"
+              type="range"
+              min={500}
+              max={10000}
+              step={250}
+              value={displayRadius}
+              onChange={(e) => handleRadiusChange(Number(e.target.value))}
+              style={{
+                width: "100%",
+                accentColor: P.teal,
+                cursor: "pointer",
+              }}
+            />
+
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                marginTop: 2,
+                fontSize: 10,
+                color: P.subtle,
+              }}
+            >
+              <span>500 m</span>
+              <span>10 km</span>
+            </div>
+
+            {/* Divider */}
+            <div
+              style={{
+                borderTop: `1px solid ${P.border}`,
+                margin: "12px 0",
+              }}
+            />
+
+            {/* Add supermarket button */}
+            <button
+              onClick={() => setAddSupermarketIsActive(true)}
+              style={{
+                all: "unset",
+                boxSizing: "border-box",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 7,
+                width: "100%",
+                padding: "11px 0",
+                borderRadius: 12,
+                backgroundColor: P.tealD,
+                border: `1px solid ${P.tealB}`,
+                color: "#5eead4",
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "all 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.backgroundColor = "#152e28";
+                (e.currentTarget as HTMLElement).style.borderColor = `${P.teal}80`;
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.backgroundColor = P.tealD;
+                (e.currentTarget as HTMLElement).style.borderColor = P.tealB;
+              }}
+            >
+              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Add Supermarket
+            </button>
+          </div>
         </div>
 
         {addSupermarketIsActive && (
@@ -237,6 +362,9 @@ const GeoSupermarketSite = () => {
       </main>
 
       <BottomTabBar />
+
+      {/* Spinner keyframe */}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 };

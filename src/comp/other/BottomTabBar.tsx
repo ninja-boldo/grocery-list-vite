@@ -4,17 +4,17 @@ import { useNavigate, useLocation } from "react-router-dom";
 const TEAL = "#1D9E75";
 const MUTED = "#4A5568";
 
+const HomeIcon = ({ active }: { active: boolean }) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? TEAL : MUTED} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="3" width="7" height="7" rx="1" />
+    <rect x="14" y="3" width="7" height="7" rx="1" />
+    <rect x="3" y="14" width="7" height="7" rx="1" />
+    <rect x="14" y="14" width="7" height="7" rx="1" />
+  </svg>
+);
+
 const ListIcon = ({ active }: { active: boolean }) => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke={active ? TEAL : MUTED}
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? TEAL : MUTED} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="8" y1="6" x2="21" y2="6" />
     <line x1="8" y1="12" x2="21" y2="12" />
     <line x1="8" y1="18" x2="21" y2="18" />
@@ -24,101 +24,48 @@ const ListIcon = ({ active }: { active: boolean }) => (
   </svg>
 );
 
+const ScanIcon = ({ active }: { active: boolean }) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? TEAL : MUTED} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+    <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+    <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+    <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+    <line x1="7" y1="12" x2="17" y2="12" />
+  </svg>
+);
+
 const HeartIcon = ({ active }: { active: boolean }) => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill={active ? TEAL : "none"}
-    stroke={active ? TEAL : MUTED}
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
+  <svg width="18" height="18" viewBox="0 0 24 24" fill={active ? TEAL : "none"} stroke={active ? TEAL : MUTED} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
   </svg>
 );
 
 const MapIcon = ({ active }: { active: boolean }) => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke={active ? TEAL : MUTED}
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? TEAL : MUTED} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
     <circle cx="12" cy="10" r="3" />
   </svg>
 );
 
-const GearIcon = ({ active }: { active: boolean }) => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke={active ? TEAL : MUTED}
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-    <circle cx="12" cy="12" r="3" />
-  </svg>
-);
-
-const InfoIcon = ({ active }: { active: boolean }) => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke={active ? TEAL : MUTED}
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    {/* outer circle */}
-    <circle cx="12" cy="12" r="9" />
-
-    {/* dot */}
-    <circle cx="12" cy="8" r="1" />
-
-    {/* vertical line */}
-    <path d="M12 11v5" />
+const PlannerIcon = ({ active }: { active: boolean }) => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? TEAL : MUTED} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+    <line x1="16" y1="2" x2="16" y2="6" />
+    <line x1="8" y1="2" x2="8" y2="6" />
+    <line x1="3" y1="10" x2="21" y2="10" />
+    <line x1="8" y1="14" x2="8.01" y2="14" strokeWidth="2.5" strokeLinecap="round" />
+    <line x1="12" y1="14" x2="12.01" y2="14" strokeWidth="2.5" strokeLinecap="round" />
+    <line x1="16" y1="14" x2="16.01" y2="14" strokeWidth="2.5" strokeLinecap="round" />
+    <line x1="8" y1="18" x2="8.01" y2="18" strokeWidth="2.5" strokeLinecap="round" />
+    <line x1="12" y1="18" x2="12.01" y2="18" strokeWidth="2.5" strokeLinecap="round" />
   </svg>
 );
 
 const tabs = [
-  {
-    href: "/",
-    label: "Items",
-    Icon: ListIcon,
-  },
-  {
-    href: "/wish_list",
-    label: "Wish List",
-    Icon: HeartIcon,
-  },
-  {
-    href: "/market_mapping",
-    label: "Stores",
-    Icon: MapIcon,
-  },
-  {
-    href: "/settings",
-    label: "Settings",
-    Icon: GearIcon,
-  },
-  {
-    href: "/attribution",
-    label: "Attribution",
-    Icon: InfoIcon,
-  },
+  { href: "/dashboard",       label: "Home",    Icon: HomeIcon    },
+  { href: "/planner",         label: "Planer",  Icon: PlannerIcon },
+  { href: "/scanner",         label: "Scan",    Icon: ScanIcon    },
+  { href: "/market_mapping",  label: "Stores",  Icon: MapIcon     },
 ] as const;
 
 const BottomTabBar = () => {
@@ -140,7 +87,9 @@ const BottomTabBar = () => {
       }}
     >
       {tabs.map((tab) => {
-        const active = location.pathname === tab.href;
+        const active = location.pathname === tab.href ||
+          // treat /scanner/manual as "Scan" active
+          (tab.href === "/scanner" && location.pathname.startsWith("/scanner"));
         return (
           <button
             key={tab.href}
@@ -161,13 +110,7 @@ const BottomTabBar = () => {
             }}
           >
             <tab.Icon active={active} />
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: active ? 600 : 500,
-                letterSpacing: "0.01em",
-              }}
-            >
+            <span style={{ fontSize: 10, fontWeight: active ? 600 : 500, letterSpacing: "0.01em" }}>
               {tab.label}
             </span>
           </button>
