@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
@@ -122,6 +123,92 @@ class Ingredient(BaseModel):
     count: Optional[int] = None
 
 
+class DayType(str, Enum):
+    quick = "quick"
+    normal = "normal"
+    relaxed = "relaxed"
+
+
+class Day(str, Enum):
+    mo = "monday"
+    tu = "tuesday"
+    we = "wednesday"
+    th = "thursday"  # typo fix
+    fr = "friday"
+    sa = "saturday"
+    su = "sunday"
+
+
+class DaySettings(BaseModel):
+    day: str
+    day_meal_time_type: DayType = DayType.normal
+    breakfast_blocked: bool = False
+    lunch_blocked: bool = False
+    dinner_blocked: bool = False
+
+
+class PlannerSettings(BaseModel):
+    defaultServings: int
+    quickMealMinutes: int
+    normalMealMinutes: int
+
+
+class Item(BaseModel):
+    item_name: str
+    info: Optional[str] = ""
+    item_id: Optional[str] = None
+    count: Optional[int] = 1
+
+
+class ItemsWishedForRecipe(BaseModel):
+    items: list[Item]
+
+
+class WeekSettings(BaseModel):
+    mo: DaySettings = DaySettings(day="monday")
+    tu: DaySettings = DaySettings(day="tuesday")
+    we: DaySettings = DaySettings(day="wednesday")
+    th: DaySettings = DaySettings(day="thursday")
+    fr: DaySettings = DaySettings(day="friday")
+    sa: DaySettings = DaySettings(day="saturday")
+    su: DaySettings = DaySettings(day="sunday")
+
+
+class MealSlot(BaseModel):
+    recipe_id: int
+    servings: int
+    meal_type: str
+    day: str
+    day_time: str
+
+
+class DayPlan(BaseModel):
+    breakfast: MealSlot | None = None
+    lunch: MealSlot | None = None
+    dinner: MealSlot | None = None
+
+
+class WeekPlan(BaseModel):
+    mo: DayPlan = DayPlan()
+    tu: DayPlan = DayPlan()
+    we: DayPlan = DayPlan()
+    th: DayPlan = DayPlan()
+    fr: DayPlan = DayPlan()
+    sa: DayPlan = DayPlan()
+    su: DayPlan = DayPlan()
+
+
+class AddWeekPlan(BaseModel):
+    week: WeekPlan
+    DaySettings: WeekSettings
+
+
+class DayBlockInfo(BaseModel):
+    breakfast_blocked: bool = False
+    lunch_blocked: bool = False
+    dinner_blocked: bool = False
+
+
 class Recipe(BaseModel):
     recipe_id: int
     base_time: Optional[int] = None
@@ -138,7 +225,7 @@ class AddRecipe(BaseModel):
     baseServings: Optional[int] = 2
     tags: Optional[list[str]] = []
     favorited: Optional[bool] = False
-    Ingredients: list[Ingredient]
+    ingredients: list[Ingredient]
     steps: list[str]
 
 

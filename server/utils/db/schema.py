@@ -50,12 +50,32 @@ ON "public"."inventory" ("user_id", "is_wish", "created_at", "item_id", "id");""
     "mapped_wishes" TEXT,
     PRIMARY KEY("item_id")
 );""",
+    # meal_slots
+    """CREATE TABLE IF NOT EXISTS "public"."meal_slots" (
+    "recipe_id" INT NOT NULL,
+    "meal_type" TEXT,
+    "servings" INT,
+    "user_id" INT NOT NULL,
+    "day" TEXT,
+    "day_time" TEXT,
+    PRIMARY KEY("recipe_id")
+);""",
+    # day_settings
+    """CREATE TABLE IF NOT EXISTS "public"."day_settings" (
+    "user_id" INT NOT NULL,
+    "day" TEXT NOT NULL,
+    "day_meal_time_type" TEXT NOT NULL,
+    "breakfast_blocked" BOOLEAN NOT NULL,
+    "lunch_blocked" BOOLEAN NOT NULL,
+    "dinner_blocked" BOOLEAN,
+    PRIMARY KEY("user_id", "day")
+);""",
     # ingredients
     """CREATE TABLE IF NOT EXISTS "public"."ingredients" (
     "ingredient_id" SERIAL NOT NULL,
     "amount" INT,
-    "unit" INT,
-    "name" INT,
+    "unit" TEXT,
+    "name" TEXT,
     PRIMARY KEY("ingredient_id")
 );""",
     # supermarkets
@@ -70,7 +90,7 @@ ON "public"."inventory" ("user_id", "is_wish", "created_at", "item_id", "id");""
     PRIMARY KEY("supermarket_id")
 );""",
     """CREATE INDEX "supermarkets_supermarkets_index_0"
-ON "public"."supermarkets" ("supermarket_id", "name", "longitude", "latitude", "chain", "opening_periods", "address");""",
+ON "public"."supermarkets" ("supermarket_id", "name", "longitude", "latitude", "chain", "opening_hours", "address");""",
     # recipes
     """CREATE TABLE IF NOT EXISTS "public"."recipes" (
     "recipe_id" SERIAL NOT NULL,
@@ -103,6 +123,14 @@ ON "public"."supermarkets" ("supermarket_id", "name", "longitude", "latitude", "
     "is_app_offer" BOOLEAN,
     PRIMARY KEY("offer_id")
 );""",
+    # planner_settings
+    """CREATE TABLE IF NOT EXISTS "public"."planner_settings" (
+    "user_id" INT NOT NULL,
+    "fast_day_meal_minutes" INT,
+    "normal_day_meal_minutes" INT,
+    "default_servings" INT,
+    PRIMARY KEY("user_id")
+);""",
     # Foreign keys
     """ALTER TABLE "public"."grocery_offers"
 ADD CONSTRAINT "fk_grocery_offers_supermarket_id_supermarkets_supermarket_id"
@@ -111,7 +139,34 @@ FOREIGN KEY("supermarket_id") REFERENCES "public"."supermarkets"("supermarket_id
 ADD CONSTRAINT "fk_inventory_item_id_items_item_id"
 FOREIGN KEY("item_id") REFERENCES "public"."items"("item_id");""",
     """ALTER TABLE "public"."inventory"
-ADD CONSTRAINT "fk_inventory_user_id_users_user_id",
+ADD CONSTRAINT "fk_inventory_user_id_users_user_id"
+FOREIGN KEY("user_id") REFERENCES "public"."users"("user_id");""",
+    """ALTER TABLE "public"."item_classification"
+ADD CONSTRAINT "fk_item_classification_item_id_items_item_id"
+FOREIGN KEY("item_id") REFERENCES "public"."items"("item_id");""",
+    """ALTER TABLE "public"."recipe_ingredient_map"
+ADD CONSTRAINT "fk_recipe_ingredient_map_ingredient_id_ingredients_ingredient_id"
+FOREIGN KEY("ingredient_id") REFERENCES "public"."ingredients"("ingredient_id");""",
+    """ALTER TABLE "public"."recipe_ingredient_map"
+ADD CONSTRAINT "fk_recipe_ingredient_map_recipe_id_recipes_recipe_id"
+FOREIGN KEY("recipe_id") REFERENCES "public"."recipes"("recipe_id");""",
+    """ALTER TABLE "public"."recipes"
+ADD CONSTRAINT "fk_recipes_user_id_users_user_id"
+FOREIGN KEY("user_id") REFERENCES "public"."users"("user_id");""",
+    """ALTER TABLE "public"."meal_slots"
+ADD CONSTRAINT "fk_meal_slots_recipe_id_recipes_recipe_id"
+FOREIGN KEY("recipe_id") REFERENCES "public"."recipes"("recipe_id");""",
+    """ALTER TABLE "public"."meal_slots"
+ADD CONSTRAINT "fk_meal_slots_user_id_users_user_id"
+FOREIGN KEY("user_id") REFERENCES "public"."users"("user_id");""",
+    """ALTER TABLE "public"."day_settings"
+ADD CONSTRAINT "fk_day_settings_user_id_users_user_id"
+FOREIGN KEY("user_id") REFERENCES "public"."users"("user_id");""",
+    """ALTER TABLE "public"."wish_mapping"
+ADD CONSTRAINT "fk_wish_mapping_item_id_items_item_id"
+FOREIGN KEY("item_id") REFERENCES "public"."items"("item_id");""",
+    """ALTER TABLE "public"."planner_settings"
+ADD CONSTRAINT "fk_planner_settings_user_id_users_user_id"
 FOREIGN KEY("user_id") REFERENCES "public"."users"("user_id");""",
 ]
 
@@ -125,4 +180,7 @@ DATABASE_TABLES = [
     "items",
     "grocery_offers",
     "wish_mapping",
+    "meal_slots",
+    "day_settings",
+    "planner_settings",
 ]

@@ -12,6 +12,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_groq import ChatGroq
 from pydantic import BaseModel, Field, ValidationError
 
+from utils.types import Item
+
 from .lookups import (
     ACTION_PROMPT_TMPL,
     COMBINED_PROMPT_TMPL,
@@ -319,7 +321,7 @@ class GroceryClassifierLlm:
 
     def mapWishToItemBatch(
         self,
-        items: list[str],
+        items: list[str] | list[Item],
         wish_lists: list[list[str]] | None = None,
     ) -> dict[str, dict]:
         """Batch llm wish mapping"""
@@ -327,46 +329,73 @@ class GroceryClassifierLlm:
         if not items:
             return {}
 
+        # Normalize to (item_name, info_dict) pairs
+        normalized: list[tuple[str, dict]] = []
+        for item in items:
+            if isinstance(item, Item):
+                normalized.append(
+                    (
+                        item.item_name,
+                        item.model_dump(exclude={"item_name"}),
+                    )
+                )
+            else:
+                normalized.append((item, {}))
+
+        item_names = [name for name, _ in normalized]
+        item_info = {name: info for name, info in normalized}
+
         prepared_wishes = list(wish_lists or [])
-        # Pad / trim to match items length
-        if len(prepared_wishes) < len(items):
+        if len(prepared_wishes) < len(item_names):
             prepared_wishes.extend(
-                [[] for _ in range(len(items) - len(prepared_wishes))]
+                [[] for _ in range(len(item_names) - len(prepared_wishes))]
             )
         else:
-            prepared_wishes = prepared_wishes[: len(items)]
+            prepared_wishes = prepared_wishes[: len(item_names)]
 
         wishToIdx: dict[str, int] = {}
         idx: int = 0
         for wishList in prepared_wishes:
             wishesStr = self.convertWishList(wishList)
-            if wishesStr not in wishToIdx.keys():
+            if wishesStr not in wishToIdx:
                 wishToIdx[wishesStr] = idx
                 idx += 1
 
         wish_item_map: dict[str, dict] = {}
-        for idx, (item, wishes) in enumerate(zip(items, prepared_wishes)):
+        for item_name, wishes in zip(item_names, prepared_wishes):
             wishesStr = self.convertWishList(wishes)
-            wish_item_map[item] = {
+            wish_item_map[item_name] = {
                 "wish_list": wishes,
                 "index_wish_list": wishToIdx[wishesStr],
             }
 
         try:
-            print(f"this is the item_wish_dict: {wish_item_map}")
+            print(f"wish item map: {wish_item_map}")
             results = self._invoke(
                 WISH_Batch_TMPL,
                 {"item_wish_dict": wish_item_map},
             )
 
+            for item_name, entry in results.items():
+                entry["info"] = item_info.get(item_name, {})
+
             parsedRes: dict = {"items": results, "wish_list_to_idx": wishToIdx}
-            print(f"produced this wish mapping: {parsedRes}\nfor this input: {items}")
+            print(
+                f"produced this wish mapping: {parsedRes}\nfor this input: {item_names}"
+            )
             return parsedRes
 
         except Exception as exc:
             log.warning("Wish mapping failed: %s", exc)
             return {
-                "items": {k: {"mapped_wish": "null", "wish_list": []} for k in items},
+                "items": {
+                    k: {
+                        "mapped_wish": "null",
+                        "wish_list": [],
+                        "info": item_info.get(k, {}),
+                    }
+                    for k in item_names
+                },
                 "wish_list_to_idx": {},
             }
 

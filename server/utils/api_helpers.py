@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import traceback
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from zoneinfo import ZoneInfo
 
 import datetime as dt
@@ -22,51 +22,138 @@ from utils.password_helper import verify_token
 from utils.types import (
     AddCatalogueRequest,
     AddSupermarketRequest,
+    DayPlan,
+    DaySettings,
     Ingredient,
     ItemInfo,
     ItemInfoParsed,
+    MealSlot,
     Offer,
+    PlannerSettings,
     QuantityInfo,
     AddRecipe,
+    WeekPlan,
+    WeekSettings,
 )
 
 
-def convert_timestamps_to_dates(timestamps_json: str) -> list[str]:
-    """Convert ISO timestamps to DD.MM.YYYY strings."""
+logger_ = logging.getLogger(__name__)
+
+
+def convert_timestamps_to_dates(
+    timestamps_json: str | None, logger: logging.Logger | None = None
+) -> list[str]:
+    """
+    Convert ISO timestamps to DD.MM.YYYY date strings for display.
+
+    Takes a JSON string containing ISO format timestamps and converts them to
+    human-readable date format (DD.MM.YYYY).
+
+    Args:
+        timestamps_json: JSON string containing ISO timestamps, or None
+
+    Returns:
+        List of date strings in DD.MM.YYYY format, or empty list if conversion fails
+    """
     try:
+        if not timestamps_json or timestamps_json == "null":
+            return []
         timestamps = json.loads(timestamps_json or "[]")
         return [
             datetime.fromisoformat(ts).date().strftime("%d.%m.%Y") for ts in timestamps
         ]
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError, TypeError) as e:
+        if logger:
+            logger.error(f"Failed to convert timestamps: {e}")
         return []
 
 
-def safe_int(value: Any, default: int = 1) -> int:
-    """Safely convert value to int."""
+def safe_int(value: Any, default: int = 1, logger: logging.Logger | None = None) -> int:
+    """
+    Safely convert any value to integer with fallback.
+
+    Attempts to convert the input value to an integer. If conversion fails or
+    value is None, returns the provided default value.
+
+    Args:
+        value: Value to convert to int
+        default: Default value to return on failure
+
+    Returns:
+        Integer value or default
+    """
     try:
         return int(value) if value is not None else default
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, TypeError) as e:
+        if logger:
+            logger.error(f"Failed to convert to int: {value}: {e}")
         return default
 
 
 def sanitize_string(value: Optional[str], default: str = "") -> str:
-    """Strip input or return default."""
+    """
+    Strip whitespace from string or return default value.
+
+    Removes leading and trailing whitespace from the input string. If the input is
+    None or empty, returns the provided default string.
+
+    Args:
+        value: String value to sanitize
+        default: Default string to return if value is None or empty
+
+    Returns:
+        Sanitized string with whitespace removed
+    """
     return (value or default).strip()
 
 
 def sanitizeDeprecationDays(DeprecationDays: int | None, default: int = 30) -> int:
+    """
+    Sanitize and validate deprecation days parameter.
+
+    Validates the deprecation days value, ensuring it's an integer within a reasonable
+    range. Falls back to environment variable or default value if not provided or invalid.
+
+    Args:
+        DeprecationDays: Optional deprecation period in days
+        default: Default value in days if sanitization fails
+
+    Returns:
+        Validated deprecation days as integer
+
+    Note:
+        Maximum set to 1000 days (2.7 years) for sanity checking
+    """
     if DeprecationDays is None:
-        raw_deprecation_days = os.getenv("DEPRECATION_DAYS_CATALOGUE", default)
+        raw_deprecation_days = os.getenv("DEPRECATION_DAYS_CATALOGUE", str(default))
         try:
             DeprecationDays = int(raw_deprecation_days)
         except ValueError:
-            DeprecationDays = 30
-    return DeprecationDays
+            DeprecationDays = default
+
+    return max(1, min(DeprecationDays, 1000))
 
 
 def validate_wish_list(value: Optional[str]) -> bool:
-    """Normalize wish_list to 'true' or 'false'."""
+    """
+    Normalize wish list flag to boolean.
+
+    Converts string values like "true", "false", empty strings, etc. into a proper
+    boolean flag. Returns False for any falsy or non-true value.
+
+    Args:
+        value: String value to normalize as wish list flag
+
+    Returns:
+        True if value is "true" (case-insensitive), False otherwise
+
+    Examples:
+        "true" -> True
+        "TRUE" -> True
+        "false" -> False
+        "" -> False
+        None -> False
+    """
     if not value:
         return False
     if value.strip().lower() == "true":
@@ -78,48 +165,110 @@ async def obtainSupermarketId(
     con: asyncpg.pool.PoolConnectionProxy,
     body: AddCatalogueRequest,
     maxDerivationCoord: float = 0.00001,
-) -> int | dict:
+    logger: logging.Logger | None = None,
+) -> int | dict[Literal["status", "detail"], str]:
+    """
+    Find the nearest supermarket ID based on geographic data or address.
+
+    Searches the database for supermarkets matching either:
+    - Coordinates with a small derivation tolerance (~11 meters)
+    - Exact address match
+
+    Requires valid body data (at least coordinates OR address+city/postcode).
+
+    Args:
+        con: Database connection pool
+        body: Catalogue request body containing location data
+        maxDerivationCoord: Maximum coordinate derivation to use for proximity search (in degrees)
+
+    Returns:
+        Supermarket ID as integer if found, or error dictionary with status "error"
+
+    Error Conditions:
+        - Insufficient geographic data provided
+        - No supermarkets found near coordinates
+        - No address match found
+
+    Example:
+        # Returns 123 (supermarket ID)
+        await obtainSupermarketId(con, AddCatalogueRequest(longitude=10.0, latitude=50.0))
+    """
     # 0,0001 * 111_000 = 11,1 => max derivation is 11,1 meters
     if isCatolgueBodyValid(body):
         coordsSet = body.longitude is not None and body.latitude is not None
         otherMarkerSet = body.address is not None and (
             body.city is not None or body.postcode is not None
         )
-        supermarketId = None
-        if coordsSet:
-            maxLong = body.longitude + maxDerivationCoord  # type: ignore
-            minLong = body.longitude - maxDerivationCoord  # type: ignore
-            maxLat = body.latitude + maxDerivationCoord  # type: ignore
-            minLat = body.latitude - maxDerivationCoord  # type: ignore
+        supermarket_row: asyncpg.Record | None = None
 
-            supermarketId = await con.fetch(
-                """select supermarket_id from supermarkets where longitude >= $1 and longitude <= $2
-                                            and latitude >= $3 and latitude <= $4""",
-                minLong,
-                maxLong,
-                minLat,
-                maxLat,
-            )
-            supermarketId = supermarketId[0]
+        try:
+            if coordsSet:
+                maxLong = body.longitude + maxDerivationCoord  # type: ignore
+                minLong = body.longitude - maxDerivationCoord  # type: ignore
+                maxLat = body.latitude + maxDerivationCoord  # type: ignore
+                minLat = body.latitude - maxDerivationCoord  # type: ignore
 
-        elif otherMarkerSet:
-            supermarketId = await con.fetch(
-                "select supermarket_id from supermarkets where address = $1",
-                body.address.strip(),  # type: ignore
-            )  # type: ignore
-            supermarketId = supermarketId[0]
+                rows = await con.fetch(
+                    """select supermarket_id from supermarkets where longitude >= $1 and longitude <= $2
+                                                and latitude >= $3 and latitude <= $4""",
+                    minLong,
+                    maxLong,
+                    minLat,
+                    maxLat,
+                )
+                supermarket_row = rows[0] if rows else None
 
-        if not supermarketId:
+                if supermarket_row is None:
+                    return {
+                        "status": "error",
+                        "detail": "No supermarkets found near the provided coordinates",
+                    }
+
+            elif otherMarkerSet:
+                rows = await con.fetch(
+                    "select supermarket_id from supermarkets where address = $1",
+                    body.address.strip(),  # type: ignore
+                )  # type: ignore
+                if not rows:
+                    return {
+                        "status": "error",
+                        "detail": "No supermarket found matching the provided address",
+                    }
+                supermarket_row = rows[0]
+
+            if supermarket_row is None:
+                return {
+                    "status": "error",
+                    "detail": "Could not match to market, neither by coordinates nor by address",
+                }
+
+            supermarket_id_raw = supermarket_row.get("supermarket_id")
+            if supermarket_id_raw is None:
+                return {
+                    "status": "error",
+                    "detail": "Supermarket match did not contain a supermarket_id",
+                }
+
+            try:
+                supermarket_id = int(supermarket_id_raw)
+                return supermarket_id
+            except (TypeError, ValueError):
+                return {
+                    "status": "error",
+                    "detail": "Supermarket match did not contain a valid supermarket_id",
+                }
+
+        except Exception as e:
+            if logger:
+                logger.error(f"Failed to obtain supermarket ID: {e}")
             return {
                 "status": "error",
-                "detail": "couldnt not match to market, neither by coordinates nor by address",
+                "detail": f"Failed to find supermarket: {str(e)}",
             }
-
-        return supermarketId.get("supermarket_id")
     else:
         return {
             "status": "error",
-            "detail": "the body doesnt seem to have enough geo information for market matching",
+            "detail": "The body doesn't have enough geographic information for market matching",
         }
 
 
@@ -130,33 +279,206 @@ async def getUserIds(con: asyncpg.pool.PoolConnectionProxy) -> list[int]:
 
 async def getAllUserItems(
     con: asyncpg.pool.PoolConnectionProxy,
-) -> dict[int, dict[str, dict]]:
-    """Fetch all users' inventory in a single query. Returns {user_id: {'wish': {...}, 'pantry': {...}}}"""
+) -> dict[int, dict[Literal["wish", "pantry"], dict[str, str]]]:
+    """
+    Fetch all users' inventory in a single query and return normalized structure.
+
+    Queries the database for all inventory items across all users and organizes them
+    by whether they are wish list items or pantry items.
+
+    Returns:
+        Nested dictionary structure: {
+            user_id: {
+                'wish': {item_id: item_name, ...},
+                'pantry': {item_id: item_name, ...}
+            }
+        }
+
+    This structure is useful for batch processing and wish-pantry matching operations.
+
+    Args:
+        con: Database connection pool
+
+    Example:
+        {
+            1: {
+                'wish': {'item_123': 'Apples', 'item_456': 'Bananas'},
+                'pantry': {'item_789': 'Milk'}
+            },
+            2: {
+                'wish': {'item_abc': 'Bread'},
+                'pantry': {}
+            }
+        }
+    """
     res = await con.fetch(
         """select inv.user_id, inv.item_id, it.item_name, inv.is_wish 
            from inventory inv 
            join items it on it.item_id = inv.item_id"""
     )
-    users: dict[int, dict[str, dict]] = {}
-    for r in res:
-        uid = int(r["user_id"])
-        if uid not in users:
-            users[uid] = {"wish": {}, "pantry": {}}
-        if r["is_wish"]:
-            users[uid]["wish"][r["item_id"]] = r["item_name"]
-        else:
-            users[uid]["pantry"][r["item_id"]] = r["item_name"]
+    users: dict[int, dict[Literal["wish", "pantry"], dict[str, str]]] = {}
+
+    try:
+        for r in res:
+            uid = int(r["user_id"])
+            if uid not in users:
+                users[uid] = {"wish": {}, "pantry": {}}
+
+            item_id = r["item_id"]
+            item_name = r["item_name"]
+
+            if r["is_wish"]:
+                users[uid]["wish"][item_id] = item_name
+            else:
+                users[uid]["pantry"][item_id] = item_name
+
+    except Exception as e:
+        logger_.error(f"Failed to fetch all user items: {e}")
+        return {}
+
     return users
 
 
 async def getAllExistingMappings(
     con: asyncpg.pool.PoolConnectionProxy,
 ) -> set[tuple[str, str]]:
-    """Get all existing (wish_list_hash, pantry_list_hash) combinations that have been mapped."""
-    res = await con.fetch(
-        "select distinct wish_list_hash, pantry_list_hash from wish_mapping"
-    )
-    return {(r["wish_list_hash"], r["pantry_list_hash"]) for r in res}
+    """
+    Retrieve all existing wish-to-pantry mappings from the wish_mapping table.
+
+    Fetches unique combinations of wish list hash and pantry list hash that exist in
+    the wish_mapping table. These mappings represent automated classifications where system
+    has determined a wish list item can be satisfied by a pantry item.
+
+    Returns:
+        Set of tuples containing (wish_list_hash, pantry_list_hash) pairs
+
+    This function is typically used to avoid re-processing the same pairs during batch
+    wish-to-pantry matching operations, ensuring data consistency.
+
+    Args:
+        con: Database connection pool
+
+    Example:
+        Returns {(hash1, hash2), (hash3, hash4), ...} where each pair
+        represents a previously established mapping
+    """
+    try:
+        res = await con.fetch(
+            "select distinct wish_list_hash, pantry_list_hash from wish_mapping"
+        )
+        return {(r["wish_list_hash"], r["pantry_list_hash"]) for r in res}
+    except Exception as e:
+        logger_.error(f"Failed to fetch existing mappings: {e}")
+        return set()
+
+
+async def cleanupStaleWishMappings(
+    con: asyncpg.pool.PoolConnectionProxy,
+    user_id: Optional[int] = None,
+    logger: logging.Logger | None = None,
+) -> int:
+    """
+    Remove stale wish-to-pantry mappings that no longer exist in inventory.
+
+    Deletes entries from wish_mapping where the referenced item no longer exists in the
+    user's pantry inventory. When user_id is provided, only cleans for that user.
+    Without user_id, performs global cleanup (used by background daemons).
+
+    This prevents orphaned mappings from accumulating when pantry items are deleted.
+
+    Args:
+        con: Database connection pool
+        user_id: Optional user ID for targeted cleanup, None for global
+        logger: Optional logger instance for logging cleanup results
+
+    Returns:
+        Number of affected rows (always 0 in current implementation, but kept for API compatibility)
+
+    Example:
+        # Cleanup for specific user
+        await cleanupStaleWishMappings(con, user_id=123)
+
+        # Global cleanup by daemon
+        await cleanupStaleWishMappings(con)
+    """
+    active_logger = logger or logger_
+
+    try:
+        if user_id is not None:
+            result = await con.execute(
+                """
+                DELETE FROM wish_mapping
+                WHERE item_id IN (
+                    SELECT wm.item_id
+                    FROM wish_mapping wm
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM inventory inv
+                        WHERE inv.item_id = wm.item_id
+                          AND inv.user_id = $1
+                          AND (inv.is_wish IS NULL OR inv.is_wish = FALSE)
+                    )
+                )
+                """,
+                user_id,
+            )
+            if result != "DELETE 0":
+                cleanup_msg = (
+                    f"Cleaned up {result} stale wish_mapping entries for user {user_id}"
+                )
+                active_logger.info(cleanup_msg)
+        else:
+            result = await con.execute(
+                """
+                DELETE FROM wish_mapping
+                WHERE item_id NOT IN (
+                    SELECT DISTINCT inv.item_id
+                    FROM inventory inv
+                    WHERE inv.is_wish = FALSE OR inv.is_wish IS NULL
+                )
+                """
+            )
+            if result != "DELETE 0":
+                cleanup_msg = f"Cleaned up global stale wish_mapping entries: {result}"
+                active_logger.info(cleanup_msg)
+
+    except Exception as e:
+        active_logger.error(f"Failed to cleanup stale wish mappings: {e}")
+        return 0
+
+    return 0
+
+
+async def getCurrentWishHashForUser(
+    con: asyncpg.pool.PoolConnectionProxy,
+    user_id: int,
+) -> str:
+    """
+    Compute the current wish list hash for the specified user.
+
+    Generates a hash representing the current state of the user's wish list.
+    This hash is used by the daemon to track wish list changes over time and
+    to filter out stale wish-to-pantry mappings that were created from previous
+    versions of the wish list.
+
+    The pantry list hash is NOT used for display filtering because the daemon
+    overwrites it with each computation, making it unreliable for fetches.
+
+    Args:
+        con: Database connection pool
+        user_id: User ID to compute hash for
+
+    Returns:
+        Base64-encoded hash string representing the wish list state
+
+    See Also:
+        - hashListState() for hash generation details
+        - cleanupStaleWishMappings() for stale mapping cleanup functionality
+        - craftWishItemLists() for batch wish.item matching
+    """
+    wish_dict = await getCurrentWishListUser(con, user_id)
+    return hashListState(list(wish_dict.values()))
+    wish_dict = await getCurrentWishListUser(con, user_id)
+    return hashListState(list(wish_dict.values()))
 
 
 async def getCurrentWishListUser(
@@ -183,29 +505,6 @@ async def getCurrentPantryListUser(
         user_id,
     )
     return {r["item_id"]: r["item_name"] for r in res}
-
-
-async def checkPartialCategorisation(
-    con: asyncpg.pool.PoolConnectionProxy,
-    wishHash: str,
-    pantryHash: str,
-) -> dict[tuple[str, str], dict[str, dict]]:
-    """Return all pantry items that need categorisation, keyed by (wish_hash, pantry_hash)."""
-    res = await con.fetch(
-        """select inv.user_id, inv.item_id, it.item_name, wm.wish_list_hash, wm.pantry_list_hash
-           from inventory inv 
-           join items it on it.item_id = inv.item_id 
-           left join wish_mapping wm on wm.item_id = inv.item_id 
-           where inv.is_wish = false 
-           and wm.item_id is not null"""
-    )
-    result: dict[tuple[str, str], dict[str, dict]] = {}
-    for r in res:
-        key = (r["wish_list_hash"], r["pantry_list_hash"])
-        if key not in result:
-            result[key] = {}
-        result[key][r["item_id"]] = r["item_name"]
-    return result
 
 
 async def buildWishPantryLists(
@@ -392,37 +691,110 @@ async def classifyCatalogue(
     body: AddCatalogueRequest,
     filepath: str,
     logger: logging.Logger,
-):
+) -> None:
+    """
+    Classify supermarket catalogue images and extract product offers.
+
+    Processes uploaded catalogue files (PDFs or images) to extract grocery offers,
+    classifying products and creating database entries for subsequent matching.
+
+    The classification happens in the background:
+    1. Validate the upload has sufficient geographic/location data
+    2. Use the CatalogueClassifier to extract offer information
+    3. Match to nearest supermarket using body's coordinates/address
+    4. Store offers in database asynchronously
+
+    Args:
+        pool: Database connection pool
+        classifier: CatalogueClassifier instance for processing the file
+        body: AddCatalogueRequest containing location and supermarket metadata
+        filepath: Path to the uploaded catalogue file
+        logger: Logger instance for error/failure reporting
+
+    Note:
+        - This function runs asynchronously via asyncio.create_task() in server.py
+        - Returns None but logs errors via the provided logger
+        - File validation (PDF/image format, etc.) happens in server.py
+
+    Example:
+        await classifyCatalogue(
+            pool,
+            catalogue_classifier,
+            AddCatalogueRequest(longitude=10.0, latitude=50.0, name="Shop"),
+            "/uploads/catalogue.pdf",
+            logger
+        )
+    """
     try:
         if isCatolgueBodyValid(body) and filepath.strip() != "":
+            logger.info(f"Starting catalogue classification: {filepath}")
             response = classifier.classify_catalogue(filepath)
+
             async with pool.acquire() as con:
                 supermarketId: int | dict = await obtainSupermarketId(con, body)
+
                 if isinstance(supermarketId, dict):
-                    logger.error(f"""couldnt classify the catologue with filepath: {filepath},
-                                cause there wasnt enough info to be obtained for marktet matching: {supermarketId}""")
+                    error_msg = (
+                        f"Couldn't classify catalogue with filepath: {filepath}, "
+                        f"cause there wasn't enough info for market matching: {supermarketId}"
+                    )
+                    logger.error(error_msg)
+                    raise ValueError(error_msg)
+
                 elif isinstance(supermarketId, int):
                     await addOffersBatch(
                         con, response.offers, supermarketId, logger=logger
                     )
+                    logger.info(
+                        f"Successfully classified {len(response.offers)} offers for supermarket {supermarketId}"
+                    )
+
         else:
-            logger.error(
-                "the body doesnt seem to have enough geo information for market matching"
+            error_msg = (
+                "Body doesn't have enough geographic information for market matching"
             )
-            return {
-                "status": "error",
-                "detail": "the body doesnt seem to have enough geo information for market matching",
-            }
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
     except Exception as e:
-        logger.error(f"failed for catalogue: {filepath} with this error: {e}")
+        logger.error(f"Classify catalog failed for {filepath}: {e}")
+        import traceback
+
+        logger.error(traceback.format_exc())
 
 
-def reformatTimeStamp(ts, fmt="%d.%m.%Y"):
-    if isinstance(ts, list):
-        ts = ts[0]
-    if isinstance(ts, dt.datetime):
-        return ts.strftime(fmt)
-    return parser.parse(str(ts)).strftime(fmt)
+def reformatTimeStamp(ts: Any | list[Any], fmt: str = "%d.%m.%Y") -> str:
+    """
+    Convert timestamp(s) to readable date string in specified format.
+
+    Flexible timestamp reformatter that handles various input types:
+    - Single datetime object
+    - List of timestamps (uses first element)
+    - ISO timestamp string
+    - Any parsable timestamp value
+
+    Args:
+        ts: Timestamp value to format (datetime, list, string, epoch, etc.)
+        fmt: Format string for output (default: DD.MM.YYYY)
+
+    Returns:
+        Formatted date string
+
+    Examples:
+        >>> reformatTimeStamp("2024-01-15T10:30:00")
+        "15.01.2024"
+        >>> reformatTimeStamp(["2024-01-15", "2024-02-20"])
+        "15.01.2024"
+    """
+    try:
+        if isinstance(ts, list):
+            ts = ts[0]
+        if isinstance(ts, dt.datetime):
+            return ts.strftime(fmt)
+        return parser.parse(str(ts)).strftime(fmt)
+    except Exception as e:
+        logger_.error(f"Failed to reformat timestamp {ts}: {e}")
+        return "Invalid date"
 
 
 def convertToBerlinTime(
@@ -450,6 +822,224 @@ async def itemIsKnown(con: asyncpg.pool.PoolConnectionProxy, ean: str | None) ->
         return False
     res = await con.fetch("select item_id from items where item_id = $1", ean)
     return len(res) > 0
+
+
+async def addMealSlotsForUser(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int, slots: list[MealSlot]
+):
+    updates = []
+    for meal in slots:
+        updates.append(
+            (
+                uid,
+                meal.recipe_id,
+                meal.meal_type,
+                meal.servings,
+                meal.day,
+                meal.day_time,
+            )
+        )
+    await con.executemany(
+        """ insert into meal_slots (user_id, recipe_id, meal_type,
+                              servings, day, day_time) values ($1, $2, $3, $4, $5, $6)""",
+        updates,
+    )
+
+
+async def purgeCurrentWeekPlanForUser(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int
+) -> None:
+    await con.execute("delete from meal_slots where user_id = $1", uid)
+
+
+async def replaceWeekPlanForUser(
+    con: asyncpg.pool.PoolConnectionProxy, weekPlan: WeekPlan, uid: int
+) -> dict:
+    await purgeCurrentWeekPlanForUser(con, uid)
+    plan: dict = weekPlan.model_dump()
+    meals: list[MealSlot] = []
+    for day in plan.keys():
+        dayDict: dict = plan.get(day, {})
+        mealDicts: list[dict] = list(dayDict.values())
+        mealObjs: list[MealSlot] = [MealSlot(**m) for m in mealDicts]
+        meals.extend(mealObjs)
+    await addMealSlotsForUser(con, uid, meals)
+
+    return {}
+
+
+async def purgeCurrentWeekSettingsForUser(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int
+) -> None:
+    await con.execute("delete from day_settings where user_id = $1", uid)
+
+
+async def addDaySettingsForUser(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int, days: list[DaySettings]
+):
+    updates = []
+    for day in days:
+        updates.append(
+            (
+                uid,
+                day.day,
+                day.day_meal_time_type,
+                day.breakfast_blocked,
+                day.lunch_blocked,
+                day.dinner_blocked,
+            )
+        )
+    await con.executemany(
+        """ insert into day_settings (user_id, day, day_meal_time_type,
+                              breakfast_blocked, lunch_blocked, dinner_blocked) values ($1, $2, $3, $4, $5, $6)""",
+        updates,
+    )
+
+
+async def deleteMealInWeek(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int, meal: MealSlot
+):
+    await con.execute(
+        "delete from meal_slots where user_id = $1 and day = $2 and day_time = $3",
+        uid,
+        meal.day,
+        meal.day_time,
+    )
+
+
+async def deletePlannerSettings(con: asyncpg.pool.PoolConnectionProxy, uid: int):
+    await con.execute("delete from planner_settings where user_id = $1", uid)
+
+
+async def replacePlannerSettings(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int, planner: PlannerSettings
+):
+    await deletePlannerSettings(con, uid)
+    await con.execute(
+        """insert into planner_settings (user_id, 
+                      fast_day_meal_minutes, normal_day_meal_minutes, default_servings)
+                      values ($1, $2, $3, $4)""",
+        uid,
+        planner.quickMealMinutes,
+        planner.normalMealMinutes,
+        planner.defaultServings,
+    )
+
+
+async def getPlannerSettings(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int
+) -> PlannerSettings:
+    row = await con.fetchrow(
+        """select fast_day_meal_minutes as quickMealMinutes, 
+                             normal_day_meal_minutes as normalMealMinutes,
+                             default_servings as defaultServings
+                             from planner_settings where user_id = $1""",
+        uid,
+    )
+
+    return PlannerSettings(**row)
+
+
+async def getSpecificMealInWeek(
+    con: asyncpg.pool.PoolConnectionProxy, day: str, day_type: str, uid: int
+) -> MealSlot:
+    row = await con.fetchrow("select recipe_id, meal_type, servings, day, day_time")
+    return MealSlot(
+        recipe_id=row.get("recipe_id"),
+        servings=row.get("servings"),
+        meal_type=row.get("meal_type"),
+        day=row.get("day"),
+        day_time=row.get("day_time"),
+    )
+
+
+async def deleteRecipeById(con: asyncpg.pool.PoolConnectionProxy, recipeId: int):
+
+    # delete linked junction table entries
+    await con.execute("delete from meal_slots where recipe_id = $1", recipeId)
+    await con.execute(
+        "delete from recipe_ingredient_map where recipe_id = $1", recipeId
+    )
+
+    # delete recipe itself
+    await con.execute("delete from recipes where recipe_id = $1", recipeId)
+
+
+async def replaceMealByTimestamp(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int, meal: MealSlot
+):
+    await con.execute(
+        "delete from meal_slots where user_id = $1 and day = $2, and day_time = $3",
+        uid,
+        meal.day,
+        meal.day_time,
+    )  # delete current entry
+
+    await con.execute(
+        """insert into meal_slots (recipe_id, meal_type, servings,
+                      user_id, day, day_time) values ($1, $2, $3, $4, $5, $6)""",
+        (meal.recipe_id, meal.meal_type, meal.servings, uid, meal.day, meal.day_time),
+    )
+
+
+async def replaceWeekSettingsForUser(
+    con: asyncpg.pool.PoolConnectionProxy, weekSettings: WeekSettings, uid: int
+) -> dict:
+
+    await purgeCurrentWeekSettingsForUser(con, uid)
+    settingsDict: dict = weekSettings.model_dump()
+    daySettDicts: list[dict] = []
+    for day in settingsDict.keys():
+        settingsDay: dict = settingsDict.get(day, {})
+        daySettDicts.append(settingsDay)
+
+    parsedSettings: list[DaySettings] = [DaySettings(**d) for d in daySettDicts]
+    await addDaySettingsForUser(con, uid, parsedSettings)
+    return {}
+
+
+async def getWeekSettingsForUser(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int
+) -> WeekSettings:
+    res = await con.fetch(
+        """select day, day_meal_time_type, breakfast_blocked,
+                          lunch_blocked, dinner_blocked from day_settings where user_id = $1""",
+        uid,
+    )
+    dayToSettings: dict[str, DaySettings] = {}
+    for row in res:
+        dayToSettings[row.get("day")] = DaySettings(**dict(row))
+
+    return WeekSettings(**dayToSettings)
+
+
+async def getWeekPlanForUser(
+    con: asyncpg.pool.PoolConnectionProxy, uid: int
+) -> WeekPlan:
+    res = await con.fetch(
+        """select recipe_id, meal_type, servings,
+                          day, day_time from meal_slots where user_id = $1""",
+        uid,
+    )
+
+    slots: list[MealSlot] = []
+    for row in res:
+        slots.append(MealSlot(**dict(row)))
+
+    dayToSlots: dict[str, dict] = {}
+    for meal in slots:
+        dayToSlots.setdefault(meal.day, {})[meal.day_time] = meal
+
+    dayPlans: dict[str, DayPlan] = {}
+    for day in dayToSlots.keys():
+        dayMeals = dayToSlots.get(day, {})
+        breakfast = dayMeals.get("breakfast")
+        lunch = dayMeals.get("lunch")
+        dinner = dayMeals.get("dinner")
+
+        dayPlans[day] = DayPlan(breakfast=breakfast, lunch=lunch, dinner=dinner)
+
+    return WeekPlan(**dayPlans)
 
 
 async def resolveExistingEanFromName(
@@ -507,72 +1097,74 @@ def hashListState(
         return base64.urlsafe_b64encode(h.digest()).decode()  # urlsafe: no +/
     return h.hexdigest()
 
-
 async def insertIngredientAndMap(
     con: asyncpg.pool.PoolConnectionProxy, recipe_id: int, ing: Ingredient
 ) -> None:
-    ing_id = await con.fetchval(
-        """
-        INSERT INTO ingredients (name, amount, unit)
-        VALUES ($1, $2, $3)
-        RETURNING ingredient_id
-        """,
-        ing.name,
-        ing.amount,
-        ing.unit,
-    )
+    print(f"inserting this ingredient: {ing.model_dump()} for this recipe id: {recipe_id}")
+    for i in ing.model_dump().keys():
+        print(f"{i} is of this type: {type(i)}")
+    try:
+        name = ing.name
+        amount = int(ing.amount) if ing.amount else -1
+        unit = ing.unit or "none"
+        
+        ing_id = await con.fetchval(
+            """
+            INSERT INTO ingredients (name, amount, unit)
+            VALUES ($1, $2, $3)
+            RETURNING ingredient_id
+            """,
+            name, amount, unit
+        )
+        print(f"ing id returned: {ing_id}")
 
-    await con.execute(
-        """
-        INSERT INTO recipe_ingredient_map (recipe_id, ingredient_id, count)
-        VALUES ($1, $2, $3)
-        """,
-        recipe_id,
-        ing_id,
-        ing.count,
-    )
-
+        await con.execute(
+            """
+            INSERT INTO recipe_ingredient_map (recipe_id, ingredient_id, count)
+            VALUES ($1, $2, $3)
+            """,
+            recipe_id,
+            ing_id,
+            ing.count,
+        )
+    except Exception as e:
+        print(f"insertIngredientAndMap FAILED: {e}")
+        raise
 
 async def insertRecipe(
     con: asyncpg.pool.PoolConnectionProxy,
     userId: int,
     recipe: AddRecipe,
 ) -> int:
-    recipe_id = await con.fetchval(
-        """
-        INSERT INTO recipes (user_id, base_time, default_portions, tags, steps, emoji)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING recipe_id
-        """,
-        userId,
-        recipe.baseTime,
-        recipe.baseServings,
-        recipe.tags,
-        recipe.steps,
-        recipe.emoji,
-    )
-
     async with con.transaction():
-        for ing in recipe.Ingredients:
+        recipe_id = await con.fetchval(
+            """
+            INSERT INTO recipes (user_id, base_time, default_portions, tags, steps, emoji)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING recipe_id
+            """,
+            userId,
+            recipe.baseTime,
+            recipe.baseServings,
+            recipe.tags,
+            recipe.steps,
+            recipe.emoji,
+        )
+
+        for ing in recipe.ingredients:
             await insertIngredientAndMap(con, recipe_id, ing)
 
-    return recipe_id
-
+        return recipe_id
 
 async def addRecipeToDb(
     con: asyncpg.pool.PoolConnectionProxy, userId: int, recipe: AddRecipe
 ) -> dict:
     try:
-        async with con.transaction():
-            recipe_id = await insertRecipe(con, userId, recipe)
-            for ing in recipe.Ingredients:
-                await insertIngredientAndMap(con, recipe_id, ing)
-
+        recipe_id = await insertRecipe(con, userId, recipe)
+        
         return {"status": "ok", "recipe_id": recipe_id}
-
     except Exception as e:
         return {"status": "error", "message": f"failed with this error: {e}"}
-
 
 def handleUsernameNoneAfterAuth():
     return {
@@ -665,7 +1257,7 @@ async def handleManualItems(
 
 
 def parseQuantityString(s: str) -> QuantityInfo | None:
-    
+
     multi = re.search(
         r"(\d+)\s*[xX×]\s*(\d+(?:[.,]\d+)?)\s*(kg|g|mg|l|ml|cl|liter|litre|ltr|gr|gram|stück)\b",
         s,
@@ -770,10 +1362,52 @@ async def addItemToInventory(
     quantity: QuantityInfo | None,
     logger: logging.Logger,
     date: dt.datetime | None = None,
-) -> dict:
+) -> dict[str, Any]:
+    """
+    Add an item to user's inventory with validation and data enrichment.
+
+    Handles item addition through multiple pathways:
+    1. EAN lookup via OpenFoodFacts API for product details
+    2. Manual entry with item name for items without EAN codes
+    3. Quantity parsing and normalization
+    4. Support for both adding and removing items (count >= 1 or <= -1)
+    5. Creation of manual items with classification tracking
+
+    The function performs:
+    - User validation
+    - Item existence checking
+    - API calls to enrich item data (when using EAN)
+    - Quantity normalization and parsing
+    - Inventory updating or removal
+    - Wish list vs. pantry tracking
+
+    Args:
+        http_client: HTTP client for API calls
+        pool: Database connection pool
+        username: Current user's username
+        ean: EAN barcode string (optional if item_name provided)
+        item_name: Item name for manual entry (optional if ean provided)
+        count: Number to add (>1) or remove (<-1); 0 returns info
+        is_wish: True to add to wish list, False for pantry
+        quantity: Quantity information for manual items (optional)
+        logger: Logger for debugging and error reporting
+        date: Date/time for inventory entry (defaults to now)
+
+    Returns:
+        Dictionary with operation result status, operation type, and details
+
+    Result structure examples:
+        Success add: {"state": "success", "operation": "add", "mode": "ean", "ean": "123456"}
+        Success delete: {"state": "success", "operation": "delete", "mode": "manual adding"}
+        Error: {"state": "error", "operation": "add", "error": "Message", "suggestion": "Hint"}
+
+    Exceptions:
+        ValueError: If username is None
+        Exception: Various error conditions during processing
+    """
     try:
         if not username:
-            raise ValueError("the username shouldnt be none for this function call")
+            raise ValueError("Username should not be None for this function call")
 
         if isinstance(ean, str):
             ean = ean.strip() or None
@@ -998,7 +1632,10 @@ async def getInfoAsync(
 
 
 async def getImageUrlAsync(
-    client: httpx.AsyncClient, ean: str, logger: logging.Logger, delay: float = 0.5
+    client: httpx.AsyncClient,
+    ean: str,
+    logger: logging.Logger | None = None,
+    delay: float = 0.5,
 ) -> str:
     try:
         if ean.__contains__("manual"):
@@ -1014,6 +1651,7 @@ async def getImageUrlAsync(
             if lang in images:
                 return images[lang]
     except Exception as e:
-        logger.error(f"Failed to fetch image for ean {ean}: {e}")
+        if logger:
+            logger.error(f"Failed to fetch image for ean {ean}: {e}")
         return "https://boldo.ddns.net/none_available.webp"
     return ""

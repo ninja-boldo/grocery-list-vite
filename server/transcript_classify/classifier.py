@@ -154,8 +154,6 @@ def mapWishItem(item_name: str, wished_items: list[str], min_conf: float = 0.8) 
 def mapWishItemBatch(
     items: list[str],
     wished_items_list: list[list[str]],
-    min_conf: float = 0.8,
 ) -> dict[str, dict]:
-    """Batch cross-encoder wish mapping."""
-    _ = min_conf
+    """Batch wish mapping."""
     return _llm_classifier.mapWishToItemBatch(items, wished_items_list)

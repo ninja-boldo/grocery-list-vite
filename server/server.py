@@ -9,6 +9,11 @@ import uuid
 
 from fastapi.security import OAuth2PasswordRequestForm
 from Config import Config
+from utils.daemons import (
+    classificationDaemon,
+    rescanImageUrlsDaemon,
+    resetDeprecatedImageUrls,
+)
 from utils.db.schema import DATABASE_SCHEMA, DATABASE_TABLES
 from supermarkets.classifier import CatalogueClassifier
 
@@ -16,27 +21,36 @@ import httpx
 from utils.db.dbManager import DatabaseManager
 from utils.api_helpers import (
     addItemToInventory,
-    buildWishPantryLists,
+    cleanupStaleWishMappings,
+    getCurrentWishHashForUser,
     classifyCatalogue,
     convertAddressToCoordinates,
-    craftWishItemLists,
+    deleteMealInWeek,
+    deleteRecipeById,
     generateManualItemId,
+    getCurrentPantryListUser,
     getImageUrlAsync,
+    getPlannerSettings,
+    getSpecificMealInWeek,
     getUsernameFromReq,
     getIdFromUsername,
+    getWeekPlanForUser,
+    getWeekSettingsForUser,
     isAddSupermarketBodyValid,
     isCatolgueBodyValid,
     obtainSupermarketId,
     reformatTimeStamp,
+    replaceMealByTimestamp,
+    replacePlannerSettings,
+    replaceWeekPlanForUser,
+    replaceWeekSettingsForUser,
     sanitizeDeprecationDays,
     validate_wish_list,
     handleUsernameNoneAfterAuth,
     addRecipeToDb,
-    hashListState,
 )
 from supermarkets.query_supermarkets import handleSupermarketsDbLoad
 from utils.query_builder import build_fetch_query
-from utils.text_processing import shortenWithTable
 from enum import Enum
 import requests
 from dotenv import load_dotenv
@@ -57,6 +71,7 @@ from fastapi import (
     Request,
     UploadFile,
     HTTPException,
+    status,
 )
 import uvicorn
 
@@ -69,7 +84,6 @@ import logging
 from logging_loki import LokiHandler
 
 import asyncpg
-from functools import lru_cache
 import asyncio
 
 from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
@@ -82,8 +96,12 @@ from utils.types import (
     AddFetchedItems,
     AddRecipe,
     AddSupermarketRequest,
+    AddWeekPlan,
     ChangePasswordRequest,
     Ingredient,
+    Item,
+    MealSlot,
+    PlannerSettings,
     Recipe,
 )
 from utils.password_helper import (
@@ -384,7 +402,7 @@ async def request_middleware(request: Request, call_next):
 
     try:
         auth_needed_endpoints = [
-            # "/fetch_items",
+            "/fetch_items",
             "/add_ean_to_list/",
             "/add_fetched_items",
             "/transcribe",
@@ -393,12 +411,22 @@ async def request_middleware(request: Request, call_next):
             "/add_new_market",
             "/post_catalogue",
             "/get_catalogue_offers",
+            "/recipes",
+            "/week_plan",
+            "/planner_settings",
+            "/week_plan/replace_meal",
+        ]
+
+        auth_needed_prefixes = [
+            "/recipes/",
         ]
 
         admin_only_endpoints = ["/post_catalogue"]
 
         targeted_endpoint = request.url.path
-        if targeted_endpoint in auth_needed_endpoints:
+        if targeted_endpoint in auth_needed_endpoints or any(
+            targeted_endpoint.startswith(prefix) for prefix in auth_needed_prefixes
+        ):
             auth_token = request.headers.get("Authorization", "none")
             validUsername = verify_token(auth_token)
             if not validUsername:
@@ -478,6 +506,12 @@ async def login_for_access_token(
     request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> Token:
+    """
+    Authenticate user and return access token
+
+    Endpoint for user login to obtain an access token for API authentication.
+    Expects username and password form data.
+    """
     username = form_data.username.lower()
     async with request.app.state.pool.acquire() as con:
         user = await authenticate_user(con, username, form_data.password)
@@ -502,6 +536,13 @@ async def change_password(
     request: Request,
     body: ChangePasswordRequest,
 ):
+    """
+    Change user's password
+
+    Validates current password, ensures new password meets length requirements,
+    and updates the password in the database.
+    Requires authentication token in request.
+    """
     minPasswordLength = int(os.getenv("MIN_PASSWORD_LENGTH", 4))
     if len(body.new_password) < minPasswordLength:
         raise HTTPException(
@@ -550,6 +591,15 @@ async def fetch_items(
     """
     Fetch items with optional filters
 
+    Endpoint for retrieving items from inventory with various filtering and sorting options.
+
+    Parameters:
+    - only_wish_list: Filter to only fetch wish list items if "true"
+    - sortOrder: Sort order for results (e.g., "name_asc", "name_desc", "date_asc")
+    - skip: Number of items to skip for pagination
+    - limit: Maximum number of items to return
+    - searchQuery: Text to search in item names
+
     @deprecated Use /api/items instead for better performance and cleaner response
     This endpoint is maintained for backwards compatibility only.
     """
@@ -568,6 +618,15 @@ async def fetch_items(
         if limit and limit < 0:
             limit = 0
 
+        wish_hash: Optional[str] = None
+
+        if only_wish_list == "true":
+            async with request.app.state.db.pool.acquire() as con:
+                user_id = await getIdFromUsername(con, username)
+                if user_id:
+                    await cleanupStaleWishMappings(con, user_id)
+                    wish_hash = await getCurrentWishHashForUser(con, user_id)
+
         query, params = build_fetch_query(
             username,
             only_wish_list,
@@ -575,6 +634,7 @@ async def fetch_items(
             skip=skip,
             limit=limit,
             searchQuery=searchQuery,
+            wish_hash=wish_hash,
         )
 
         rows = await request.app.state.db.fetch_with_retry(query, *params)
@@ -611,54 +671,55 @@ async def fetch_items(
         raise HTTPException(status_code=500, detail="Failed to fetch items")
 
 
-def classify_shortened_names(
-    shortened_names: list[str],
-    categories: list[str] = [],
-    useBatch: bool = True,
-) -> list[str]:
-    if useBatch:
-        mapping: dict[str, str] | None = classifier.shortenTextBatch(
-            shortened_names, categories
-        )
-        if mapping:
-            return list(mapping.values())
-        else:
-            return shortened_names
-
-    else:
-        return [classifier.shortenText(name, categories) for name in shortened_names]
-
-
-@app.get("/get_catalogue_offers")
+@app.get("/get_catalogue_offers", tags=["catalogue", "offers", "geo"])
 async def get_offers(
     request: Request,
     longitude: float,
     latitude: float,
     DeprecationDays: Optional[int] = None,
 ) -> dict:
+    """
+    Get current catalogue offers for a specific location
 
-    DeprecationDays = sanitizeDeprecationDays(DeprecationDays, default=30)
+    Retrieves grocery offers from stores near the given coordinates.
+    Filters offers by deprecation days to return only current promotions.
 
-    oldestValidTs: datetime = datetime.now() - dt.timedelta(days=DeprecationDays)
+    Parameters:
+    - longitude: Longitude coordinate of the location
+    - latitude: Latitude coordinate of the location
+    - DeprecationDays: Number of days to consider offers as valid (default: 30)
 
-    async with request.app.state.pool.acquire() as con:
-        supermarketId = await obtainSupermarketId(
-            con, AddCatalogueRequest(longitude=longitude, latitude=latitude)
-        )
-        rows = await con.fetch(
-            """select
-                item_name,
-                shortened_name,
-                added_at,
-                original_price,
-                offer_price,
-                is_app_offer,
-                weight_g,
-                volume_ml
-            from grocery_offers where supermarket_id = $1 and added_at >= $2""",
-            supermarketId,
-            oldestValidTs,
-        )
+    Returns:
+    - Dictionary with items, count, and offer details
+    """
+    try:
+        DeprecationDays = sanitizeDeprecationDays(DeprecationDays, default=30)
+
+        oldestValidTs: datetime = datetime.now() - dt.timedelta(days=DeprecationDays)
+
+        async with request.app.state.pool.acquire() as con:
+            supermarketId = await obtainSupermarketId(
+                con, AddCatalogueRequest(longitude=longitude, latitude=latitude)
+            )
+            if not isinstance(supermarketId, int):
+                raise ValueError(
+                    f"the corresponding supermarket id mapping failed with this res: {supermarketId}"
+                )
+
+            rows = await con.fetch(
+                """select
+                    item_name,
+                    shortened_name,
+                    added_at,
+                    original_price,
+                    offer_price,
+                    is_app_offer,
+                    weight_g,
+                    volume_ml
+                from grocery_offers where supermarket_id = $1 and added_at >= $2""",
+                supermarketId,
+                oldestValidTs,
+            )
 
         items: list[dict] = []
         for row in rows:
@@ -673,24 +734,45 @@ async def get_offers(
                     "is_app_offer": row.get("is_app_offer"),
                 }
             )
-    return {"items": items, "count": len(items)}
+        return {"items": items, "count": len(items)}
+    except Exception as e:
+        logger.error(f"fetch_items error: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to fetch items")
 
 
 @app.post("/add_new_market", tags=["experimental", "db", "geo"])
 async def post_market(request: Request, body: AddSupermarketRequest) -> dict:
+    """
+    Add a new supermarket to the database
+
+    Creates a new supermarket entry with geographic location data.
+    Accepts either direct coordinates or an address for geocoding.
+
+    Body Parameters:
+    - name: Name of the supermarket store
+    - latitude: Latitude coordinate (optional if address provided)
+    - longitude: Longitude coordinate (optional if address provided)
+    - address: Street address for geocoding (optional)
+    - city: City for geocoding (required if address provided)
+    - category: Supermarket chain/category
+
+    Returns:
+    - Status success/error, with details about the operation
+    """
     try:
         if not body.name or body.name.strip() == "":
             return {
                 "status": "error",
                 "message": "name is required",
-                "code": "400",
+                "code": status.HTTP_422_UNPROCESSABLE_CONTENT,
             }
 
         if not isAddSupermarketBodyValid(body):
             return {
                 "status": "error",
                 "message": "Body requires either (latitude + longitude) or (address + city/postcode)",
-                "code": "400",
+                "code": status.HTTP_422_UNPROCESSABLE_CONTENT,
             }
 
         resolved_lat = body.latitude
@@ -704,7 +786,7 @@ async def post_market(request: Request, body: AddSupermarketRequest) -> dict:
                 return {
                     "status": "error",
                     "message": "address and city are required when coordinates are missing",
-                    "code": "400",
+                    "code": status.HTTP_422_UNPROCESSABLE_CONTENT,
                 }
 
             result = convertAddressToCoordinates(body.address, body.city)
@@ -782,9 +864,28 @@ async def post_catlogue(
     city: Optional[str] = Form(None),
     postcode: Optional[str] = Form(None),
 ) -> dict:
+    """
+    Upload and process a supermarket catalogue PDF/image for offer extraction
+
+    Endpoint for uploading catalogue files which are then processed in the background
+    to extract product offers and match them with items in the system.
+
+    Form Data Parameters:
+    - catalogue: PDF or image file containing the catalogue
+    - latitude/lat: Geographic latitude of the supermarket
+    - longitude/lon: Geographic longitude of the supermarket
+    - name: Name of the supermarket
+    - address: Address of the supermarket (for geocoding if coords not provided)
+    - categories: Supermarket chain or categories
+    - city: City (for geocoding)
+    - postcode: Postcode (optional)
+
+    Returns:
+    - Status response indicating acceptance and background processing
+    """
     if latitude is not None and lat is not None and latitude != lat:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Provide either latitude or lat, not conflicting values",
         )
     if longitude is not None and lon is not None and longitude != lon:
@@ -876,6 +977,24 @@ async def get_supermarkets_close(
     radius_meters: int = Query(2000, ge=100, le=50000),
     chains: Optional[list[str]] = Query(None),
 ) -> dict:
+    """
+    Get nearby supermarkets based on geographic location
+
+    Returns supermarkets within a specified radius of given coordinates.
+    Supports filtering by supermarket chain names.
+
+    Query Parameters:
+    - lat: Latitude coordinate (required)
+    - lon: Longitude coordinate (required)
+    - radius_meters: Search radius in meters (default: 2000, min: 100, max: 50000)
+    - chains: List of supermarket chain names to filter by (optional)
+
+    Returns:
+    - Dictionary with supermarkets array and count
+    - Each supermarket includes name, coordinates, address, and brand
+
+    Note: Validates latitude (-90 to 90) and longitude (-180 to 180) ranges
+    """
     if lat is None:
         raise HTTPException(status_code=400, detail="Missing required parameter: lat")
     if lon is None:
@@ -944,8 +1063,20 @@ async def get_supermarkets_close(
         }
 
 
-@app.get("/recipes")
+@app.get("/recipes", tags=["cooking", "recipes", "user data"])
 async def getRecipes(request: Request):
+    """
+    Get all recipes for the authenticated user
+
+    Retrieves a list of all recipes saved by the authenticated user.
+    Each recipe includes ingredients with amounts, units, and names.
+
+    Requires authentication token in request header.
+
+    Returns:
+    - recipes: Array of recipe objects with ID, base time, portions, tags, emoji, and ingredients
+    - recipe_count: Total number of recipes returned
+    """
     username = getUsernameFromReq(request) or "benno"
     if not username:
         return handleUsernameNoneAfterAuth()
@@ -992,20 +1123,69 @@ async def getRecipes(request: Request):
         }
 
 
-@app.post("/recipes")
+@app.post("/recipes", tags=["cooking", "recipes", "add data"])
 async def addRecipe(request: Request, body: AddRecipe) -> dict:
-    username = getUsernameFromReq(request)
-    if not username:
-        return handleUsernameNoneAfterAuth()
-    async with request.app.state.pool.acquire() as con:
-        userId = await getIdFromUsername(con, username)
-        status = await addRecipeToDb(con, userId, body)
+    """
+    Add a new recipe to the user's recipe collection
 
-    return status
+    Creates a new recipe entry in the database with ingredients, preparation steps,
+    and metadata. Returns the status of the operation.
+
+    Requires authentication token in request header.
+
+    Body Parameters (AddRecipe model):
+    - base_time: Preparation time in minutes
+    - default_portions: Default serving size
+    - tags: Array of recipe tags/categories
+    - emoji: Emoji representing the recipe
+    - ingredients: Array of ingredient objects with amount, unit, name
+    - steps: Array of preparation step strings (optional)
+
+    Returns:
+    - message: Status message
+    - status: Success/error status
+    """
+    try:
+        username = getUsernameFromReq(request)
+        if not username:
+            return handleUsernameNoneAfterAuth()
+        async with request.app.state.pool.acquire() as con:
+            userId = await getIdFromUsername(con, username)  # type: ignore
+            state = await addRecipeToDb(con, userId, body)
+
+        return state
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}\nwith this traceback: {traceback.format_exception(e)}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
 
 
-@app.post("/add_fetched_items", tags=["infra", "db"])
+@app.post("/add_fetched_items", tags=["infra", "db", "sync"])
 async def addFetchedItems(request: Request, body: AddFetchedItems):
+    """
+    Add items from external sources to inventory
+
+    Syncs items from external sources (e.g., UpcItemDb API) into the user's
+    inventory/pantry. Each item can have multiple perish dates with corresponding counts.
+
+    Requires authentication token in request header.
+
+    Body Parameters (AddFetchedItems model):
+    - items: Array of items to add
+      - ean: EAN code of the item
+      - item_name: Name of the item
+      - perish_dates: Array of date strings when items expire
+      - per_date_count: Array of counts for each perish date
+      - isWished: Boolean indicating if this is a wish list item
+
+    Returns:
+    - message: Success/error message
+    - status: Success/error status
+    - code: HTTP status code
+    """
     username = getUsernameFromReq(request)
     try:
         for item in body.items:
@@ -1029,387 +1209,421 @@ async def addFetchedItems(request: Request, body: AddFetchedItems):
         return {
             "status": "error",
             "message": f"failed with this error: {e}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
+
+
+@app.delete("/recipes/{recipe_id}", tags=["cooking", "recipes", "delete data"])
+async def deleteRecipeByIdEndpoint(request: Request, recipe_id: int):
+    """
+    Delete a specific recipe by ID
+
+    Removes a recipe from the user's collection based on recipe ID.
+
+    Requires authentication token in request header.
+
+    Path Parameters:
+    - recipe_id: ID of the recipe to delete
+
+    Returns:
+    - message: Status message with user ID
+    - status: Success/error status
+    """
+    try:
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            await deleteRecipeById(con, recipe_id)
+
+        return {
+            "message": f"Successfully deleted recipe, for user {uid}",
+            "status": "success",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
             "code": "500",
         }
 
 
-async def mapItemToWishDaemon(pool: asyncpg.Pool):
+@app.get("/week_plan", tags=["meal planning", "get data"])
+async def getSpecificMealFromWeek(request: Request, day: str, day_time: str):
+    """
+    Get a specific meal slot from the week planner
+
+    Retrieves a meal entry for a specific day and time slot in the user's weekly planner.
+
+    Requires authentication token in request header.
+
+    Query Parameters:
+    - day: Day of the week (e.g., "Monday", "Tuesday")
+    - day_time: Time slot (e.g., "morning", "lunch", "dinner")
+
+    Returns:
+    - message: Status message with user ID
+    - meal_slot: Details of the meal entry
+    - status: Success/error status
+    """
     try:
-        from transcript_classify import classifier as classifier_module
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            meal = await getSpecificMealInWeek(con, day, day_time, uid)  #
 
-        async with pool.acquire() as con:
-            (
-                item_names,
-                wished_lists,
-                itemIdMapping,
-                hashPerItem,
-            ) = await buildWishPantryLists(
-                con, sinkLabel=Config.SINK_LABEL_WISH_MAPPING
-            )
-
-        if not item_names or not wished_lists:
-            logger.info("mapItemToWishDaemon: nothing to map")
-            return
-
-        mapped_results: dict[str, dict] = await asyncio.to_thread(
-            classifier_module.mapWishItemBatch,
-            item_names,
-            wished_lists,
-        )
-
-        updates = []
-        items = mapped_results["items"]
-        wishListToIdx: dict[str, int] = mapped_results["wish_list_to_idx"]
-        idxToWishList: dict[int, str] = {v: k for k, v in wishListToIdx.items()}
-
-        logger.warning(
-            f"item id mapping: {itemIdMapping},\nitems: {items}\nidx to wish list: {idxToWishList}"
-        )
-        for idx, item_name in enumerate(items.keys()):
-            mappedItemDict: dict = items[item_name]
-            wishIdx: int = mappedItemDict["wish_list_index"]
-            wishListStr: str = idxToWishList[wishIdx]
-            mapped_wish = mappedItemDict["mapped_wish"]
-            wish_hash, pantry_hash = hashPerItem[idx]
-            updates.append(
-                (
-                    itemIdMapping[item_name],
-                    itemIdMapping[mapped_wish],
-                    wish_hash,
-                    pantry_hash,
-                )
-            )
-
-        logger.info(f"these are the updates: {updates}")
-
-        if not updates:
-            logger.info("mapItemToWishDaemon: no wish matches produced")
-            return
-
-        async with pool.acquire() as con:
-            await con.executemany(
-                """
-                    INSERT INTO wish_mapping (item_id, wish_item_id, wish_list_hash, pantry_list_hash)
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (item_id, wish_list_hash)
-                    DO UPDATE SET wish_item_id = EXCLUDED.wish_item_id
-                """,
-                updates,
-            )
-
-        logger.info(
-            "Updated %d item mappings out of %d candidate items using %d wished items",
-            len(updates),
-            len(item_names),
-            len(wished_lists),
-        )
-
-    except Exception as e:
-        logger.error(f"Daemon for item wish mapping failed: {e}")
-        logger.error(traceback.format_exc())
-
-
-async def rescanImageUrlsDaemon(pool: asyncpg.Pool, waitingTime: float = 10.0):
-    try:
-        while True:
-            await asyncio.sleep(waitingTime)
-            logger.info("rescanning for empty and deprecated image urls")
-            await rescanImageUrls(pool)
-    except Exception as error:
-        logger.error(
-            f"the rescanImageUrlsDaemon daemon failed with this error: {error} "
-        )
-
-
-async def classificationDaemon(pool: asyncpg.Pool, waitingTime: float = 10.0):
-    while True:
-        try:
-            await asyncio.sleep(waitingTime)
-            logger.info("classificationDaemon: starting pass")
-
-            await rescanCategoriesProcess(pool)
-            await shortenItemNamesDaemon(pool)
-            await assignTagsTask(pool)
-            await mapItemToWishDaemon(pool)
-
-            logger.info("classificationDaemon: pass complete")
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error(f"classificationDaemon failed: {e}")
-            logger.error(traceback.format_exc())
-
-
-async def shortenItemNamesDaemon(pool: asyncpg.Pool, useBatch: bool = True):
-    try:
-        # Fetch phase: acquire, query, release immediately
-        async with pool.acquire() as con:
-            rows = await con.fetch(
-                """
-                select distinct(items.item_name) as item_name,
-                classification.categories_off as categories, classification.class as class
-                from items left join item_classification classification on
-                classification.item_id = items.item_id
-                where classification.class is null
-                """
-            )
-
-        # Process outside the connection
-        original_names = [
-            row["item_name"]
-            for row in rows
-            if row["class"] == ""
-            and row["item_name"]
-            and row["item_name"].lower() not in ("", "none")
-        ]
-        categories = [row["categories"] for row in rows]
-
-        updated_count = 0
-        if original_names:
-            shortened_deterministic = [
-                shortenWithTable(name) for name in original_names
-            ]
-            shortened_list = classify_shortened_names(
-                shortened_deterministic, categories, useBatch=useBatch
-            )
-
-            # Write phase: reacquire only for writes
-            async with pool.acquire() as con:
-                for item_name, shortened_name in zip(original_names, shortened_list):
-                    if shortened_name:
-                        await con.execute(
-                            "UPDATE items SET shortened_name = $1 WHERE item_name = $2",
-                            str(shortened_name),
-                            str(item_name),
-                        )
-                        updated_count += 1
-
-        logger.info(
-            f"Updated {updated_count} item names out of {len(original_names)} empty entries"
-        )
-
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        logger.error(f"Daemon for item name shortening failed: {e}")
-        logger.error(traceback.format_exc())
-
-
-async def assignTagsTask(pool: asyncpg.Pool):
-    updatedCount = 0
-    try:
-        async with pool.acquire() as con:
-            rows = await con.fetch(
-                """
-                select inv.item_id as ean, items.item_name, classification.class as class,
-                classification.categories_off as categories
-                from inventory inv join items on items.item_id = inv.item_id
-                join item_classification classification on classification.item_id = inv.item_id
-                where classification.class is null
-                """
-            )
-
-        itemsToProcess = [
-            {
-                "item_name": row["item_name"],
-                "shortened_name": row["class"],
-                "categories": row["categories"],
-            }
-            for row in rows
-            if row["ean"] not in ("-1", "0", "1")
-        ]
-
-        tagMapping: dict[str, dict[str, str]] = await classifier.tagAssignmentBatch(
-            items=itemsToProcess
-        )
-
-        async with pool.acquire() as con:
-            for item in itemsToProcess:
-                try:
-                    itemName = item["item_name"]
-                    tagsDict = tagMapping[itemName]
-                    tags: str = tagsDict["base"]
-                    await con.execute(
-                        """
-                        UPDATE item_classification
-                        SET class = $1
-                        FROM items
-                        WHERE items.item_name = $2
-                        AND item_classification.item_id = items.item_id
-                        """,
-                        str(tags),
-                        str(itemName),
-                    )
-                    updatedCount += 1
-                except Exception as e:
-                    logger.error(
-                        f"tag assignment failed for item {item.get('item_name')}: {tagsDict} — {e}"
-                    )
-
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        logger.error(f"Daemon for tag assignment failed: {e}")
-        logger.error(traceback.format_exc())
-
-
-async def shorten_item_name_task(pool: asyncpg.Pool, item_name: str):
-    """Background task to shorten a specific item name"""
-    try:
-        async with pool.acquire() as con:
-            row = await con.fetchrow(
-                """
-                SELECT ic.class, ic.categories_off as categories
-                FROM items i
-                LEFT JOIN item_classification ic ON ic.item_id = i.item_id
-                WHERE i.item_name = $1 AND (ic.class IS NULL OR ic.class = '')
-                LIMIT 1
-                """,
-                item_name,
-            )
-            if (
-                row
-                and row["categories"] is not None
-                and item_name.lower() not in ["", "none"]
-            ):
-                stripped_name = shortenWithTable(item_name)
-                shortened_name = classifier.shortenText(
-                    stripped_name, row["categories"]
-                )
-                if shortened_name:
-                    await con.execute(
-                        """
-                        UPDATE items SET shortened_name = $1 WHERE item_name = $2
-                        """,
-                        shortened_name,
-                        item_name,
-                    )
-                    logger.info(
-                        f"Background task: Shortened item name '{item_name}' to '{shortened_name}'"
-                    )
-                else:
-                    await con.execute(
-                        """
-                        UPDATE items SET shortened_name = $1 WHERE item_name = $2
-                        """,
-                        "none",
-                        item_name,
-                    )
-                    logger.info(
-                        f"Background task: Shortened item name '{item_name}' to 'none'"
-                    )
-
-    except Exception as e:
-        logger.error(f"Background task error shortening item name: {e}")
-
-
-def processTagRuleBased(tag: str) -> str:
-    tagList = tag.split(",")
-    # structure is [base, flavour, form]
-    base, flavour, _ = tagList[0], tagList[1], tagList[2]
-    if not base:
-        processedName = "none"
-    else:
-        if flavour:
-            processedName = f"{base} {flavour}"
-        else:
-            processedName = base
-
-    return processedName
-
-
-async def rescanCategoriesProcess(pool: asyncpg.Pool):
-    try:
-        async with pool.acquire() as con:
-            rows = await con.fetch("""
-                SELECT DISTINCT(inv.item_id) AS ean, classification.categories_off AS categories
-                FROM inventory inv
-                LEFT JOIN item_classification classification ON classification.item_id = inv.item_id
-            """)
-
-        eansToMod = [
-            row["ean"]
-            for row in rows
-            if row["categories"] is None and row["ean"] not in ("-1", "0", "1")
-        ]
-
-        if not eansToMod:
-            logger.info("rescanCategoriesProcess: nothing to update")
-            return {"done": True, "updated": 0, "total_empty": 0}
-
-        results: dict[str, list] = {}
-        async with httpx.AsyncClient(
-            headers={"User-Agent": "grocery-list-app/1.0"},
-            timeout=httpx.Timeout(5.0),
-        ) as client:
-            for ean in eansToMod:
-                try:
-                    await asyncio.sleep(0.5)
-                    res = await client.get(
-                        f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=categories_tags",
-                        timeout=5.0,
-                    )
-                    data = res.json()
-                    categories = data.get("product", {}).get("categories_tags", [])
-                except Exception as e:
-                    logger.warning(f"failed to get categories for ean {ean}: {e}")
-                    categories = []
-
-                results[ean] = categories
-
-        updated_count = 0
-        async with pool.acquire() as con:
-            for ean, categories in results.items():
-                await con.execute(
-                    "UPDATE item_classification SET categories_off = $1 WHERE item_id = $2",
-                    str(categories) if categories else "[]",
-                    ean,
-                )
-                if categories:
-                    updated_count += 1
-
-        logger.info(
-            f"Updated {updated_count} category entries out of {len(eansToMod)} empty entries"
-        )
         return {
-            "done": True,
-            "updated": updated_count,
-            "total_empty": len(eansToMod),
-            "eansUpdated": str(eansToMod),
+            "message": f"Successfully retrieved meal, for user {uid}",
+            "meal_slot": meal,
+            "status": "success",
         }
 
     except Exception as e:
-        logger.error(
-            f"Failed while rescanning categories in rescanCategoriesProcess: {e}"
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": "500",
+        }
+
+
+@app.get("/planner_settings", tags=["meal planning", "settings", "get data"])
+async def getPlannerSettingsEndpoint(request: Request):
+    """
+    Get the user's planner settings
+
+    Retrieves user-specific settings for the meal planner system, including
+    portion sizes and other configuration options.
+
+    Requires authentication token in request header.
+
+    Returns:
+    - message: Status message with user ID
+    - status: Success/error status
+    - planner_settings: PlannerSettings object with user's configuration
+    - code: HTTP status code
+    """
+    try:
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            settings: PlannerSettings = await getPlannerSettings(con, uid)
+
+        return {
+            "message": f"Successfully retrieved planner settings, for user {uid}",
+            "status": "success",
+            "planner_settings": settings,
+            "code": status.HTTP_200_OK,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
+
+
+@app.put("/planner_settings", tags=["meal planning", "settings", "update data"])
+async def putPlannerSettingsEndpoint(request: Request, body: PlannerSettings) -> dict:
+    """
+    Replace or update the user's planner settings
+
+    Updates the user's meal planner configuration with the provided settings.
+
+    Requires authentication token in request header.
+
+    Body Parameters (PlannerSettings model):
+    - channel_data: Platform-specific configuration
+    - defaultPortion: Default portion size setting
+    - recipe_prog_constraint: Recipe progression constraints
+    - wochentage: Array of enabled days for meal planning
+
+    Returns:
+    - message: Status message with user ID
+    - status: Success/error status
+    - code: HTTP status code
+    """
+    try:
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            await replacePlannerSettings(con, uid, body)
+
+        return {
+            "message": f"Successfully replaced planner settings, for user {uid}",
+            "status": "success",
+            "code": status.HTTP_200_OK,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
+
+
+@app.get(
+    "/classify_items_against_pantry", tags=["inventory", "classification", "get data"]
+)
+async def classifyItemsAgainstPantryEndpoint(request: Request, itemsWished: list[Item]):
+    """
+    Classify desired items against current pantry inventory
+
+    Matches items that the user wants (from wish list) against items they already have
+    in their pantry/inventory to identify matches.
+
+    Requires authentication token in request header.
+
+    Query Parameters:
+    - itemsWished: Array of Item objects representing wish list items
+
+    Returns:
+    - message: Status message
+    - status: Success/error status
+    - mapping: Dictionary mapping wish items to matching pantry items
+    - code: HTTP status code
+
+    Note: Uses the item classification system to find matches
+    """
+    try:
+        itemsWishedReduced: list[str] = [it.item_name for it in itemsWished]
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            inventory: dict = await getCurrentPantryListUser(con, uid)
+
+        mapping: dict = await asyncio.to_thread(
+            classifier.mapWishItemBatch,
+            list(inventory.values()),
+            [itemsWishedReduced for _ in inventory],
         )
-        logger.error(traceback.format_exc())
-        return {"done": False, "error": str(e)}
+
+        return {
+            "message": f"Successfully replaced planner settings, for user {uid}",
+            "status": "success",
+            "mapping": mapping,
+            "code": status.HTTP_200_OK,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
 
 
-async def resetDeprecatedImageUrls(
-    con: asyncpg.pool.PoolConnectionProxy, deprecationDays: int = 30
-) -> list[str]:
+@app.delete("/week_plan", tags=["meal planning", "delete data"])
+async def deleteMealSlot(request: Request, body: MealSlot) -> dict:
+    """
+    Delete a meal slot from the week planner
 
-    items_to_update = await con.fetch(
-        """
-        select item_id as ean from items
-        where (last_checked_at < now() - $1 * interval '1 day' or image_url is null)
-        and not item_id = '-1'
-        """,
-        deprecationDays,
-    )
+    Removes a meal entry from the user's weekly planner based on the provided
+    meal slot (day and time).
 
-    await con.execute(
-        """
-        update items set last_checked_at = now()
-        where (last_checked_at < now() - $1 * interval '1 day' or image_url is null)
-        and not item_id = '-1'
-        """,
-        deprecationDays,
-    )
+    Requires authentication token in request header.
 
-    return [item["ean"] for item in items_to_update]
+    Body Parameters (MealSlot model):
+    - day: Day of the week (e.g., "Monday")
+    - day_time: Time slot (e.g., "morning")
+    - recipe_id: Optional ID of the recipe to remove
+
+    Returns:
+    - message: Status message with user ID
+    - status: Success/error status
+    - code: HTTP status code
+    """
+    try:
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            await deleteMealInWeek(con, uid, body)
+
+        return {
+            "message": f"Successfully retrieved meal, for user {uid}",
+            "status": "success",
+            "code": status.HTTP_200_OK,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
+
+
+@app.post("/week_plan/replace_meal", tags=["meal planning", "update data"])
+async def replaceMeal(request: Request, body: MealSlot):
+    """
+    Replace a meal in the weekly planner
+
+    Replaces an existing meal entry in the user's weekly planner with new meal details.
+    Updates the planner entry identified by day and day_time with new recipe information.
+
+    Requires authentication token in request header.
+
+    Body Parameters (MealSlot model):
+    - day: Day of the week (e.g., "Monday")
+    - day_time: Time slot (e.g., "lunch")
+    - recipe_id: ID of the new recipe to place in this slot
+    - timestamp: Timestamp identifier for the meal slot
+
+    Returns:
+    - message: Status message with day, time, and user ID
+    - status: Success/error status
+    """
+    try:
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            await replaceMealByTimestamp(con, uid, body)
+
+        return {
+            "message": f"Successfully replaced the meal slot for {body.day} for {body.day_time}, for user {uid}",
+            "status": "success",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
+
+
+@app.post("/week_plan", tags=["meal planning", "update data"])
+async def postWeekPlan(request: Request, body: AddWeekPlan) -> dict:
+    """
+    Set or replace the entire week's meal plan and settings
+
+    Updates the user's weekly meal planner with new meal assignments for all days,
+    and replaces any week-specific settings (like portion sizes).
+
+    Requires authentication token in request header.
+
+    Body Parameters (AddWeekPlan model):
+    - week: Array of MealSlot objects representing all meals for the week
+    - DaySettings: User's planner settings for this week
+
+    Returns:
+    - message: Status message with user ID
+    - status: Success/error status
+    - code: HTTP status code (201 for created)
+    """
+    try:
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            await replaceWeekPlanForUser(con, body.week, uid)
+            await replaceWeekSettingsForUser(con, body.DaySettings, uid)
+
+        return {
+            "message": f"Successfully replaced the week's settings and meal slots for user {uid}",
+            "status": "success",
+            "code": status.HTTP_201_CREATED,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
+
+
+@app.get("/week_plan", tags=["meal planning", "get data"])
+async def getWeekPlan(request: Request):
+    """
+    Get the complete week planner with meals and settings
+
+    Retrieves the entire meal planner for the authenticated user, including:
+    - All meal slots for the week
+    - Week-specific settings (portion sizes, constraints)
+
+    Requires authentication token in request header.
+
+    Returns:
+    - week_plan: Serialized weekly meal plan data
+    - week_settings: User's planner settings
+    - code: HTTP status code (200 for success)
+    """
+    try:
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            weekPlan = await getWeekPlanForUser(con, uid)
+            weekSettings = await getWeekSettingsForUser(con, uid)
+
+        return {
+            "week_plan": weekPlan.model_dump_json(),
+            "week_settings": weekSettings,
+            "code": status.HTTP_200_OK,
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
+
+
+@app.get("/recipes/{recipe_id}", tags=["cooking", "recipes", "get data"])
+async def getRecipeById(request: Request, recipe_id: int):
+    """
+    Get a specific recipe by ID
+
+    Retrieves a single recipe from the database based on recipe ID.
+
+    Path Parameters:
+    - recipe_id: Recipe ID to retrieve
+
+    Returns:
+    - recipe_id: The requested recipe ID
+    - base_time: Preparation time in minutes
+    - default_portions: Default serving size
+    - emoji: Emoji representing the recipe
+    - tags: Array of recipe tags/categories
+    - steps: Array of preparation step strings
+
+    Errors:
+    - Returns 404 if recipe not found or not accessible to user
+    """
+    try:
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            if username:
+                uid = await getIdFromUsername(con, username)
+            else:
+                uid = -1
+            res = await con.fetchrow(
+                """select recipe_id, base_time, default_portions, emoji, tags, steps
+                                  from recipes where recipe_id = $1 and user_id = $2""",
+                recipe_id,
+                uid,
+            )
+            if res is not None:
+                return {
+                    "recipe_id": res.get("recipe_id", None),
+                    "base_time": res.get("base_time", None),
+                    "default_portions": res.get("default_portions", None),
+                    "emoji": res.get("emoji", None),
+                    "tags": res.get("tags", None),
+                    "steps": res.get("steps", None),
+                }
+            else:
+                return {
+                    "status": "error",
+                    "code": status.HTTP_404_NOT_FOUND,
+                    "detail": f"there is no recipe with id {recipe_id} in the inventory accessible to you",
+                }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        }
 
 
 async def rescanImageUrls(pool: asyncpg.Pool, delay: float = 1):
@@ -1448,8 +1662,32 @@ async def rescanImageUrls(pool: asyncpg.Pool, delay: float = 1):
         return {"done": False, "error": str(e)}
 
 
-@app.post("/add_ean_to_list/", tags=["core", "add"])
+@app.post("/add_ean_to_list/", tags=["core", "inventory", "add data"])
 async def add_ean_to_list(request: Request, body: AddEanRequest):
+    """
+    Add an item to the user's inventory by EAN or manual entry
+
+    Adds an item to the user's inventory/pantry either by scanning an EAN barcode
+    or by manually entering the item name. Supports specifying quantity and setting
+    whether the item is a wish list item.
+
+    Requires authentication token in request header.
+
+    Body Parameters (AddEanRequest model):
+    - ean: EAN barcode of the product (optional if item_name provided)
+    - item_name: Name of the item to add (optional if ean provided)
+    - count: Quantity of the item to add (default: 1)
+    - quantity_data: Additional quantity information (optional)
+    - wish_list: Boolean indicating if this should be added to wish list (optional)
+
+    Returns:
+    - ean: Normalized EAN code that was processed
+    - product_name: Normalized product name that was processed
+    - done: Operation success status
+    - known_to_db: Whether the item was already in database (True if looked up)
+    - mode: Operation mode ("ean" or "manual adding")
+    - operation: Action performed (e.g., "added", "increment", "appended")
+    """
     incoming_ean = (body.ean or "").strip()
     ean = incoming_ean or None
 
@@ -1515,13 +1753,31 @@ async def add_ean_to_list(request: Request, body: AddEanRequest):
         raise HTTPException(status_code=500, detail="Failed to add item")
 
 
-@app.post("/transcribe", tags=["phase out"])
+@app.post("/transcribe", tags=["transcription", "audio", "phase out"])
 async def transcribe_endpoint(
     request: Request,
     ListTypesInput: Optional[str] = Query(None),
     file: UploadFile = File(...),
 ):
-    """Transcribe audio and classify item"""
+    """
+    Transcribe audio file and classify item from voice input
+
+    Converts voice/audio input into text and classifies the spoken grocery item
+    against the user's inventory. Useful for hands-free adding of items.
+
+    Requires authentication token in request header.
+    Only works if transcription is enabled in server configuration.
+
+    Query Parameters:
+    - ListTypesInput: Type of list ("wish_list" for wish list, "itemList" for inventory)
+
+    Body Parameters:
+    - file: Audio file (must be in supported format)
+
+    Returns:
+    - Status response with transcription and classification results
+    - [Currently phased out functionality]
+    """
     if not Config.ENABLE_WHISPER_MODEL_CLOUD and not Config.ENABLE_WHISPER_MODEL_LOCAL:
         raise HTTPException(status_code=503, detail="Transcription not enabled")
 

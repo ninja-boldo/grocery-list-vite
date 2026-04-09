@@ -12,6 +12,7 @@ const ImprovedScanner = React.lazy(
 );
 const SettingsPage = React.lazy(() => import("./sites/Settings"));
 const MealPlanner  = React.lazy(() => import("./sites/MealPlanner"));
+const RecipesPage = React.lazy(() => import("./sites/Recipes"));
 
 const PageLoader = () => (
   <div
@@ -43,6 +44,7 @@ export default function AppRouter() {
         <Route path="/scanner" element={<ImprovedScanner />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/planner"     element={<MealPlanner />} />
+        <Route path="/recipes" element={<RecipesPage />} />
         <Route path="/attribution" element={<AttributionPage />} />
       </Routes>
     </Suspense>

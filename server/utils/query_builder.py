@@ -31,6 +31,7 @@ def _build_fetch_query_template(
     has_skip: bool,
     is_search: bool,
     username_param_idx: int = 1,
+    wish_hash_param_idx: Optional[int] = None,
 ) -> str:
     param_idx = username_param_idx
     conditions = [f"users.username = ${param_idx}"]
@@ -48,6 +49,11 @@ def _build_fetch_query_template(
 
     where_clause = f"WHERE {' AND '.join(conditions)}"
 
+    # If wish_hash was injected it occupies one slot before limit/offset.
+    # Jump param_idx past it so limit/offset use the right $N.
+    if wish_hash_param_idx is not None:
+        param_idx = wish_hash_param_idx
+
     limit_clause = f"LIMIT ${param_idx + 1}" if has_limit else "LIMIT 1000"
     if has_limit:
         param_idx += 1
@@ -57,7 +63,18 @@ def _build_fetch_query_template(
     sort_sql = convertSortToSql(sortOrder)
 
     if only_wish_list == "true":
-        wished_join = """
+        # Build optional hash filter for the wish_mapping subquery.
+        # When current hashes are provided we restrict to mappings that were
+        # produced from the exact same list state, so stale rows are excluded.
+        if wish_hash_param_idx is not None:
+            # Filter by wish_list_hash only. pantry_list_hash in wish_mapping is
+            # overwritten on every daemon upsert (ON CONFLICT on item_id,
+            # wish_list_hash), so it cannot be used reliably as a display filter.
+            hash_filter = f"AND wm.wish_list_hash = ${wish_hash_param_idx}"
+        else:
+            hash_filter = ""
+
+        wished_join = f"""
             LEFT JOIN (
             SELECT
                 agg.mapped_wish_name,
@@ -73,14 +90,12 @@ def _build_fetch_query_template(
                 FROM inventory i
                 JOIN users u ON u.user_id = i.user_id
                 JOIN items pantry_items ON pantry_items.item_id = i.item_id
-                JOIN (
-                    SELECT DISTINCT item_id, wish_item_id
-                    FROM wish_mapping
-                ) wm ON wm.item_id = i.item_id
+                JOIN wish_mapping wm ON wm.item_id = i.item_id
                 JOIN items wish_items ON wish_items.item_id = wm.wish_item_id
                 WHERE (i.is_wish IS NULL OR i.is_wish = FALSE)
                 AND wish_items.item_name != 'other'
                 AND u.username = $1
+                {hash_filter}
                 GROUP BY wish_items.item_name, pantry_items.item_name
             ) agg
             GROUP BY agg.mapped_wish_name
@@ -125,8 +140,9 @@ def build_fetch_query(
     skip: Optional[int] = None,
     limit: Optional[int] = None,
     searchQuery: Optional[str] = None,
+    wish_hash: Optional[str] = None,
 ) -> tuple[str, list]:
-    params = []
+    params: list = []
 
     if not username:
         raise ValueError("the username param has to be not none")
@@ -136,10 +152,20 @@ def build_fetch_query(
         raise Exception(
             f"this operation does need a specific username and not {username}"
         )
-    params.append(username)
+    params.append(username)  # $1
 
-    if searchQuery and searchQuery.strip():
-        params.append(f"%{searchQuery.strip()}%")
+    is_search = bool(searchQuery and searchQuery.strip())
+    if is_search:
+        params.append(f"%{searchQuery.strip()}%")  # type: ignore # $2
+
+    # Inject wish_list_hash for wish-list fetches so stale mappings from old
+    # wish-list states are excluded. pantry_list_hash is NOT filtered here —
+    # the daemon upserts on (item_id, wish_list_hash) and overwrites
+    # pantry_list_hash, making it unreliable as a display-time filter.
+    wish_hash_param_idx: Optional[int] = None
+    if only_wish_list == "true" and wish_hash is not None:
+        wish_hash_param_idx = len(params) + 1
+        params.append(wish_hash)
 
     has_limit = limit is not None and limit > 0
     has_skip = skip is not None and skip > 0
@@ -153,7 +179,8 @@ def build_fetch_query(
         sortOrder=sortOrder,
         has_limit=has_limit,
         has_skip=has_skip,
-        is_search=bool(searchQuery and searchQuery.strip()),
+        is_search=is_search,
+        wish_hash_param_idx=wish_hash_param_idx,
     )
 
     return query, params
