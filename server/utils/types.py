@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional
+from typing_extensions import Literal
 
 from pydantic import BaseModel, Field
 
@@ -155,13 +156,70 @@ class PlannerSettings(BaseModel):
 
 class Item(BaseModel):
     item_name: str
-    info: Optional[str] = ""
-    item_id: Optional[str] = None
-    count: Optional[int] = 1
+    item_id: str
+    count: int
+    quantity: QuantityInfo
+    #info: Optional[str] = ""
+
+
+class InternalClassification(BaseModel):
+    pantryItem: Item
+    mappedWishItem: Item | None
+    foundMappingWish: bool
+
+
+class ClassificationWishListVsPantryInternal(BaseModel):
+    mappings: list[InternalClassification]
+    #info: Optional[str] = None
+
+
+class SingleItemClassification(BaseModel):
+    item: str
+    category: Literal[
+        "fruit vegetables",
+        "dairy eggs",
+        "bread bakery pastries",
+        "snacks chips nuts",
+        "meat poultry fish seafood",
+        "grains rice pasta legumes",
+        "canned preserved foods",
+        "sauces spreads dips",
+        "oils vinegars dressings",
+        "spices herbs seasoning",
+        "baking ingredients",
+        "drinks beverages",
+        "personal care hygiene",
+        "household cleaning",
+        "frozen foods",
+        "other",
+    ]
+
+
+class ItemClassificationRes(BaseModel):
+    items: list[SingleItemClassification]
 
 
 class ItemsWishedForRecipe(BaseModel):
     items: list[Item]
+
+
+class MappedWish(BaseModel):
+    item: str
+    mapped_wish: str
+    index_wish_list: int
+
+
+class WishMappingRes(BaseModel):
+    items: list[MappedWish]
+
+
+class ShortenedItem(BaseModel):
+    original_name: str
+    shortened_name: str
+
+
+class ShortenNamesRes(BaseModel):
+    items: list[ShortenedItem]
 
 
 class WeekSettings(BaseModel):

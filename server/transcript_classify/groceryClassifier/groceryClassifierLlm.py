@@ -1,28 +1,35 @@
-# groceryClassifierLlm.py – LLM-backed grocery classifier (Groq via LangChain).
-# Handles:  classify (category + action), shorten text / batch-shorten.
+# groceryClassifierLlm.py – LLM-backed grocery classifier
 
 import json
 import logging
-import os
-import re
-from functools import lru_cache
-from typing import Any, Dict, Literal, cast
+from typing import Any, Literal, cast
 
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_groq import ChatGroq
-from pydantic import BaseModel, Field, ValidationError
+from groq import Groq
+from pydantic import BaseModel, Field
 
-from utils.types import Item
+try:
+    from rich.console import Console
+    from rich.json import JSON as RichJSON
+except Exception:
+    Console = None
+    RichJSON = None
+
+from utils.types import (
+    ClassificationWishListVsPantryInternal,
+    InternalClassification,
+    Item,
+)
 
 from .lookups import (
-    ACTION_PROMPT_TMPL,
-    COMBINED_PROMPT_TMPL,
-    PROMPT_TMPL,
+    CLASSIFY_AGAINST_PANTRY_TMPL,
     SHORTEN_BATCH_TMPL,
-    SHORTEN_TMPL,
     Category_Batch_TMPL,
     WISH_Batch_TMPL,
     CLASS_DESCRIPTIONS,
+    response_format_map_wish_list,
+    response_format_classify_item,
+    response_format_shorten_names_batch,
+    response_format_classify_against_pantry,
 )
 
 log = logging.getLogger(__name__)
@@ -66,33 +73,74 @@ class GroceryClassifierLlm:
     def __init__(self, model: str = GROQ_MODEL, temperature: float = 0.1):
         self._model = model
         self._temperature = temperature
+        self._client = Groq()
 
     # ── LLM / chain helpers ───────────────────────────────────────────────────
 
-    @lru_cache(maxsize=1)  # type: ignore[misc]
-    def _llm(self) -> ChatGroq:
-        api_key = os.getenv("GROQ_API_KEY")
-        if not api_key:
-            raise ValueError("GROQ_API_KEY environment variable is not set")
-        from langchain_core.utils.utils import convert_to_secret_str
-
-        return ChatGroq(
+    def _invoke(
+        self,
+        template: dict,
+        responseFormat: dict,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        response = self._client.chat.completions.create(
             model=self._model,
-            temperature=self._temperature,
-            api_key=convert_to_secret_str(api_key),
+            messages=[
+                {"role": "system", "content": f"{template.get('system')}"},
+                {
+                    "role": "user",
+                    "content": f"{self.fill_template(template.get('user'), payload)}",
+                },
+            ],
+            response_format=cast(Any, responseFormat),
         )
 
-    @lru_cache(maxsize=8)  # type: ignore[misc]
-    def _chain(self, template: str) -> Any:
-        prompt = ChatPromptTemplate.from_template(template)
-        return prompt | self._llm()
+        content = response.choices[0].message.content
+        if content is None:
+            raise ValueError("LLM returned empty content")
 
-    def _invoke(self, template: str, payload: dict[str, Any]) -> dict[str, Any]:
-        result = self._chain(template).invoke(payload)
-        raw = result.content if hasattr(result, "content") else str(result)
-        return _parse_json(raw if isinstance(raw, str) else str(raw))
+        result = self._parse_json_content(content)
+        return result
+
+    @staticmethod
+    def _parse_json_content(content: str) -> dict[str, Any]:
+        """Parse model output robustly, including fenced JSON responses."""
+        text = content.strip()
+        if text.startswith("```"):
+            parts = text.split("\n")
+            if parts and parts[0].startswith("```"):
+                parts = parts[1:]
+            if parts and parts[-1].strip() == "```":
+                parts = parts[:-1]
+            text = "\n".join(parts).strip()
+            if text.lower().startswith("json"):
+                text = text[4:].strip()
+
+        parsed = json.loads(text)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM response is not a JSON object")
+        return parsed
 
     # ── Normalisation helpers ─────────────────────────────────────────────────
+    def fill_template(self, template, data) -> str:
+        return template.format(**data)
+
+    @staticmethod
+    def _as_dict(value: Any) -> dict[str, Any]:
+        return value if isinstance(value, dict) else {}
+
+    @staticmethod
+    def _print_json_debug(title: str, payload: dict[str, Any]) -> None:
+        """Render debug payload as pretty JSON, using Rich when available."""
+        pretty = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+
+        if Console is not None and RichJSON is not None:
+            console = Console()
+            console.print(f"[bold cyan]{title}[/bold cyan]")
+            console.print(RichJSON(pretty))
+            return
+
+        print(f"{title}:\n{pretty}")
 
     @staticmethod
     def _parse_confidence(value: Any) -> float:
@@ -113,160 +161,25 @@ class GroceryClassifierLlm:
         lower_map = {c.lower(): c for c in classes}
         return lower_map.get(str(category).strip().lower(), "unknown")
 
-    # ── Internal classify helpers ─────────────────────────────────────────────
-
-    def _classify_action(self, input_text: str) -> Dict[str, Any]:
-        try:
-            out = self._invoke(ACTION_PROMPT_TMPL, {"input": input_text})
-        except Exception as exc:
-            log.warning("Action classification failed: %s", exc)
-            return {"action": "unknown", "confidence": 0.0}
-
-        action = self._normalize_action(out.get("action", "unknown"))
-        conf = self._parse_confidence(out.get("confidence", 0.0))
-        if action == "unknown":
-            conf = min(conf, 0.2)
-
-        try:
-            v = ActionClassification(action=action, confidence=conf)  # type: ignore[arg-type]
-        except ValidationError:
-            v = ActionClassification(action="unknown", confidence=0.0)
-        return {"action": v.action, "confidence": v.confidence}
-
-    def _classify_category(self, input_text: str, classes: list[str]) -> Dict[str, Any]:
-        try:
-            out = self._invoke(
-                PROMPT_TMPL, {"input": input_text, "classes": ", ".join(classes)}
-            )
-        except Exception as exc:
-            log.warning("Category classification failed: %s", exc)
-            return {"category": "unknown", "confidence": 0.0}
-
-        cat = self._normalize_category(out.get("category", "unknown"), classes)
-        conf = self._parse_confidence(out.get("confidence", 0.0))
-        if cat == "unknown":
-            conf = min(conf, 0.2)
-
-        try:
-            v = Classification(category=cat, confidence=conf)
-        except ValidationError:
-            v = Classification(category="unknown", confidence=0.0)
-
-        if v.category not in classes:
-            return {"category": "unknown", "confidence": 0.0}
-        return {"category": v.category, "confidence": v.confidence}
-
-    def _classify_combined(
-        self, input_text: str, classes: list[str]
-    ) -> Dict[str, Any] | None:
-        """Single LLM call → category + action. Returns None on failure."""
-        try:
-            out = self._invoke(
-                COMBINED_PROMPT_TMPL,
-                {"input": input_text, "classes": ", ".join(classes)},
-            )
-        except Exception:
-            return None
-
-        category = self._normalize_category(out.get("category", "unknown"), classes)
-        action = self._normalize_action(out.get("action", "unknown"))
-        cat_conf = self._parse_confidence(
-            out.get("category_confidence", out.get("confidence", 0.0))
-        )
-        act_conf = self._parse_confidence(out.get("action_confidence", 0.0))
-
-        if category == "unknown":
-            cat_conf = min(cat_conf, 0.2)
-        if action == "unknown":
-            act_conf = min(act_conf, 0.2)
-
-        try:
-            v = CombinedClassification(
-                category=category,
-                category_confidence=cat_conf,
-                action=action,
-                action_confidence=act_conf,
-            )
-        except ValidationError:
-            return None
-
-        if v.category not in classes:
-            return None
-
+    @staticmethod
+    def _rows_to_map(rows: Any, key: str, value: str) -> dict[str, Any]:
+        """Convert LLM array response to {item: value} dict."""
+        if not isinstance(rows, list):
+            return {}
         return {
-            "category": v.category,
-            "category_confidence": v.category_confidence,
-            "action": v.action,
-            "action_confidence": v.action_confidence,
+            r[key]: r[value]
+            for r in rows
+            if isinstance(r, dict) and key in r and value in r
         }
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def classifyTranscribe(
-        self,
-        input_text: str,
-        classes: list[str],
-        threshold: float = CONFIDENCE_THRESHOLD,
-    ) -> Dict[str, Any]:
+    """
+    def classifyItemsAgainstWishList(
+        self, items: list[Item], wishList: list[Item]
+    ) -> ClassificationWishListVsPantryInternal:
+        
         """
-        Classify the grocery intent from a transcript snippet.
-
-        Returns:
-          category, category_confidence, action, action_confidence.
-          Both fields are set to "unknown" when either confidence < threshold.
-        """
-        combined = self._classify_combined(input_text, classes)
-
-        if combined is None:
-            # Fallback: two separate calls
-            cat_r = self._classify_category(input_text, classes)
-            act_r = self._classify_action(input_text)
-            cat, cat_conf = cat_r["category"], cat_r["confidence"]
-            action, act_conf = act_r["action"], act_r["confidence"]
-        else:
-            cat = combined["category"]
-            cat_conf = combined["category_confidence"]
-            action = combined["action"]
-            act_conf = combined["action_confidence"]
-
-        if cat_conf < threshold or act_conf < threshold:
-            return {
-                "category": "unknown",
-                "category_confidence": cat_conf,
-                "action": "unknown",
-                "action_confidence": act_conf,
-            }
-
-        return {
-            "category": cat,
-            "category_confidence": cat_conf,
-            "action": action,
-            "action_confidence": act_conf,
-        }
-
-    def classify_category_only(
-        self, input_text: str, classes: list[str]
-    ) -> Dict[str, Any]:
-        """Backwards-compatible helper: category classification only."""
-        return self._classify_category(input_text, classes)
-
-    def shorten_text(self, input_text: str, categories: str | list[str]) -> str:
-        """Normalise / shorten a single product name."""
-        categories_str = (
-            ",".join(c.strip() for c in categories if c and c.strip())
-            if isinstance(categories, list)
-            else categories.strip()
-        )
-        try:
-            out = self._invoke(
-                SHORTEN_TMPL, {"input": input_text, "categories": categories_str}
-            )
-        except Exception as exc:
-            log.warning("Text shortening failed: %s", exc)
-            return input_text.strip()
-
-        shortened = str(out.get("shortenedText", input_text.strip())).strip()
-        return shortened or input_text.strip()
 
     def classify_categories_batch(
         self,
@@ -274,8 +187,8 @@ class GroceryClassifierLlm:
         classes: list[str] = list(CLASS_DESCRIPTIONS.keys()),
     ) -> dict[str, str]:
         """
-        Normalise many product names in a single LLM call.
-        Returns {original: shortened} or None on hard failure.
+        Classify many items into categories in a single LLM call.
+        Returns {original: category}.
         """
         if not input_items:
             return {}
@@ -284,13 +197,24 @@ class GroceryClassifierLlm:
         try:
             out = self._invoke(
                 Category_Batch_TMPL,
+                response_format_classify_item,
                 {"items_list": input_items, "classes_list": classes_list},
             )
         except Exception as exc:
-            log.warning("Batch text shortening failed: %s", exc)
+            log.warning("Batch category classification failed: %s", exc)
             return {}
 
-        return {item: str(out.get(item, item)).strip() or item for item in input_items}
+        out_map = self._rows_to_map(out.get("items"), "item", "category")
+        allowed_classes = set(classes_list)
+
+        return {
+            item: (
+                str(out_map.get(item, "")).strip()
+                if str(out_map.get(item, "")).strip() in allowed_classes
+                else "other"
+            )
+            for item in input_items
+        }
 
     def shorten_text_batch(
         self, input_items: list[str], categories: list[str] | None = None
@@ -306,13 +230,17 @@ class GroceryClassifierLlm:
         try:
             out = self._invoke(
                 SHORTEN_BATCH_TMPL,
+                response_format_shorten_names_batch,
                 {"items_list": input_items, "category_list": category_list},
             )
         except Exception as exc:
             log.warning("Batch text shortening failed: %s", exc)
             return None
 
-        return {item: str(out.get(item, item)).strip() or item for item in input_items}
+        out_map = self._rows_to_map(out.get("items"), "item", "normalized")
+        return {
+            item: str(out_map.get(item, item)).strip() or item for item in input_items
+        }
 
     def convertWishList(self, wishList: list[str]) -> str:
         wishList.sort()
@@ -370,19 +298,46 @@ class GroceryClassifierLlm:
             }
 
         try:
-            print(f"wish item map: {wish_item_map}")
-            results = self._invoke(
+            self._print_json_debug("wish item map", wish_item_map)
+            raw_results = self._invoke(
                 WISH_Batch_TMPL,
+                response_format_map_wish_list,
                 {"item_wish_dict": wish_item_map},
             )
 
-            for item_name, entry in results.items():
-                entry["info"] = item_info.get(item_name, {})
+            rows = raw_results.get("items", [])
+            results_obj: dict[str, dict] = {
+                r["item"]: r for r in rows if isinstance(r, dict) and "item" in r
+            }
+
+            results: dict[str, dict[str, Any]] = {}
+            for item_name in item_names:
+                wishes = wish_item_map[item_name]["wish_list"]
+                fallback_idx = wish_item_map[item_name]["index_wish_list"]
+                entry = results_obj.get(item_name, {})
+
+                mapped_wish = str(entry.get("mapped_wish", "null")).strip() or "null"
+                if wishes and mapped_wish not in wishes:
+                    mapped_wish = "other" if "other" in wishes else wishes[0]
+
+                idx_value = entry.get(
+                    "index_wish_list",
+                    entry.get("wish_list_index", fallback_idx),
+                )
+                try:
+                    parsed_idx = int(idx_value)
+                except (TypeError, ValueError):
+                    parsed_idx = fallback_idx
+
+                results[item_name] = {
+                    "mapped_wish": mapped_wish,
+                    "index_wish_list": parsed_idx,
+                    "wish_list": wishes,
+                    "info": item_info.get(item_name, {}),
+                }
 
             parsedRes: dict = {"items": results, "wish_list_to_idx": wishToIdx}
-            print(
-                f"produced this wish mapping: {parsedRes}\nfor this input: {item_names}"
-            )
+            # self._print_json_debug("wish mapping results", parsedRes)
             return parsedRes
 
         except Exception as exc:
@@ -391,7 +346,8 @@ class GroceryClassifierLlm:
                 "items": {
                     k: {
                         "mapped_wish": "null",
-                        "wish_list": [],
+                        "index_wish_list": wish_item_map[k]["index_wish_list"],
+                        "wish_list": wish_item_map[k]["wish_list"],
                         "info": item_info.get(k, {}),
                     }
                     for k in item_names
@@ -399,31 +355,22 @@ class GroceryClassifierLlm:
                 "wish_list_to_idx": {},
             }
 
+    def classifyWishAgainstPantry(
+        self, items: list[Item], wishList: list[Item]
+    ) -> list[InternalClassification]:
+        result: dict = self._invoke(
+            CLASSIFY_AGAINST_PANTRY_TMPL,
+            response_format_classify_against_pantry,
+            {"items": [it.item_name for it in items], "wishList": [w.item_name for w in wishList]},
+        )
+        parsed: ClassificationWishListVsPantryInternal = (
+            ClassificationWishListVsPantryInternal.model_validate(result)
+        )
+        return parsed.mappings
 
-# ─── JSON parsing utility (module-level, also exported for classifier.py) ────
 
+if __name__ == "__main__":
+    g = GroceryClassifierLlm()
 
-def _parse_json(text: str) -> dict[str, Any]:
-    """Robustly parse a JSON-like string with several fallback strategies."""
-    text = text.strip()
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    try:
-        return json.loads(text.replace("'", '"'))
-    except json.JSONDecodeError:
-        pass
-
-    m = re.search(r"\{.*\}", text, re.DOTALL)
-    if m:
-        candidate = re.sub(r",\s*}", "}", m.group())
-        candidate = re.sub(r",\s*]", "]", candidate)
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
-            pass
-
-    return {}
+    res = g.classify_categories_batch(["joghurt", "ben und jerrys", "rice", "huevos"])
+    print(res)

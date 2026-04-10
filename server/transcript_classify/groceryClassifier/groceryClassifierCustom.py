@@ -283,7 +283,7 @@ class GroceryClassifier:
 
             keyword_label = self._keyword_classify(item)
             if keyword_label is not None:
-                ranked = [keyword_label] + [l for l in ranked if l != keyword_label]
+                ranked = [keyword_label] + [l for l in ranked if l != keyword_label]  # noqa: E741
 
             unique_topk[item] = ranked[:top_k]
 

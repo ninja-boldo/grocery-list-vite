@@ -8,6 +8,7 @@ from dateutil import parser
 import uuid
 
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import TypeAdapter, ValidationError
 from Config import Config
 from utils.daemons import (
     classificationDaemon,
@@ -22,13 +23,13 @@ from utils.db.dbManager import DatabaseManager
 from utils.api_helpers import (
     addItemToInventory,
     cleanupStaleWishMappings,
+    getCurrentPantryListUserPydantic,
     getCurrentWishHashForUser,
     classifyCatalogue,
     convertAddressToCoordinates,
     deleteMealInWeek,
     deleteRecipeById,
     generateManualItemId,
-    getCurrentPantryListUser,
     getImageUrlAsync,
     getPlannerSettings,
     getSpecificMealInWeek,
@@ -65,7 +66,6 @@ from contextlib import asynccontextmanager
 from fastapi import (
     Depends,
     FastAPI,
-    File,
     Form,
     Query,
     Request,
@@ -99,6 +99,7 @@ from utils.types import (
     AddWeekPlan,
     ChangePasswordRequest,
     Ingredient,
+    InternalClassification,
     Item,
     MealSlot,
     PlannerSettings,
@@ -129,7 +130,6 @@ if Config.ENABLE_WHISPER_MODEL_CLOUD and Config.ENABLE_WHISPER_MODEL_LOCAL:
 
 # Conditional imports
 if Config.ENABLE_WHISPER_MODEL_CLOUD:
-    from transcript_classify.transcript import transcribe
     from transcript_classify import classifier
 
 
@@ -1154,7 +1154,7 @@ async def addRecipe(request: Request, body: AddRecipe) -> dict:
             state = await addRecipeToDb(con, userId, body)
 
         return state
-    
+
     except Exception as e:
         return {
             "status": "error",
@@ -1365,52 +1365,134 @@ async def putPlannerSettingsEndpoint(request: Request, body: PlannerSettings) ->
 @app.get(
     "/classify_items_against_pantry", tags=["inventory", "classification", "get data"]
 )
-async def classifyItemsAgainstPantryEndpoint(request: Request, itemsWished: list[Item]):
+async def classifyItemsAgainstPantryEndpoint(
+    request: Request, itemsWished: str = Query(...)
+) -> JSONResponse:
     """
-    Classify desired items against current pantry inventory
+    Classifies a list of wished items against the current pantry of the authenticated user.
 
-    Matches items that the user wants (from wish list) against items they already have
-    in their pantry/inventory to identify matches.
+    For each pantry item, determines whether any of the wished items can be mapped to it.
+    The classification is performed synchronously in a thread to avoid blocking the event loop.
 
-    Requires authentication token in request header.
-
-    Query Parameters:
-    - itemsWished: Array of Item objects representing wish list items
+    Args:
+        request (Request): The FastAPI request object. Must carry valid authentication
+                           for username extraction and provides access to the DB connection pool.
+        itemsWished (str): A JSON-encoded list of items the user wishes to acquire,
+                           passed as a URL query parameter. Each item must conform to
+                           the `Item` schema, including a nested `QuantityInfo` object.
 
     Returns:
-    - message: Status message
-    - status: Success/error status
-    - mapping: Dictionary mapping wish items to matching pantry items
-    - code: HTTP status code
+        JSONResponse: On success (HTTP 200):
+            {
+                "message": str,       # e.g. "Success for user 42"
+                "status": "success",
+                "mapping": list[dict] # Serialized list of InternalClassification objects
+            }
 
-    Note: Uses the item classification system to find matches
+    Raises:
+        HTTPException 400: If `itemsWished` is not valid JSON or fails Item schema validation.
+        HTTPException 401: If the username cannot be extracted from the request (auth failure).
+        HTTPException 500: If the classification or any unexpected error occurs.
+
+    Notes:
+        - The pantry is fetched fresh on every call; no caching is applied.
+        - `QuantityInfo` fields default to None if omitted, but the `quantity` key itself
+          must be present in each item or Pydantic will raise a ValidationError (400).
+
+    Example:
+        Request:
+            curl -G "http://localhost:8000/classify" \\
+              -H "Authorization: Bearer <token>" \\
+              --data-urlencode 'itemsWished=[
+                {
+                  "item_name": "Milk",
+                  "item_id": "abc123",
+                  "count": 2,
+                  "quantity": {"product_quantity": 1000, "product_quantity_unit": "ml"},
+                  "info": "3.5% fat"
+                },
+                {
+                  "item_name": "Eggs",
+                  "item_id": "def456",
+                  "count": 12,
+                  "quantity": {"product_quantity": null, "product_quantity_unit": null},
+                  "info": ""
+                }
+              ]'
+
+        Response (200):
+            {
+                "message": "Success for user 7",
+                "status": "success",
+                "mapping": [
+                    {
+                        "pantryItem": {
+                            "item_name": "Milk", "item_id": "xyz789", "count": 1,
+                            "quantity": {"product_quantity": 500, "product_quantity_unit": "ml"},
+                            "info": ""
+                        },
+                        "mappedWishItem": {
+                            "item_name": "Milk", "item_id": "abc123", "count": 2,
+                            "quantity": {"product_quantity": 1000, "product_quantity_unit": "ml"},
+                            "info": "3.5% fat"
+                        },
+                        "foundMappingWish": true
+                    },
+                    {
+                        "pantryItem": {
+                            "item_name": "Butter", "item_id": "uvw321", "count": 1,
+                            "quantity": {"product_quantity": 250, "product_quantity_unit": "g"},
+                            "info": ""
+                        },
+                        "mappedWishItem": null,
+                        "foundMappingWish": false
+                    }
+                ]
+            }
     """
+    # --- Input parsing & validation ---
     try:
-        itemsWishedReduced: list[str] = [it.item_name for it in itemsWished]
-        username = getUsernameFromReq(request)
-        async with request.app.state.pool.acquire() as con:
-            uid = await getIdFromUsername(con, username)  # type: ignore
-            inventory: dict = await getCurrentPantryListUser(con, uid)
-
-        mapping: dict = await asyncio.to_thread(
-            classifier.mapWishItemBatch,
-            list(inventory.values()),
-            [itemsWishedReduced for _ in inventory],
+        items: list[Item] = TypeAdapter(list[Item]).validate_python(
+            json.loads(itemsWished)
+        )
+    except (json.JSONDecodeError, ValidationError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid itemsWished payload: {e}",
         )
 
-        return {
-            "message": f"Successfully replaced planner settings, for user {uid}",
-            "status": "success",
-            "mapping": mapping,
-            "code": status.HTTP_200_OK,
-        }
-
+    # --- Auth ---
+    try:
+        username = getUsernameFromReq(request)
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"failed with this error: {e}",
-            "code": status.HTTP_500_INTERNAL_SERVER_ERROR,
-        }
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Authentication failed: {e}",
+        )
+
+    # --- DB + classification ---
+    try:
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)  # type: ignore
+            pantry: list[Item] = await getCurrentPantryListUserPydantic(con, uid)
+
+        mapping: list[InternalClassification] = await asyncio.to_thread(
+            classifier.classifyWishAgainstPantry, items, pantry
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Classification failed: {e}",
+        )
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={
+            "message": f"Success for user {uid}",
+            "status": "success",
+            "mapping": [m.model_dump() for m in mapping],
+        },
+    )
 
 
 @app.delete("/week_plan", tags=["meal planning", "delete data"])
@@ -1706,16 +1788,6 @@ async def add_ean_to_list(request: Request, body: AddEanRequest):
     count_delta = int(body.count) if body.count is not None else 1
     is_wish = validate_wish_list(body.wish_list)
 
-    logger.info(
-        "add_ean_to_list normalized payload: raw_ean=%r raw_item_name=%r ean=%r item_name=%r count=%s wish=%s",
-        body.ean,
-        body.item_name,
-        ean,
-        item_name,
-        count_delta,
-        is_wish,
-    )
-
     username = getUsernameFromReq(request)
     try:
         if count_delta == 0:
@@ -1751,146 +1823,6 @@ async def add_ean_to_list(request: Request, body: AddEanRequest):
     except Exception as e:
         logger.error(f"failed with this error: {e}")
         raise HTTPException(status_code=500, detail="Failed to add item")
-
-
-@app.post("/transcribe", tags=["transcription", "audio", "phase out"])
-async def transcribe_endpoint(
-    request: Request,
-    ListTypesInput: Optional[str] = Query(None),
-    file: UploadFile = File(...),
-):
-    """
-    Transcribe audio file and classify item from voice input
-
-    Converts voice/audio input into text and classifies the spoken grocery item
-    against the user's inventory. Useful for hands-free adding of items.
-
-    Requires authentication token in request header.
-    Only works if transcription is enabled in server configuration.
-
-    Query Parameters:
-    - ListTypesInput: Type of list ("wish_list" for wish list, "itemList" for inventory)
-
-    Body Parameters:
-    - file: Audio file (must be in supported format)
-
-    Returns:
-    - Status response with transcription and classification results
-    - [Currently phased out functionality]
-    """
-    if not Config.ENABLE_WHISPER_MODEL_CLOUD and not Config.ENABLE_WHISPER_MODEL_LOCAL:
-        raise HTTPException(status_code=503, detail="Transcription not enabled")
-
-    file_path = None
-    listType = None
-    numberToAdd = "0"
-    logger.info(f"ListTypesInput: {ListTypesInput}")
-    try:
-        if ListTypesInput == ListTypes.wishList.value:
-            listType = ListTypes.wishList
-        elif ListTypesInput == ListTypes.itemList.value:
-            listType = ListTypes.itemList
-        else:
-            listType = ListTypes.itemList
-            logger.info(f"stood with the default list type value: {listType}")
-
-        # Read and validate file
-        contents = await file.read()
-        if len(contents) == 0:
-            raise HTTPException(status_code=400, detail="Empty file received")
-
-        logger.info(f"Transcribe: {file.filename}, {len(contents)} bytes")
-
-        # Save file
-        os.makedirs("uploads", exist_ok=True)
-        file_path = f"uploads/audio_{int(time.time() * 1000)}.webm"
-        with open(file_path, "wb") as f:
-            f.write(contents)
-
-        # Transcribe
-        transcribed_text = transcribe(file_path=file_path)
-        logger.info(f"Transcription: {transcribed_text[:100]}...")
-
-        # Get classes for classification
-        async with request.app.state.pool.acquire() as con:
-            if listType == ListTypes.itemList:
-                rows = await con.fetch(
-                    """
-                    SELECT DISTINCT items.item_name
-                    FROM inventory inv
-                    JOIN items ON items.item_id = inv.item_id
-                    WHERE inv.is_wish = false
-                    """
-                )
-            elif listType == ListTypes.wishList:
-                rows = await con.fetch(
-                    """
-                    SELECT DISTINCT items.item_name
-                    FROM inventory inv
-                    JOIN items ON items.item_id = inv.item_id
-                    WHERE inv.is_wish = true
-                    """
-                )
-            classes = [r["item_name"] for r in rows]
-
-        # Classify
-        classified = classifier.classify(input_text=transcribed_text, classes=classes)
-        class_retrieved = classified["category"]
-        action_retrieved = classified["action"]
-
-        logger.info(f"action retrieved: {action_retrieved}")
-
-        # Update inventory
-        if action_retrieved == "remove":
-            numberToAdd = "-1"
-            delta = -1
-        elif action_retrieved == "add":
-            numberToAdd = "+1"
-            delta = 1
-        else:
-            numberToAdd = "0"
-            delta = 0
-
-        if delta != 0:
-            username = getUsernameFromReq(request)
-            await addItemToInventory(
-                request.app.state.http_client,
-                request.app.state.pool,
-                username=username,
-                ean=None,
-                item_name=class_retrieved,
-                count=delta,
-                is_wish=(listType == ListTypes.wishList),
-                quantity=None,
-                logger=logger,
-            )
-        else:
-            logger.info("couldnt retrieve action out of this => do nothing")
-
-        response = {
-            "transcribed_text": transcribed_text,
-            "class_retrieved": class_retrieved,
-            "size": len(contents),
-            "filename": os.path.basename(file_path),
-            "numberToAdd": numberToAdd,
-            "action_retrieved": action_retrieved,
-        }
-
-        logger.info(f"returning: {response}")
-        return response
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Transcription error: {e}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Transcription failed: {e}")
-    finally:
-        if file_path and os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
 
 
 @app.get("/health", tags=["infra"])

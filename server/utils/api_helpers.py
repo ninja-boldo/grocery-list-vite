@@ -25,6 +25,7 @@ from utils.types import (
     DayPlan,
     DaySettings,
     Ingredient,
+    Item,
     ItemInfo,
     ItemInfoParsed,
     MealSlot,
@@ -505,6 +506,31 @@ async def getCurrentPantryListUser(
         user_id,
     )
     return {r["item_id"]: r["item_name"] for r in res}
+
+
+async def getCurrentPantryListUserPydantic(
+    con: asyncpg.pool.PoolConnectionProxy, user_id: int
+) -> list[Item]:
+    res = await con.fetch(
+        """SELECT inv.item_id AS item_id, it.item_name AS item_name, COUNT(inv.item_id) AS count,
+            it.amount as amount, it.unit as unit
+            FROM inventory inv
+            JOIN items it ON it.item_id = inv.item_id
+            WHERE inv.user_id = $1 AND inv.is_wish = false
+            GROUP BY inv.item_id, it.item_name, it.amount, it.unit""",
+        user_id,
+    )
+    return [
+        Item(
+            item_name=r["item_name"],
+            item_id=r["item_id"],
+            count=r["count"],
+            quantity=QuantityInfo(
+                product_quantity=r["amount"], product_quantity_unit=r["unit"]
+            ),
+        )
+        for r in res
+    ]
 
 
 async def buildWishPantryLists(
@@ -1097,24 +1123,29 @@ def hashListState(
         return base64.urlsafe_b64encode(h.digest()).decode()  # urlsafe: no +/
     return h.hexdigest()
 
+
 async def insertIngredientAndMap(
     con: asyncpg.pool.PoolConnectionProxy, recipe_id: int, ing: Ingredient
 ) -> None:
-    print(f"inserting this ingredient: {ing.model_dump()} for this recipe id: {recipe_id}")
+    print(
+        f"inserting this ingredient: {ing.model_dump()} for this recipe id: {recipe_id}"
+    )
     for i in ing.model_dump().keys():
         print(f"{i} is of this type: {type(i)}")
     try:
         name = ing.name
         amount = int(ing.amount) if ing.amount else -1
         unit = ing.unit or "none"
-        
+
         ing_id = await con.fetchval(
             """
             INSERT INTO ingredients (name, amount, unit)
             VALUES ($1, $2, $3)
             RETURNING ingredient_id
             """,
-            name, amount, unit
+            name,
+            amount,
+            unit,
         )
         print(f"ing id returned: {ing_id}")
 
@@ -1130,6 +1161,7 @@ async def insertIngredientAndMap(
     except Exception as e:
         print(f"insertIngredientAndMap FAILED: {e}")
         raise
+
 
 async def insertRecipe(
     con: asyncpg.pool.PoolConnectionProxy,
@@ -1156,15 +1188,17 @@ async def insertRecipe(
 
         return recipe_id
 
+
 async def addRecipeToDb(
     con: asyncpg.pool.PoolConnectionProxy, userId: int, recipe: AddRecipe
 ) -> dict:
     try:
         recipe_id = await insertRecipe(con, userId, recipe)
-        
+
         return {"status": "ok", "recipe_id": recipe_id}
     except Exception as e:
         return {"status": "error", "message": f"failed with this error: {e}"}
+
 
 def handleUsernameNoneAfterAuth():
     return {

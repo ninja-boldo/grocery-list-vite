@@ -3,8 +3,36 @@
 
 import re
 import unicodedata
+from typing import Any
+
+from utils.types import (
+    ClassificationWishListVsPantryInternal,
+    ItemClassificationRes,
+    ShortenNamesRes,
+    WishMappingRes,
+)
 
 # ─── Category descriptions (bi-encoder passage embeddings) ───────────────────
+
+CATEGORIES: list[str] = [
+    "fruit vegetables",
+    "dairy eggs",
+    "bread bakery pastries",
+    "snacks chips nuts",
+    "meat poultry fish seafood",
+    "grains rice pasta legumes",
+    "canned preserved foods",
+    "sauces spreads dips",
+    "oils vinegars dressings",
+    "spices herbs seasoning",
+    "baking ingredients",
+    "drinks beverages",
+    "personal care hygiene",
+    "household cleaning",
+    "frozen foods",
+    "other",
+]
+
 
 CLASS_DESCRIPTIONS: dict[str, str] = {
     "fruit vegetables": (
@@ -325,140 +353,203 @@ RERANKER_LABEL_TEXTS: dict[str, str] = {
 # ─── LLM prompt templates ────────────────────────────────────────────────────
 
 # shorten templates
-SHORTEN_BATCH_TMPL = """
-You are a product name normalizer. Shorten and normalize product names into a concise, recognizable format.
+SHORTEN_BATCH_TMPL = {
+    "system": """
+Normalize each product name to a short shopping-list form.
 
-RULES:
-1. Remove marketing and packaging terms (e.g. Bio, Extra, Classic, ohne Stücke, weniger Zucker, sizes/weights).
-2. For jams/marmalades/spreads: keep flavor + product type; remove brand.
-3. For branded snacks: keep brand + distinctive variant.
-4. For non-branded items: keep core type (+ flavor if useful).
-5. Cleanup: fix "Coucous" -> "Couscous" and remove parenthetical info.
-6. Never translate; keep the original product language.
+Rules:
+- Remove marketing and packaging noise (Bio, Classic, size/weight, promo text).
+- Keep product identity, and flavor/variant only when useful.
+- Jam/spread: keep flavor + product type; drop brand.
+- Branded snacks: keep brand + distinctive variant.
+- Keep original language; do not translate.
+- Cleanup typo: "Coucous" -> "Couscous"; remove parenthetical notes.
 
-INPUT DATA:
+Return a JSON object with a single key "items" containing an array of objects.
+Each object must have exactly:
+  "item": the original product name (unchanged)
+  "normalized": the normalized name
+
+Example:
+{"items": [{"item": "Bio Vollmilch 3,5% 1L", "normalized": "Vollmilch"}, ...]}
+""",
+    "user": """
 Items: {items_list}
 Categories: {category_list}
+""",
+}
 
-OUTPUT FORMAT: Return EXACTLY one JSON object. No extra text.
-{{"original_item_name": "shortened_name"}}
-"""
-
-SHORTEN_TMPL = """
-Shorten and normalize product name: "{input}"
-Categories: "{categories}"
-
-RULES:
-1. Remove marketing/packaging terms (e.g. Bio, Extra, Natur, ohne/weniger Zucker, sizes/weights).
-2. Jams/spreads: remove brand; keep flavor + product type.
-3. Branded snacks: keep brand + distinctive variant.
-4. Otherwise keep core product type (+ flavor if useful).
-5. Fix spelling: Coucous -> Couscous.
-6. Never translate; keep input language.
-
-Return EXACTLY one JSON object:
-{{"shortenedText":"result here"}}
-"""
 
 # category classification templates
-Category_Batch_TMPL = """
-You are a product classifier. Classify the given item names into one of the given classes.
+Category_Batch_TMPL: dict = {
+    "system": """
+Classify each item into exactly one category from the provided class list.
 
-INPUT DATA:
+Return a JSON object with a single key "items" containing an array of objects.
+Each object must have exactly:
+  "item": the original item name (unchanged)
+  "category": one category from the provided class list
+
+Use only provided classes. If uncertain, use "other".
+
+Example:
+{"items": [{"item": "Milch", "category": "dairy eggs"}, ...]}
+""",
+    "user": """
 Items: {items_list}
 Classes: {classes_list}
-
-OUTPUT FORMAT: Return EXACTLY one JSON object (dictionary) that maps each original item name to its classified category.
-The categories must be chosen only from the Classes provided.
-For example:
-{{"original_item_name_1": "classified_category_1", "original_item_name_2": "classified_category_2"}}
-No extra text, explanations, or formatting—only the JSON object.
-"""
+""",
+}
 
 # wish mapping templates
-WISH_Batch_TMPL = """
-You are a product-to-wish classifier.
+WISH_Batch_TMPL = {
+    "system": """
+For each item, choose one best wish from the item's wish_list.
 
-TASK:
-For each item, select the best matching wish from its wish list.
+Rules:
+- Match by whole-word or clear product term.
+- Ignore brands, quantity, and marketing adjectives.
+- Match same product type, not ingredient/component.
+- Prefer the most specific valid wish.
+- If nothing fits, choose "other" when available; otherwise choose best fallback from wish_list.
 
-MATCHING RULES:
-- The wish must appear as a WHOLE WORD or clear product term in the item name.
-- Ignore adjectives, brands, packaging, and quantities.
-- The wish must represent the SAME PRODUCT TYPE as the item — not an ingredient or component.
-  - "apple juice" → NOT "apple" (ingredient)
-  - "chocolate milk" → NOT "chocolate" (component)
-- Variant-to-base mapping is allowed within the same product type.
-  - "soy milk", "almond milk" → "milk"
-  - "strawberry yogurt" → "yogurt"
-- If multiple wishes match, prefer the most specific full-product-type match.
+Return a JSON object with a single key "items" containing an array of objects.
+Each object must have exactly:
+  "item": the original item name (unchanged)
+  "mapped_wish": the best matching wish from the item's wish_list
+  "index_wish_list": the index_wish_list value copied unchanged from the input
 
-INPUT FORMAT:
-Each item has a wish_list of candidate wishes and an index_wish_list identifying its source.
-{item_wish_dict}
+Example:
+{"items": [{"item": "Alpro Hafermilch", "mapped_wish": "Hafermilch", "index_wish_list": 2}, ...]}
+""",
+    "user": "{item_wish_dict}",
+}
 
-OUTPUT:
-Return EXACTLY one JSON object. No explanations, no extra keys, no modified item names.
-For each item output the matched wish from its wish_list and echo back its index_wish_list unchanged.
 
-Example input:
+
+CLASSIFY_AGAINST_PANTRY_TMPL = {
+    "system": """
+Task: Map each pantry item to the best match in wish_list.
+
+Rules:
+- Match ONLY by core product type / ingredient name.
+- IGNORE: quantity, weight, volume, units, packaging size, brands, adjectives.
+- Treat all quantities as equivalent (e.g. 100g = 1kg = “item”).
+- Match same product type only (no partial ingredients or components).
+- Pick most specific valid match.
+- If no match exists, return null (or "other" if required by schema).
+
+Output JSON:
 {{
-  "Bio apfelsaft": {{"wish_list": ["saft", "apfel", "wasser", "other"], "index_wish_list": 0}},
-  "joghurt fettarm gut und günstig": {{"wish_list": ["joghurt", "milch", "other"], "index_wish_list": 1}},
-  "Sésame": {{"wish_list": ["reis", "nudeln", "other"], "index_wish_list": 2}}
+  "mappings": [
+    {{
+      "pantryItem": <unchanged item>,
+      "mappedWishItem": <matched item or null>,
+      "foundMappingWish": <true|false>
+    }}
+  ]
 }}
+""",
+    "user": "items: {items}\nwish list: {wishList}",
+}
 
-Example output:
-{{
-  "Bio apfelsaft": {{"mapped_wish": "saft", "wish_list_index": 0}},
-  "joghurt fettarm gut und günstig": {{"mapped_wish": "joghurt", "wish_list_index": 1}},
-  "Sésame": {{"mapped_wish": other, "wish_list_index": 2}}
-}}
-"""
 
 # action classification templates
-PROMPT_TMPL = """
-Find the item in the text: "{input}"
-
-Options: {classes}
-
-Return EXACTLY one JSON object and nothing else, e.g.:
+PROMPT_TMPL = {
+    "system": """
+Return only JSON, for example:
 {{"category":"snacks","confidence":0.95}}
 
-- "category" must be one of the options above. If none match, return "unknown".
-- "confidence" must be a float between 0.0 and 1.0.
-"""
+- category: one option from provided classes, else "unknown".
+- confidence: float between 0.0 and 1.0.
+""",
+    "user": "Text: {text}\nClasses: {options}",
+}
 
-ACTION_PROMPT_TMPL = """
-Determine the intent from this text: "{input}"
+ACTION_PROMPT_TMPL: dict = {
+    "system": """
+        Classify intent of the grocery text.
 
-The user is either:
-- ADDING/INCREMENTING an item (wants to buy it, add to list, etc.)
-- REMOVING/DECREMENTING an item (bought it, remove from list, checked off, etc.)
+        Possible actions:
+        - add: user wants to add/increase item
+        - remove: user wants to remove/decrease item
+        - unknown: unclear intent
 
-Return EXACTLY one JSON object and nothing else, e.g.:
-{{"action":"add","confidence":0.95}}
+        Return only JSON, for example:
+        {{"action":"add","confidence":0.95}}
 
-- "action" must be "add", "remove", or "unknown".
-- "confidence" must be a float between 0.0 and 1.0.
-"""
+        - action: add | remove | unknown
+        - confidence: float between 0.0 and 1.0
+    """,
+    "user": "Text: {text}",
+}
 
-COMBINED_PROMPT_TMPL = """
+COMBINED_PROMPT_TMPL = {
+    "system": """
 Classify this grocery transcript in one pass.
 
-Input text: "{input}"
-Allowed item options: {classes}
-
-Return EXACTLY one JSON object and nothing else, e.g.:
-{{
-    "category":"milk",
+Return only JSON, for example:
+{
+    "category":"dairy eggs",
     "category_confidence":0.95,
     "action":"add",
     "action_confidence":0.91
-}}
+}
 
 Rules:
-- category must be one of the allowed options above, otherwise return "unknown".
-- action must be "add", "remove", or "unknown".
-- both confidence fields must be floats between 0.0 and 1.0.
-"""
+- category must be in provided classes, else "unknown".
+- action must be add | remove | unknown.
+- confidence fields must be floats in [0.0, 1.0].
+""",
+    "user": "Text: {input}\nClasses: {classes}",
+}
+
+# ─── Response schemas ─────────────────────────────────────────────────────────
+
+_CATEGORY_ENUM = list(CLASS_DESCRIPTIONS.keys())
+
+
+def _apply_groq_strict_object_rules(node: Any) -> None:
+    """Groq strict json_schema expects additionalProperties:false on every object."""
+    if isinstance(node, dict):
+        if node.get("type") == "object" and "additionalProperties" not in node:
+            node["additionalProperties"] = False
+        for value in node.values():
+            _apply_groq_strict_object_rules(value)
+        return
+
+    if isinstance(node, list):
+        for value in node:
+            _apply_groq_strict_object_rules(value)
+
+
+def _strict_schema_from_model(model: Any) -> dict[str, Any]:
+    schema = model.model_json_schema()
+    _apply_groq_strict_object_rules(schema)
+    return schema
+
+
+schema = _strict_schema_from_model(ClassificationWishListVsPantryInternal)
+response_format_classify_against_pantry = {
+    "type": "json_schema",
+    "json_schema": {"name": "classify_against_pantry", "strict": True, "schema": schema},
+}
+
+schema = _strict_schema_from_model(ItemClassificationRes)
+response_format_classify_item = {
+    "type": "json_schema",
+    "json_schema": {"name": "item_categories", "strict": True, "schema": schema},
+}
+
+schema = _strict_schema_from_model(WishMappingRes)
+response_format_map_wish_list = {
+    "type": "json_schema",
+    "json_schema": {"name": "wish_mapping", "strict": True, "schema": schema},
+}
+
+
+schema = _strict_schema_from_model(ShortenNamesRes)
+response_format_shorten_names_batch = {
+    "type": "json_schema",
+    "json_schema": {"name": "name_shortening", "strict": True, "schema": schema},
+}

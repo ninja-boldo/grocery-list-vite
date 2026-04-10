@@ -15,8 +15,9 @@
 import ast
 import asyncio
 from functools import partial
-from typing import Any, Dict, List, Union
+from typing import Dict, List, Union
 
+from utils.types import InternalClassification, Item
 from transcript_classify.groceryClassifier.groceryClassifierCustom import (
     GroceryClassifier,
 )
@@ -77,36 +78,8 @@ def _normalize_classes(classes: Union[str, List[str]]) -> List[str]:
 # ─── LLM-backed functions ─────────────────────────────────────────────────────
 
 
-def classify(
-    input_text: str,
-    classes: Union[str, List[str]],
-    threshold: float = CONFIDENCE_THRESHOLD,
-) -> Dict[str, Any]:
-    """
-    Classify both category and action (add/remove) from a grocery transcript.
-
-    Returns:
-        category, category_confidence, action, action_confidence.
-        Both set to "unknown" when either confidence < threshold.
-    """
-    return _llm_classifier.classifyTranscribe(
-        input_text, _normalize_classes(classes), threshold
-    )
-
-
-def classify_category_only(
-    input_text: str,
-    classes: Union[str, List[str]],
-) -> Dict[str, Any]:
-    """Backwards-compatible helper: category classification only (no action)."""
-    return _llm_classifier.classify_category_only(
-        input_text, _normalize_classes(classes)
-    )
-
-
-def shortenText(input_text: str, categories: str | list[str]) -> str:
-    """Normalise / shorten a single product name via LLM."""
-    return _llm_classifier.shorten_text(input_text, categories)
+def classifyItemsAgainstWishList(items: list[Item], wishList: list[Item]) -> dict:
+    return {}
 
 
 def shortenTextBatch(
@@ -157,3 +130,9 @@ def mapWishItemBatch(
 ) -> dict[str, dict]:
     """Batch wish mapping."""
     return _llm_classifier.mapWishToItemBatch(items, wished_items_list)
+
+
+def classifyWishAgainstPantry(
+    items: list[Item], wishList: list[Item]
+) -> list[InternalClassification]:
+    return _llm_classifier.classifyWishAgainstPantry(items, wishList)
