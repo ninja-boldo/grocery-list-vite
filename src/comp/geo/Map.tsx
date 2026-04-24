@@ -5,6 +5,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import "../../styles/geo.css";
 import { BottomSheet, Pin } from "./BottomSheet";
 import { authApiCall } from "@/lib/authApi";
+import { API_PATHS, buildGetCatalogueOffersUrl } from "@/lib/api/openapi";
 import CatalogueUploadModal, {
   type CatalogueSubmitPayload,
 } from "./CatalogueUploadModal";
@@ -196,7 +197,7 @@ const MapComponent = ({
       formData.append("lat", String(catalogueTarget.lat));
       formData.append("lon", String(catalogueTarget.lon));
 
-      await authApiCall("/api/post_catalogue", {
+      await authApiCall(API_PATHS.postCatalogue, {
         method: "POST",
         body: formData,
       });
@@ -223,28 +224,15 @@ const MapComponent = ({
     setIsOffersLoading(true);
 
     try {
-      const params = new URLSearchParams();
-      params.append("longitude", pos.lon.toString());
-      params.append("latitude", pos.lat.toString());
-      params.append("DeprecationDays", "30");
-
-      const headers = new Headers();
-      let authToken = localStorage.getItem("jwt_auth");
-      authToken = authToken?.includes("Bearer")
-        ? authToken
-        : "Bearer " + authToken;
-
-      headers.append("Authorization", authToken);
-
-      const res = await fetch(
-        `/api/get_catalogue_offers?${params.toString()}`,
-        { headers },
+      const payload = await authApiCall<unknown>(
+        buildGetCatalogueOffersUrl({
+          longitude: pos.lon,
+          latitude: pos.lat,
+          deprecationDays: 30,
+        }),
+        undefined,
+        { retries: 1 },
       );
-      if (!res.ok) {
-        throw new Error(`Failed to load offers (${res.status})`);
-      }
-
-      const payload: unknown = await res.json();
       setOffers(normalizeOffers(payload));
     } catch (error) {
       const message =

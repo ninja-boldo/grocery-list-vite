@@ -44,7 +44,7 @@ def _build_fetch_query_template(
     if is_search:
         param_idx += 1
         conditions.append(
-            f"(it.item_name ILIKE ${param_idx} OR it.shortened_name ILIKE ${param_idx} OR COALESCE(classify.class, '') ILIKE ${param_idx} OR it.item_id ILIKE ${param_idx})"
+            f"(it.item_name ILIKE ${param_idx} OR it.shortend_name ILIKE ${param_idx} OR COALESCE(classify.class, '') ILIKE ${param_idx} OR it.item_id ILIKE ${param_idx})"
         )
 
     where_clause = f"WHERE {' AND '.join(conditions)}"
@@ -112,10 +112,12 @@ def _build_fetch_query_template(
         f"SELECT"
         f"  inv.item_id AS ean,"
         f"  SUM(inv.count) AS count,"
-        f"  it.shortened_name AS shortened_name,"
+        f"  it.shortend_name AS shortend_name,"
         f"  it.item_name,"
         f"  classify.class,"
         f"  it.image_url,"
+        f"  it.amount as amount,"
+        f"  it.unit as unit,"
         f"  array_agg(inv.created_at ORDER BY inv.created_at DESC NULLS LAST) AS perish_dates"
         f"{extra_cols} "
         f"FROM inventory inv "
@@ -124,7 +126,7 @@ def _build_fetch_query_template(
         f"LEFT JOIN item_classification classify ON classify.item_id = inv.item_id "
         f"{wished_join} "
         f"{where_clause} "
-        f"GROUP BY inv.item_id, it.item_name, it.shortened_name, classify.class, it.image_url{wished_group_by} "
+        f"GROUP BY inv.item_id, it.item_name, it.shortend_name, classify.class, it.amount, it.unit, it.image_url{wished_group_by} "
         f"{sort_sql} "
         f"{limit_clause} "
         f"{offset_clause}"
@@ -182,5 +184,7 @@ def build_fetch_query(
         is_search=is_search,
         wish_hash_param_idx=wish_hash_param_idx,
     )
+
+    print(f"running this query: {query}\nwith these params: {params}")
 
     return query, params

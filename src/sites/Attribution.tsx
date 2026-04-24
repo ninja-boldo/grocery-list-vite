@@ -33,14 +33,14 @@ const sources = [
 ];
 
 const P = {
-  bg: "#0D1117",
-  surface: "#161b22",
-  border: "#21262d",
+  bg: "transparent",
+  surface: "rgba(16, 38, 46, 0.82)",
+  border: "rgba(130, 177, 188, 0.28)",
   teal: "#1D9E75",
   tealB: "#0d948850",
-  text: "#e6edf3",
-  muted: "#8b949e",
-  subtle: "#4d5566",
+  text: "#ecf7f8",
+  muted: "#9ab4b8",
+  subtle: "#6f8b91",
 };
 
 function AttributionPage() {
@@ -50,9 +50,9 @@ function AttributionPage() {
     <div
       style={{
         minHeight: "100vh",
-        backgroundColor: P.bg,
+        backgroundColor: "transparent",
         color: P.text,
-        fontFamily: "'DM Sans', system-ui, sans-serif",
+        fontFamily: "var(--font-body)",
         paddingBottom: 90,
       }}
     >

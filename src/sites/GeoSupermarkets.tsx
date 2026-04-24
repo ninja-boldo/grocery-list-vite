@@ -11,6 +11,7 @@ import AddSupermarketModal, {
   type AddSupermarketPayload,
 } from "@/comp/geo/AddSupermarketModal";
 import { authApiCall } from "@/lib/authApi";
+import { API_PATHS } from "@/lib/api/openapi";
 import FeedbackToast, { useFeedbackToast } from "@/comp/utils/FeedbackToast";
 
 // ── Palette ────────────────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ const GeoSupermarketSite = () => {
 
   const handleAddSupermarket = async (payload: AddSupermarketPayload) => {
     const response = await authApiCall<AddMarketResponse>(
-      "/api/add_new_market",
+      API_PATHS.addNewMarket,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -133,9 +134,9 @@ const GeoSupermarketSite = () => {
     <div
       style={{
         minHeight: "100vh",
-        background: P.bg,
+        background: "transparent",
         color: P.text,
-        fontFamily: "'DM Sans', system-ui, sans-serif",
+        fontFamily: "var(--font-body)",
         paddingBottom: 90,
       }}
     >

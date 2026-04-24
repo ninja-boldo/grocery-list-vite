@@ -14,9 +14,7 @@ import {
 } from "react-native";
 import { useAuthSession } from "../lib/AuthSession";
 import { mobileApiUrl } from "../lib/config";
-
-const encodeForm = (username: string, password: string) =>
-  `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`;
+import { loginForAccessToken, MOBILE_API_PATHS } from "../lib/api";
 
 export default function Auth() {
   const navigation = useNavigation<any>();
@@ -39,21 +37,7 @@ export default function Auth() {
     setError(null);
 
     try {
-      const response = await fetch(mobileApiUrl("/token"), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: encodeForm(username.trim(), password),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Login failed (${response.status})`);
-      }
-
-      const payload = (await response.json()) as {
-        access_token?: string;
-      };
+      const payload = await loginForAccessToken(username.trim(), password);
 
       if (!payload.access_token) {
         throw new Error("Missing access token");
@@ -134,7 +118,7 @@ export default function Auth() {
             </Text>
 
             <Text style={styles.serverText}>
-              Login URL: {mobileApiUrl("/token")}
+              Login URL: {mobileApiUrl(MOBILE_API_PATHS.token)}
             </Text>
           </View>
         </ScrollView>

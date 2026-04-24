@@ -6,6 +6,33 @@ from typing_extensions import Literal
 from pydantic import BaseModel, Field
 
 
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: str | None = None
+
+
+class User(BaseModel):
+    username: str
+    disabled: bool = False
+
+
+class UserInDB(User):
+    hashed_password: str
+
+
+class ShortenLlmItemSingle(BaseModel):
+    name: str
+    categories: list[str]
+
+
+class ShortenLlmInput(BaseModel):
+    items: list[ShortenLlmItemSingle]
+
+
 class GroceryItem(BaseModel):
     """Core item representation"""
 
@@ -60,11 +87,6 @@ class ItemInfoParsed(BaseModel):
 class UnitRetrieveItem(BaseModel):
     item_name: str
     categories: Optional[str] = None
-
-
-class AmountAndUnit(BaseModel):
-    unit: str
-    amount: int
 
 
 @dataclass
@@ -159,7 +181,26 @@ class Item(BaseModel):
     item_id: str
     count: int
     quantity: QuantityInfo
-    #info: Optional[str] = ""
+    # info: Optional[str] = ""
+
+
+class ItemsFetched(BaseModel):
+    ean: str
+    text: str
+    shortened_name: str
+    count: int
+    perish_dates: list[str]
+    imageUrl: str
+    tags: str
+    mappedItems: list
+    quantity: QuantityInfo | None = None
+
+
+class FetchItemsResponse(BaseModel):
+    status: Literal[200]
+    items: list[ItemsFetched]
+    distinct_items: int
+    accumulated_count: int
 
 
 class InternalClassification(BaseModel):
@@ -170,7 +211,7 @@ class InternalClassification(BaseModel):
 
 class ClassificationWishListVsPantryInternal(BaseModel):
     mappings: list[InternalClassification]
-    #info: Optional[str] = None
+    # info: Optional[str] = None
 
 
 class SingleItemClassification(BaseModel):
@@ -269,6 +310,7 @@ class DayBlockInfo(BaseModel):
 
 class Recipe(BaseModel):
     recipe_id: int
+    name: Optional[str] = None
     base_time: Optional[int] = None
     default_portions: Optional[int] = None
     tags: Optional[list[str]] = None
@@ -288,7 +330,7 @@ class AddRecipe(BaseModel):
 
 
 class AddEanRequest(BaseModel):
-    """Request model for add_ean_to_list endpoint (legacy)"""
+    """Request model for add_ean_to_list endpoint"""
 
     ean: Optional[str] = None
     item_name: Optional[str] = None

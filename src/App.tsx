@@ -13,13 +13,17 @@ import {
 import ErrorContainer from "./comp/utils/ErrorContainer";
 import { useNavigate } from "react-router-dom";
 import InfoContainer from "./comp/utils/InfoContainer";
-import VoiceRecorder from "./comp/utils/VoiceRecorder";
 import { Virtuoso } from "react-virtuoso";
 import TopBar from "./comp/other/TopBar";
 import AppHeader from "./comp/other/AppHeader";
 import BottomTabBar from "./comp/other/BottomTabBar";
 import { transformItems, PageModes, type ApiResponse } from "./lib/utils";
 import { authApiCall, hasStoredJwtToken } from "./lib/authApi";
+import { apiClient } from "./lib/api/client";
+import { isAddEanSuccess } from "./lib/api/addEanFlow";
+import {
+  buildFetchItemsUrl,
+} from "./lib/api/openapi";
 import AuthPopup from "./comp/other/AuthPopup";
 
 // ============================================================================
@@ -41,9 +45,7 @@ export interface Item {
 // ============================================================================
 // Constants
 // ============================================================================
-const PHONE_WIDTH = 500;
 const PLACEHOLDER_ITEM_COUNT = 15;
-const TRANSCRIPTION_TIMEOUT = 10000;
 const RETRY_ATTEMPTS = 3;
 const INITIAL_SORT_ORDER = "new-old";
 const NEW_ITEMS_PER_FETCH = 20;
@@ -106,21 +108,10 @@ type GroceryItemsHookResult = {
 function App() {
   const navigate = useNavigate();
 
-  const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcription, setTranscription] = useState<string | null>(null);
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [needReauth, setNeedReauth] = useState(false);
-
-  const isMobile = windowWidth <= PHONE_WIDTH;
-
-  useEffect(() => {
-    const handleResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
 
   useEffect(() => {
     if (!hasStoredJwtToken()) {
@@ -230,21 +221,16 @@ function App() {
         setError(null);
 
         const sortToUse = sortOrderOverride ?? sortOrderRef.current;
-        const params = new URLSearchParams({ only_wish_list: "false" });
-        if (sortToUse) {
-          params.set("sortOrder", sortToUse);
-        }
-        params.set("skip", skipRef.current.toString());
-        params.set("limit", NEW_ITEMS_PER_FETCH.toString());
-        params.set("userId", "1");
+        const requestUrl = buildFetchItemsUrl({
+          onlyWishList: false,
+          sortOrder: sortToUse,
+          skip: skipRef.current,
+          limit: NEW_ITEMS_PER_FETCH,
+          userId: "1",
+        });
 
         try {
-          const response = await apiCall<ApiResponse>(
-            `/api/fetch_items?${params}`,
-            undefined,
-            RETRY_ATTEMPTS,
-            onNeedReauth,
-          );
+          const response = await apiCall<ApiResponse>(requestUrl, undefined, RETRY_ATTEMPTS, onNeedReauth);
 
           if (!response.items.length) {
             handleEmptyResponse();
@@ -349,18 +335,6 @@ function App() {
     }
   }, [needReauth]);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
-  const transcriptionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (mediaRecorderRef.current?.state === "recording") {
-        mediaRecorderRef.current.stop();
-      }
-      if (transcriptionTimer.current) clearTimeout(transcriptionTimer.current);
-    };
-  }, []);
 
   const availableClasses = useMemo(() => {
     const result = new Set<string>();
@@ -383,10 +357,8 @@ function App() {
     );
   }, [data, selectedClass]);
 
-  // FIX: replaced raw fetch with apiCall so the Authorization header is
-  // guaranteed to be attached. The raw fetch was duplicating header-building
-  // logic and silently sending no auth header when localStorage was null.
-  // Also added Content-Type: application/json which was missing entirely.
+  // Keep inventory count updates on the typed api client so auth + response
+  // handling stays consistent with the OpenAPI-backed request layer.
   const updateItemCount = useCallback(
     async (item: ContainerProps, delta: number) => {
       if (!item.text) return;
@@ -400,21 +372,23 @@ function App() {
       );
 
       try {
-        await apiCall(
-          "/api/add_ean_to_list/",
+        const response = await apiClient.addEanToList(
           {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ean: item.ean,
-              item_name: item.text,
-              count: delta,
-              wish_list: "false",
-            }),
+            ean: item.ean,
+            item_name: item.text,
+            count: delta,
+            wish_list: "false",
           },
-          1,
-          handleNeedReauth,
+          {
+            retries: 1,
+            retryDelayMs: 300,
+            onUnauthorized: handleNeedReauth,
+          },
         );
+
+        if (!isAddEanSuccess(response)) {
+          throw new Error("Server rejected add item request");
+        }
 
         if (newCount <= 0) {
           setTimeout(() => window.location.reload(), 100);
@@ -429,7 +403,7 @@ function App() {
         console.error("Error updating item:", err);
       }
     },
-    [apiCall, handleNeedReauth, setData, setError],
+    [handleNeedReauth, setData, setError],
   );
 
   const increaseItem = useCallback(
@@ -441,101 +415,6 @@ function App() {
     [updateItemCount],
   );
 
-  const startRecording = useCallback(async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, sampleRate: 16000 },
-    });
-
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-
-    const recorder = new MediaRecorder(stream, { mimeType });
-    recordedChunksRef.current = [];
-
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) recordedChunksRef.current.push(event.data);
-    };
-
-    recorder.onstop = () => {
-      stream.getTracks().forEach((track) => track.stop());
-    };
-
-    mediaRecorderRef.current = recorder;
-    recorder.start(1000);
-    setIsRecording(true);
-  }, []);
-
-  const stopRecording = useCallback((): Promise<Blob> => {
-    return new Promise((resolve) => {
-      const recorder = mediaRecorderRef.current;
-      if (!recorder) {
-        resolve(new Blob());
-        return;
-      }
-
-      recorder.onstop = () => {
-        const audioBlob = new Blob(recordedChunksRef.current, {
-          type: "audio/webm",
-        });
-        setIsRecording(false);
-        resolve(audioBlob);
-      };
-
-      recorder.stop();
-    });
-  }, []);
-
-  const handleRecording = useCallback(async () => {
-    setError(null);
-
-    try {
-      if (!isRecording) {
-        await startRecording();
-        return;
-      }
-
-      setIsLoading(true);
-
-      const blob = await stopRecording();
-      if (blob.size === 0) {
-        setError("No audio recorded");
-        return;
-      }
-
-      const formData = new FormData();
-      formData.append(
-        "file",
-        new File([blob], "recording.webm", { type: blob.type }),
-      );
-
-      const params = new URLSearchParams({ only_wish_list: "false" });
-      params.set("ListTypesInput", "item_list");
-
-      const result = await apiCall<{ transcribed_text: string }>(
-        `/api/transcribe?${params}`,
-        {
-          method: "POST",
-          body: formData,
-        },
-        3,
-        handleNeedReauth,
-      );
-
-      setTranscription(result.transcribed_text);
-
-      if (transcriptionTimer.current) clearTimeout(transcriptionTimer.current);
-      transcriptionTimer.current = setTimeout(
-        () => setTranscription(null),
-        TRANSCRIPTION_TIMEOUT,
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Recording failed");
-      setIsRecording(false);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [apiCall, handleNeedReauth, isRecording, startRecording, stopRecording]);
 
   const navigateScanner = useCallback(
     (count: number) => {
@@ -573,11 +452,11 @@ function App() {
 
   return (
     <div
+      className="app-atmosphere"
       style={{
         minHeight: "100vh",
-        background: "#0D1117",
-        color: "#E8EDF2",
-        fontFamily: "'DM Sans', system-ui, sans-serif",
+        color: "var(--text-main)",
+        fontFamily: "var(--font-body)",
       }}
     >
       {needReauth && (
@@ -649,32 +528,42 @@ function App() {
         </>
       )}
 
-      <VoiceRecorder
-        isRecording={isRecording}
-        isLoading={isLoading}
-        onRecordClick={handleRecording}
-      />
-
-      {transcription && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: "80px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "#0f2a28",
-            border: "1px solid #0d948850",
-            borderRadius: 10,
-            padding: "6px 14px",
-            fontSize: 12,
-            color: "#5eead4",
-            maxWidth: "80vw",
-            zIndex: 99,
-          }}
-        >
-          {transcription}
-        </div>
-      )}
+      {/* ── Add item FAB ── */}
+      <button
+        onClick={() => navigate("/scanner")}
+        aria-label="Artikel hinzufügen"
+        style={{
+          position: "fixed",
+          bottom: 80,
+          right: 16,
+          width: 52,
+          height: 52,
+          borderRadius: "50%",
+          backgroundColor: "#0f2a28",
+          border: "1px solid #0d948880",
+          color: "#2dd4bf",
+          fontSize: 26,
+          fontWeight: 300,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          boxShadow: "0 4px 20px #00000080, 0 0 0 1px #0d948830",
+          zIndex: 90,
+          transition: "all 0.15s",
+          fontFamily: "'DM Sans', system-ui, sans-serif",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.backgroundColor = "#0d9488";
+          (e.currentTarget as HTMLElement).style.color = "#fff";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.backgroundColor = "#0f2a28";
+          (e.currentTarget as HTMLElement).style.color = "#2dd4bf";
+        }}
+      >
+        +
+      </button>
 
       <BottomTabBar />
     </div>

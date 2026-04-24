@@ -15,7 +15,7 @@ ON "public"."users" ("user_id", "username", "password_hash");""",
     "item_id" TEXT NOT NULL,
     "item_name" TEXT NOT NULL,
     "image_url" TEXT,
-    "shortened_name" TEXT,
+    "shortend_name" TEXT,
     "last_checked_at" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     "amount" INT DEFAULT NULL,
     "unit" TEXT DEFAULT NULL,
@@ -47,7 +47,6 @@ ON "public"."inventory" ("user_id", "is_wish", "created_at", "item_id", "id");""
     "item_id" TEXT NOT NULL,
     "categories_off" TEXT,
     "class" TEXT,
-    "mapped_wishes" TEXT,
     PRIMARY KEY("item_id")
 );""",
     # meal_slots
@@ -78,6 +77,13 @@ ON "public"."inventory" ("user_id", "is_wish", "created_at", "item_id", "id");""
     "name" TEXT,
     PRIMARY KEY("ingredient_id")
 );""",
+    # ingredient_item_map
+    """CREATE TABLE IF NOT EXISTS "public"."ingredient_item_map" (
+    "ingredient_id" INT NOT NULL,
+    "item_id" TEXT NOT NULL,
+    "missing_quantity" DOUBLE PRECISION,
+    PRIMARY KEY("ingredient_id", "item_id")
+);""",
     # supermarkets
     """CREATE TABLE IF NOT EXISTS "public"."supermarkets" (
     "supermarket_id" SERIAL NOT NULL,
@@ -89,8 +95,6 @@ ON "public"."inventory" ("user_id", "is_wish", "created_at", "item_id", "id");""
     "address" TEXT,
     PRIMARY KEY("supermarket_id")
 );""",
-    """CREATE INDEX "supermarkets_supermarkets_index_0"
-ON "public"."supermarkets" ("supermarket_id", "name", "longitude", "latitude", "chain", "opening_hours", "address");""",
     # recipes
     """CREATE TABLE IF NOT EXISTS "public"."recipes" (
     "recipe_id" SERIAL NOT NULL,
@@ -100,7 +104,8 @@ ON "public"."supermarkets" ("supermarket_id", "name", "longitude", "latitude", "
     "emoji" TEXT,
     "tags" TEXT[],
     "steps" TEXT[],
-    PRIMARY KEY("recipe_id")
+    "name" TEXT NOT NULL,
+    PRIMARY KEY("recipe_id", "name")
 );""",
     # recipe_ingredient_map
     """CREATE TABLE IF NOT EXISTS "public"."recipe_ingredient_map" (
@@ -117,7 +122,7 @@ ON "public"."supermarkets" ("supermarket_id", "name", "longitude", "latitude", "
     "original_price" DOUBLE PRECISION,
     "offer_price" DOUBLE PRECISION,
     "supermarket_id" INT,
-    "shortened_name" TEXT,
+    "shortend_name" TEXT,
     "weight_g" TEXT,
     "volume_ml" TEXT,
     "is_app_offer" BOOLEAN,
@@ -143,6 +148,12 @@ ADD CONSTRAINT "fk_inventory_user_id_users_user_id"
 FOREIGN KEY("user_id") REFERENCES "public"."users"("user_id");""",
     """ALTER TABLE "public"."item_classification"
 ADD CONSTRAINT "fk_item_classification_item_id_items_item_id"
+FOREIGN KEY("item_id") REFERENCES "public"."items"("item_id");""",
+    """ALTER TABLE "public"."ingredient_item_map"
+ADD CONSTRAINT "ingredient_item_map_ingredient_id_fk"
+FOREIGN KEY("ingredient_id") REFERENCES "public"."ingredients"("ingredient_id");""",
+    """ALTER TABLE "public"."ingredient_item_map"
+ADD CONSTRAINT "ingredient_item_map_item_id_fk"
 FOREIGN KEY("item_id") REFERENCES "public"."items"("item_id");""",
     """ALTER TABLE "public"."recipe_ingredient_map"
 ADD CONSTRAINT "fk_recipe_ingredient_map_ingredient_id_ingredients_ingredient_id"
@@ -177,6 +188,7 @@ DATABASE_TABLES = [
     "inventory",
     "recipes",
     "ingredients",
+    "ingredient_item_map",
     "items",
     "grocery_offers",
     "wish_mapping",

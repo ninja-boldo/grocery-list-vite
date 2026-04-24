@@ -22,6 +22,23 @@ export interface ContainerProps {
   onClickDecrease: (clickedNode: ContainerProps) => Promise<void>;
 }
 
+const parseArr = (value: string | string[] | null): string[] => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try {
+    const p = JSON.parse(value);
+    return Array.isArray(p) ? p : [];
+  } catch {
+    const t = value.trim();
+    if (t.startsWith("[") && t.endsWith("]")) return [];
+    return t
+      .replace(/^\[|\]$/g, "")
+      .split(",")
+      .map((s) => s.trim().replace(/^"|"$/g, ""))
+      .filter(Boolean);
+  }
+};
+
 const Container = ({
   text,
   shortened_name,
@@ -37,36 +54,12 @@ const Container = ({
   onClickIncrease,
   onClickDecrease,
 }: ContainerProps) => {
-  if (!tags) {
-    tags = [];
-  }
-  if(!Array.isArray(tags)){
-    tags = tags.split(",")
-  }
-
-  const checkedTags: string[] = tags;
+  const checkedTags: string[] = parseArr(tags);
 
   const [open, setOpen] = useState(false);
   const [isIncreasing, setIsIncreasing] = useState(false);
   const [isDecreasing, setIsDecreasing] = useState(false);
   const divRef = useRef<HTMLDivElement | null>(null);
-
-  const parseArr = (value: string | string[] | null): string[] => {
-    if (!value) return [];
-    if (Array.isArray(value)) return value;
-    try {
-      const p = JSON.parse(value);
-      return Array.isArray(p) ? p : [];
-    } catch {
-      const t = value.trim();
-      if (t.startsWith("[") && t.endsWith("]")) return [];
-      return t
-        .replace(/^$$|$$$/g, "")
-        .split(",")
-        .map((s) => s.trim().replace(/^"|"$/g, ""))
-        .filter(Boolean);
-    }
-  };
 
   useEffect(() => {
     const h = (e: MouseEvent) => {
@@ -80,7 +73,9 @@ const Container = ({
   const dates = parseArr(perish_dates);
   const hasValidDates = dates.length > 0 && dates[0] !== "none";
   const displayName = shortened_name && shortened_name !== "none" ? shortened_name : text;
-  const eanDisplay = ["", "0", "-1", "1"].includes(ean) ? "none" : ean;
+  const eanDisplay = ["", "0", "-1", "1", "none"].includes(ean) ? null : ean;
+  const mappedInventoryCount = mapped_items?.reduce((sum, item) => sum + item.count, 0) ?? 0;
+  const countPillInStockNumber = isWishedNumber !== null ? mappedInventoryCount : count;
 
   const handleInc = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -127,18 +122,23 @@ const Container = ({
     }
   };
 
-  const TEAL = "#0d9488";
-  const TEAL_D = "#0f2a28";
-  const TEAL_B = "#0d948850";
-  const TEAL_C = "#1a2e2b";
-  const SURFACE = "#0d1117";
-  const CARD = "#161b22";
-  const BORDER = "#21262d";
+  const ACCENT = "var(--accent-primary)";
+  const ACCENT_D = "rgba(44, 66, 52, 0.8)";
+  const ACCENT_B = "var(--accent-glow)";
+  const ACCENT_C = "var(--border-strong)";
+  const SURFACE = "var(--surface-0)";
+  const CARD = "var(--surface-1)";
+  const BORDER = "var(--border-soft)";
+
+  // Keep legacy naming used by child props/styles.
+  const TEAL = ACCENT;
+  const TEAL_D = ACCENT_D;
+  const TEAL_B = ACCENT_B;
 
   // Shared inline button style factory
   const btnStyle = (
     active: boolean,
-    activeColor: "teal" | "red",
+    activeColor: "accent" | "red",
   ): React.CSSProperties => ({
     width: 28,
     height: 28,
@@ -146,22 +146,22 @@ const Container = ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    border: `1px solid ${active ? (activeColor === "teal" ? TEAL_B : "#f43f5e40") : BORDER}`,
+    border: `1px solid ${active ? (activeColor === "accent" ? ACCENT_B : "rgba(229, 115, 115, 0.3)") : BORDER}`,
     borderRadius: 8,
     cursor: "pointer",
     fontSize: 16,
     lineHeight: "1",
     fontWeight: 300,
     backgroundColor: active
-      ? activeColor === "teal"
-        ? TEAL_D
-        : "#4c0519"
+      ? activeColor === "accent"
+        ? ACCENT_D
+        : "#3D2020"
       : CARD,
     color: active
-      ? activeColor === "teal"
-        ? "#2dd4bf"
-        : "#fb7185"
-      : "#6e7681",
+      ? activeColor === "accent"
+        ? "#9FCF9F"
+        : "#E57373"
+      : "#6B7280",
     transition: "all 0.15s",
   });
 
@@ -170,13 +170,14 @@ const Container = ({
       <div
         ref={divRef}
         style={{
-          backgroundColor: SURFACE,
-          border: `1px ridge ${open ? TEAL_C : "#1a2e2b"}`,
+          background:
+            "linear-gradient(160deg, rgba(21, 27, 30, 0.95) 0%, rgba(18, 24, 23, 0.95) 100%)",
+          border: `1px solid ${open ? ACCENT_C : BORDER}`,
           borderRadius: 18,
           boxShadow: open
-            ? `0 0 0 1px ${TEAL}22, 0 8px 32px ${TEAL}0e`
-            : "none",
-          transition: "border-color 0.2s, box-shadow 0.2s",
+            ? `0 0 0 1px ${ACCENT_B}, 0 12px 34px rgba(0, 0, 0, 0.32)`
+            : "0 8px 20px rgba(0, 0, 0, 0.2)",
+          transition: "border-color 0.2s, box-shadow 0.2s, transform 0.2s",
           overflow: "hidden",
         }}
       >
@@ -226,7 +227,7 @@ const Container = ({
           </p>
 
           {/* Count pill */}
-          <CountPill instockNumber={count} wishedNumber={isWishedNumber} isIncreasing={isIncreasing}
+          <CountPill instockNumber={countPillInStockNumber} wishedNumber={isWishedNumber} isIncreasing={isIncreasing}
             isDecreasing={isDecreasing} TEAL={TEAL} TEAL_B={TEAL_B} TEAL_D={TEAL_D} 
            />
 
@@ -263,7 +264,7 @@ const Container = ({
               onClick={handleInc}
               disabled={isIncreasing}
               aria-label="Increase"
-              style={btnStyle(isIncreasing, "teal")}
+              style={btnStyle(isIncreasing, "accent")}
               onMouseEnter={(e) => {
                 if (!isIncreasing) {
                   const b = e.currentTarget as HTMLElement;

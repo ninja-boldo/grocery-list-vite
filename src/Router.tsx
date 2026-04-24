@@ -25,9 +25,31 @@ const PageLoader = () => (
       fontSize: "14px",
       letterSpacing: "0.08em",
       textTransform: "uppercase",
+      fontFamily: "'DM Sans', system-ui, sans-serif",
     }}
   >
-    Loading...
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "12px 16px",
+        borderRadius: 14,
+        border: "1px solid #21262D",
+        background: "#161B22",
+      }}
+    >
+      <span
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: 999,
+          background: "#1D9E75",
+          boxShadow: "0 0 0 6px rgba(29, 158, 117, 0.2)",
+        }}
+      />
+      Loading pantry experience
+    </div>
   </div>
 );
 

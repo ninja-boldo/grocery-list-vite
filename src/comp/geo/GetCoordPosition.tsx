@@ -1,6 +1,7 @@
 import "../../styles/geo.css";
 import type { Position } from "./Map";
 import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
+import { buildGetSupermarketsCloseUrl } from "@/lib/api/openapi";
 
 interface ApiItem {
   name: string;
@@ -42,7 +43,11 @@ export const fetchCloseMarkets = async (
   setMarkedPos: (positions: Position[]) => void,
   onAuthError: () => void,
 ) => {
-  const url = `/api/get_supermarkets_close?lat=${encodeURIComponent(pos.lat)}&lon=${encodeURIComponent(pos.lon)}&radius_meters=${encodeURIComponent(radius)}`;
+  const url = buildGetSupermarketsCloseUrl({
+    lat: pos.lat,
+    lon: pos.lon,
+    radiusMeters: radius,
+  });
 
   if (!hasStoredJwtToken()) {
     onAuthError();

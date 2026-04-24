@@ -1,16 +1,57 @@
 # lookups.py – Single source of truth for all static data, normalization helpers,
 # pre-computed lookup tables, and LLM prompt templates.
 
+import json
 import re
 import unicodedata
 from typing import Any
 
-from utils.types import (
+
+from utils.types_custom import (
     ClassificationWishListVsPantryInternal,
     ItemClassificationRes,
     ShortenNamesRes,
     WishMappingRes,
 )
+
+
+def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve all $ref pointers and inline them. Required for Groq strict mode."""
+    defs = schema.get("$defs", {})
+
+    def resolve(node: Any) -> Any:
+        if isinstance(node, dict):
+            if "$ref" in node:
+                ref_name = node["$ref"].split("/")[-1]
+                return resolve(defs[ref_name].copy())
+            return {k: resolve(v) for k, v in node.items() if k != "$defs"}
+        if isinstance(node, list):
+            return [resolve(i) for i in node]
+        return node
+
+    return resolve(schema)
+
+
+def _apply_groq_strict_object_rules(node: Any) -> None:
+    """Groq strict json_schema expects additionalProperties:false on every object."""
+    if isinstance(node, dict):
+        if node.get("type") == "object" and "additionalProperties" not in node:
+            node["additionalProperties"] = False
+        for value in node.values():
+            _apply_groq_strict_object_rules(value)
+        return
+
+    if isinstance(node, list):
+        for value in node:
+            _apply_groq_strict_object_rules(value)
+
+
+def _strict_schema_from_model(model: Any) -> dict[str, Any]:
+    schema = model.model_json_schema()
+    schema = _inline_refs(schema)
+    _apply_groq_strict_object_rules(schema)
+    return schema
+
 
 # ─── Category descriptions (bi-encoder passage embeddings) ───────────────────
 
@@ -352,105 +393,69 @@ RERANKER_LABEL_TEXTS: dict[str, str] = {
 
 # ─── LLM prompt templates ────────────────────────────────────────────────────
 
-# shorten templates
+
+schema = json.dumps(ShortenNamesRes.model_json_schema())
 SHORTEN_BATCH_TMPL = {
-    "system": """
-Normalize each product name to a short shopping-list form.
+    "system": f"""You are an expert German grocery list normalizer.
+Your task is to convert raw, messy product descriptions into clean, properly capitalized, lean shopping list items.
 
-Rules:
-- Remove marketing and packaging noise (Bio, Classic, size/weight, promo text).
-- Keep product identity, and flavor/variant only when useful.
-- Jam/spread: keep flavor + product type; drop brand.
-- Branded snacks: keep brand + distinctive variant.
-- Keep original language; do not translate.
-- Cleanup typo: "Coucous" -> "Couscous"; remove parenthetical notes.
+if there is something 
+### Examples of Expected Behavior:
+"haltbare milch" → "Milch"
+"ungesüßt skyr 400g" → "Joghurt"
+"basmati reis" → "Reis"
+"indian chicken tikka" → "Chicken Tikka"
+"sahne zum kochen" → "Sahne"
+"körniger frischkäse" → "Frischkäse"
+"veg. salatmayo" → "Mayonnaise"
 
-Return a JSON object with a single key "items" containing an array of objects.
-Each object must have exactly:
-  "item": the original product name (unchanged)
-  "normalized": the normalized name
+Return JSON matching this schema exactly:
+{schema}
 
-Example:
-{"items": [{"item": "Bio Vollmilch 3,5% 1L", "normalized": "Vollmilch"}, ...]}
-""",
-    "user": """
-Items: {items_list}
-Categories: {category_list}
-""",
+Every input item must appear in the output with its exact original_name preserved.""",
+    "user": "Normalize the following raw input items:\n{items}",
 }
 
 
-# category classification templates
-Category_Batch_TMPL: dict = {
-    "system": """
-Classify each item into exactly one category from the provided class list.
+Category_Batch_TMPL = {
+    "system": """Classify each item into exactly one category from the provided list.
+If uncertain, use "other".
 
-Return a JSON object with a single key "items" containing an array of objects.
-Each object must have exactly:
-  "item": the original item name (unchanged)
-  "category": one category from the provided class list
-
-Use only provided classes. If uncertain, use "other".
-
-Example:
-{"items": [{"item": "Milch", "category": "dairy eggs"}, ...]}
-""",
-    "user": """
-Items: {items_list}
-Classes: {classes_list}
-""",
+Return JSON: {"items": [{"item": "<original>", "category": "<class>"}, ...]}""",
+    "user": "Items: {items_list}\nClasses: {classes_list}",
 }
 
-# wish mapping templates
+
 WISH_Batch_TMPL = {
-    "system": """
-For each item, choose one best wish from the item's wish_list.
+    "system": """For each item, pick the best matching wish from its wish_list.
 
 Rules:
-- Match by whole-word or clear product term.
-- Ignore brands, quantity, and marketing adjectives.
-- Match same product type, not ingredient/component.
-- Prefer the most specific valid wish.
-- If nothing fits, choose "other" when available; otherwise choose best fallback from wish_list.
+- Match same product type at the SAME specificity level — not ingredient/component
+- "cream" ≠ "cream cheese", "Sahne" ≠ "Frischkäse", "Käse" ≠ "Mozzarella"
+- Ignore brand, quantity, size, packaging, marketing adjectives
+- Prefer most specific valid wish; if nothing fits use "other" or best fallback
+- Any doubt → no match; prefer false negatives over false positives
 
-Return a JSON object with a single key "items" containing an array of objects.
-Each object must have exactly:
-  "item": the original item name (unchanged)
-  "mapped_wish": the best matching wish from the item's wish_list
-  "index_wish_list": the index_wish_list value copied unchanged from the input
-
-Example:
-{"items": [{"item": "Alpro Hafermilch", "mapped_wish": "Hafermilch", "index_wish_list": 2}, ...]}
-""",
+Return JSON: {"items": [{"item": "<original>", "mapped_wish": "<wish>", "index_wish_list": <n>}, ...]}""",
     "user": "{item_wish_dict}",
 }
 
-
-
 CLASSIFY_AGAINST_PANTRY_TMPL = {
-    "system": """
-Task: Map each pantry item to the best match in wish_list.
+    "system": """Match each pantry item against the wish list. Return valid JSON matching the provided schema exactly.
 
 Rules:
-- Match ONLY by core product type / ingredient name.
-- IGNORE: quantity, weight, volume, units, packaging size, brands, adjectives.
-- Treat all quantities as equivalent (e.g. 100g = 1kg = “item”).
-- Match same product type only (no partial ingredients or components).
-- Pick most specific valid match.
-- If no match exists, return null (or "other" if required by schema).
-
-Output JSON:
-{{
-  "mappings": [
-    {{
-      "pantryItem": <unchanged item>,
-      "mappedWishItem": <matched item or null>,
-      "foundMappingWish": <true|false>
-    }}
-  ]
-}}
-""",
-    "user": "items: {items}\nwish list: {wishList}",
+- Match when both items represent the SAME canonical ingredient at a similar specificity level
+- Normalize away: quantity, units, size, packaging, brand, and marketing adjectives
+- Allowed positive normalization examples:
+    - "Danone ALPRO Joghurt Soja Natur ungesuessst" == "joghurt 400g"
+    - "Milch fettarm 1L" == "milch"
+- Still forbidden: substitutes, related categories, and different ingredient subtypes
+- "parmesan" != "kaese", "kaese" != "mozzarella", "frischkaese" != "sahne"
+- Multiple candidates: pick the most exact one; if no clear best canonical match, return no match
+- No match: mappedWishItem=null, foundMappingWish=false
+- Match found: mappedWishItem≠null, foundMappingWish=true
+- Prefer precision, but do not reject clear canonical matches.""",
+    "user": "pantry: {pantryItems}\nwish: {wishItems}",
 }
 
 
@@ -506,33 +511,10 @@ Rules:
 
 # ─── Response schemas ─────────────────────────────────────────────────────────
 
-_CATEGORY_ENUM = list(CLASS_DESCRIPTIONS.keys())
-
-
-def _apply_groq_strict_object_rules(node: Any) -> None:
-    """Groq strict json_schema expects additionalProperties:false on every object."""
-    if isinstance(node, dict):
-        if node.get("type") == "object" and "additionalProperties" not in node:
-            node["additionalProperties"] = False
-        for value in node.values():
-            _apply_groq_strict_object_rules(value)
-        return
-
-    if isinstance(node, list):
-        for value in node:
-            _apply_groq_strict_object_rules(value)
-
-
-def _strict_schema_from_model(model: Any) -> dict[str, Any]:
-    schema = model.model_json_schema()
-    _apply_groq_strict_object_rules(schema)
-    return schema
-
-
 schema = _strict_schema_from_model(ClassificationWishListVsPantryInternal)
 response_format_classify_against_pantry = {
     "type": "json_schema",
-    "json_schema": {"name": "classify_against_pantry", "strict": True, "schema": schema},
+    "json_schema": {"name": "name_shortening", "strict": True, "schema": schema},
 }
 
 schema = _strict_schema_from_model(ItemClassificationRes)

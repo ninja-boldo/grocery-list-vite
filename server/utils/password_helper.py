@@ -3,56 +3,52 @@ import bcrypt
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 from fastapi import Depends, FastAPI, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
-from pydantic import BaseModel
 import os
 
-load_dotenv()
+from utils.types_custom import TokenData, UserInDB
 
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM") or "HS256"
+load_dotenv()
 
 app = FastAPI()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-
-# --- Models ---
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-
-class TokenData(BaseModel):
-    username: str | None = None
-
-
-class User(BaseModel):
-    username: str
-    disabled: bool = False
-
-
-class UserInDB(User):
-    hashed_password: str
-
-
 # --- Password helpers ---
 
 
-def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode(), hashed.encode())
+def verify_password(plain: str | None, hashed: str | None) -> bool:
+    if plain is None or hashed is None or plain.strip() == "":
+        return False
+    else:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
+def generateRandomKey() -> str:
+    # generate a random (time based) Key
+    currentTime = datetime.now().strftime("%d/%m/%Y, %H:%M:%S")
+    return get_password_hash(currentTime)
+
+
+def setRandomKey(value: str, key: str = "SECRET_KEY") -> str:
+    # set the new key in the .env and return it again
+    set_key(".env", key, value)
+    return value
+
+
 # Defined after get_password_hash
 DUMMY_HASH = get_password_hash("dummy")
+
+SECRET_KEY = os.getenv("SECRET_KEY") or setRandomKey(
+    generateRandomKey(), "SECRET_KEY"
+)  # get secret key or set a rand one
+ALGORITHM = os.getenv("ALGORITHM") or "HS256"
 
 
 # --- DB ---
@@ -85,7 +81,8 @@ def verify_token(token: str) -> str | None:
             token = token.split(" ")[1]
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload.get("sub")
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as e:
+        print(f"JWT decode error: {e}")
         return None
 
 
@@ -110,7 +107,7 @@ async def authenticate_user(
     createUserIfNeeded: bool = True,
 ) -> UserInDB | bool:
 
-    user = await get_user(con, username)
+    user = await get_user(con, username)  # type: ignore
     print(user)
     if not user:
         if not createUserIfNeeded:
@@ -118,10 +115,12 @@ async def authenticate_user(
             return False
         else:
             await add_user_to_db(con, username, password)
-            user = await get_user(con, username)
+            user = await get_user(con, username)  # type: ignore
+    if not user:
+        return False
     if not verify_password(password, user.hashed_password):
         return False
-    return user
+    return user or False
 
 
 async def get_current_user(

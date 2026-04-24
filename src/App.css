@@ -1,42 +1,47 @@
-/* ==== Global Reset & Mobile Safety ==== */
-html,
-body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  box-sizing: border-box;
+.app-page {
+  min-height: 100vh;
+  color: var(--text-main);
+  font-family: var(--font-body);
 }
 
-#root {
-  width: 100%;
-  max-width: 100vw;
-  margin: 0;
-  padding: 0;
-  text-align: left;
-  background-color: #0D1117;
+.app-content {
+  padding: 0 12px 96px;
 }
 
-.App {
-  padding: 2rem;
+.glass-card {
+  background: linear-gradient(165deg, var(--surface-1) 0%, var(--surface-0) 100%);
+  border: 1px solid var(--border-soft);
+  border-radius: 20px;
+  box-shadow: 
+    0 20px 50px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  backdrop-filter: blur(12px);
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
 
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
+.enter-fade {
+  animation: enter-fade 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+@keyframes enter-fade {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-/* ==== Logo animation ==== */
-@keyframes logo-spin {
+@keyframes spin {
   from {
     transform: rotate(0deg);
   }
@@ -45,17 +50,31 @@ body {
   }
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
+@keyframes pulse-soft {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
   }
 }
 
-/* ==== Miscellaneous ==== */
-.card {
-  padding: 2em;
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 
-.read-the-docs {
-  color: #888;
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-1) 25%,
+    var(--surface-2) 50%,
+    var(--surface-1) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
 }

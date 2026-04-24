@@ -6,8 +6,6 @@ import asyncpg
 import httpx
 
 from Config import Config
-from transcript_classify import classifier
-from utils.text_processing import shortenWithTable
 from utils.api_helpers import buildWishPantryLists, getImageUrlAsync
 
 
@@ -83,24 +81,6 @@ async def resetDeprecatedImageUrls(
     return [item["ean"] for item in items_to_update]
 
 
-def classify_shortened_names(
-    shortened_names: list[str],
-    categories: list[str] = [],
-    useBatch: bool = True,
-) -> list[str]:
-    if useBatch:
-        mapping: dict[str, str] | None = classifier.shortenTextBatch(
-            shortened_names, categories
-        )
-        if mapping:
-            return list(mapping.values())
-        else:
-            return shortened_names
-
-    else:
-        return [classifier.shortenText(name, categories) for name in shortened_names]
-
-
 async def _fetch_categories(client: httpx.AsyncClient, ean: str) -> list:
     res = await client.get(
         f"https://world.openfoodfacts.net/api/v2/product/{ean}?fields=categories_tags",
@@ -112,7 +92,7 @@ async def _fetch_categories(client: httpx.AsyncClient, ean: str) -> list:
 
 async def mapItemToWishDaemon(pool: asyncpg.Pool, logger: logging.Logger | None = None):
     try:
-        from transcript_classify import classifier as classifier_module
+        from transcript_classify import classifier 
 
         async with pool.acquire() as con:
             (
@@ -130,7 +110,7 @@ async def mapItemToWishDaemon(pool: asyncpg.Pool, logger: logging.Logger | None 
             return
 
         mapped_results: dict[str, dict] = await asyncio.to_thread(
-            classifier_module.mapWishItemBatch,
+            classifier.mapWishItemBatch,
             item_names,
             wished_lists,
         )
@@ -209,7 +189,6 @@ async def classificationDaemon(
 ):
     while True:
         try:
-            await asyncio.sleep(waitingTime)
             if logger:
                 logger.info("classificationDaemon: starting pass")
 
@@ -228,30 +207,32 @@ async def classificationDaemon(
                 logger.error(f"classificationDaemon failed: {e}")
                 logger.error(traceback.format_exc())
 
+        await asyncio.sleep(waitingTime)
+
 
 async def shortenItemNamesDaemon(
-    pool: asyncpg.Pool, logger: logging.Logger | None = None, useBatch: bool = True
+    pool: asyncpg.Pool, logger: logging.Logger | None = None
 ):
     try:
+        from transcript_classify import classifier
+ 
         # Fetch phase: acquire, query, release immediately
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
                 select distinct(items.item_name) as item_name,
-                classification.categories_off as categories, classification.class as class
-                from items left join item_classification classification on
+                classification.categories_off as categories
+                from items 
+                left join item_classification classification on
                 classification.item_id = items.item_id
-                where classification.class is null
+                where items.shortend_name is null
                 """
             )
 
-        # Process outside the connection
         original_names = [
             row["item_name"]
             for row in rows
-            if row["class"] == ""
-            and row["item_name"]
-            and row["item_name"].lower() not in ("", "none")
+            if row["item_name"] and row["item_name"].lower() not in ("", "none")
         ]
         categories = [row["categories"] for row in rows]
 
@@ -259,20 +240,21 @@ async def shortenItemNamesDaemon(
         if not original_names:
             return
 
-        shortened_deterministic = [shortenWithTable(name) for name in original_names]
-        shortened_list = classify_shortened_names(
-            shortened_deterministic, categories, useBatch=useBatch
-        )
+        shortend_dict = classifier.shortenTextBatch(original_names, categories)
 
         updates = [
-            (str(shortened_name), str(item_name))
-            for item_name, shortened_name in zip(original_names, shortened_list)
-            if shortened_name
+            (shortend_dict.get(item_name), item_name)
+            for item_name in shortend_dict.keys()
+            if shortend_dict.get(item_name, None)
         ]
+        if logger:
+            logger.warning("=" * 60)
+            logger.info(f"this is the shortend_dict: {shortend_dict}")
+            logger.warning(f"these are the updates: {updates}")
         if updates:
             async with pool.acquire() as con:
                 await con.executemany(
-                    "UPDATE items SET shortened_name = $1 WHERE item_name = $2",
+                    "UPDATE items SET shortend_name = $1 WHERE item_name = $2",
                     updates,
                 )
             updated_count = len(updates)
@@ -293,6 +275,8 @@ async def shortenItemNamesDaemon(
 async def assignTagsTask(pool: asyncpg.Pool, logger: logging.Logger | None = None):
 
     try:
+        from transcript_classify import classifier
+
         async with pool.acquire() as con:
             rows = await con.fetch(
                 """
@@ -310,7 +294,7 @@ async def assignTagsTask(pool: asyncpg.Pool, logger: logging.Logger | None = Non
         itemsToProcess = [
             {
                 "item_name": row["item_name"],
-                "shortened_name": row["class"],
+                "shortend_name": row["class"],
                 "categories": row["categories"],
             }
             for row in rows

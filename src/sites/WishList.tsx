@@ -6,17 +6,17 @@ import { useNavigate } from "react-router-dom";
 import type { ApiResponse } from "../lib/utils";
 import { transformItems } from "@/lib/utils";
 import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
+import { apiClient } from "@/lib/api/client";
+import { isAddEanSuccess } from "@/lib/api/addEanFlow";
 import InfoContainer from "../comp/utils/InfoContainer";
 import type { Item } from "../App";
 import TopBar from "@/comp/other/TopBar";
 import AppHeader from "@/comp/other/AppHeader";
 import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
+import FeedbackToast, { useFeedbackToast } from "@/comp/utils/FeedbackToast";
 import { PageModes } from "../lib/utils";
-
-// ============================================================================
-// CONSTANTS
-// ============================================================================
+import { buildFetchItemsUrl, PantryClassificationWishItem } from "@/lib/api/openapi";
 
 const API_CONFIG = {
   retries: 3,
@@ -24,13 +24,17 @@ const API_CONFIG = {
   timeout: 10000,
 } as const;
 
-// ============================================================================
-// COMPONENT
-// ============================================================================
+const normalizeItemName = (value: string) =>
+  value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
 function WishList() {
   const navigate = useNavigate();
 
-  // State
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<Item[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -38,28 +42,9 @@ function WishList() {
   const [accumulatedCount, setAccumulatedCount] = useState<number | null>(null);
   const [distinctItems, setDistinctItems] = useState<number | null>(null);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
-
-  // ── Planner shopping list (written by MealPlanner, read here) ──────────────
-  interface PlannerItem { name: string; amount: number; unit: string; }
-  interface PlannerManualItem extends PlannerItem { id: number; fromRecipe: string; }
-  const [plannerWeekItems, setPlannerWeekItems]     = useState<PlannerItem[]>([]);
-  const [plannerManualItems, setPlannerManualItems] = useState<PlannerManualItem[]>([]);
-
-  useEffect(() => {
-    const load = () => {
-      try {
-        const raw = localStorage.getItem("planner_shopping_list");
-        if (!raw) return;
-        const parsed = JSON.parse(raw) as { weekPlanItems?: PlannerItem[]; manualItems?: PlannerManualItem[] };
-        setPlannerWeekItems(parsed.weekPlanItems ?? []);
-        setPlannerManualItems(parsed.manualItems ?? []);
-      } catch { /* ignore */ }
-    };
-    load();
-    // Re-read if user navigates back from Planner (storage event fires cross-tab but not same-tab)
-    window.addEventListener("focus", load);
-    return () => window.removeEventListener("focus", load);
-  }, []);
+  const [pantryItemNames, setPantryItemNames] = useState<Set<string>>(new Set());
+  const [isCheckingPantry, setIsCheckingPantry] = useState(false);
+  const [toast, showToast, clearToast] = useFeedbackToast(3500);
 
   useEffect(() => {
     if (!hasStoredJwtToken()) {
@@ -88,7 +73,6 @@ function WishList() {
     [],
   );
 
-  // Navigation
   const navigateScanner = useCallback(
     (count: number = 1) => {
       const params = new URLSearchParams({
@@ -101,14 +85,12 @@ function WishList() {
     [navigate],
   );
 
-  // Item count handlers with optimistic updates
   const increaseItemCount = useCallback(
     async (item: ContainerProps) => {
       if (!item.text) return;
 
       let previousData: Item[] = [];
 
-      // Optimistic update
       setData((prev) => {
         previousData = prev;
         return prev.map((i) =>
@@ -119,28 +101,30 @@ function WishList() {
       });
 
       try {
-        await apiCall(
-          "/api/add_ean_to_list/",
+        const response = await apiClient.addEanToList(
           {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=UTF-8" },
-            body: JSON.stringify({
-              ean: item.ean,
-              item_name: item.text,
-              count: 1,
-              wish_list: "true",
-            }),
+            ean: item.ean,
+            item_name: item.text,
+            count: 1,
+            wish_list: "true",
           },
-          1,
-          handleNeedReauth,
+          {
+            retries: 1,
+            retryDelayMs: 300,
+            onUnauthorized: handleNeedReauth,
+          },
         );
-      } catch (err) {
+
+        if (!isAddEanSuccess(response)) {
+          throw new Error("Failed to update item count");
+        }
+      } catch {
         setData(previousData);
         setError("Failed to update item count");
-        console.error("Error sending item:", err);
+        console.error("Error sending item");
       }
     },
-    [apiCall, handleNeedReauth],
+    [handleNeedReauth],
   );
 
   const decreaseItemCount = useCallback(
@@ -150,7 +134,6 @@ function WishList() {
       const willDelete = item.count <= 1;
       let previousData: Item[] = [];
 
-      // Optimistic update
       setData((prev) => {
         previousData = prev;
         if (willDelete) {
@@ -166,31 +149,32 @@ function WishList() {
       });
 
       try {
-        await apiCall(
-          "/api/add_ean_to_list/",
+        const response = await apiClient.addEanToList(
           {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=UTF-8" },
-            body: JSON.stringify({
-              ean: item.ean,
-              item_name: item.text,
-              count: -1,
-              wish_list: "true",
-            }),
+            ean: item.ean,
+            item_name: item.text,
+            count: -1,
+            wish_list: "true",
           },
-          1,
-          handleNeedReauth,
+          {
+            retries: 1,
+            retryDelayMs: 300,
+            onUnauthorized: handleNeedReauth,
+          },
         );
-      } catch (err) {
+
+        if (!isAddEanSuccess(response)) {
+          throw new Error("Failed to update item count");
+        }
+      } catch {
         setData(previousData);
         setError("Failed to update item count");
-        console.error("Error sending item:", err);
+        console.error("Error sending item");
       }
     },
-    [apiCall, handleNeedReauth],
+    [handleNeedReauth],
   );
 
-  // Data fetching with self-healing
   const fetchItems = useCallback(async () => {
     if (!hasStoredJwtToken()) {
       handleNeedReauth();
@@ -202,7 +186,7 @@ function WishList() {
 
     try {
       const response = await apiCall<ApiResponse>(
-        "/api/fetch_items?only_wish_list=true",
+        buildFetchItemsUrl({ onlyWishList: true }),
         undefined,
         API_CONFIG.retries,
         handleNeedReauth,
@@ -220,13 +204,70 @@ function WishList() {
     }
   }, [apiCall, handleNeedReauth]);
 
-  // Derived filter classes from loaded data
+  const handleCheckPantry = useCallback(async () => {
+    if (!hasStoredJwtToken()) {
+      handleNeedReauth();
+      return;
+    }
+    if (data.length === 0) return;
+
+    setIsCheckingPantry(true);
+    try {
+      const wishlistItems: PantryClassificationWishItem[] = data.map((item, idx) => ({
+        item_name: item.text ?? "",
+        item_id: `wish-${idx}`,
+        count: item.count,
+        quantity: {
+          product_quantity: null,
+          product_quantity_unit: null,
+        },
+      }));
+
+      const result = await apiClient.classifyItemsAgainstPantry(wishlistItems, {
+        retries: 1,
+        onUnauthorized: handleNeedReauth,
+      });
+
+      const foundNames = new Set<string>();
+      const normalizedWishlistTexts = new Set(
+        data.map((item) => normalizeItemName(item.text ?? "")),
+      );
+
+      for (const entry of result.mapping ?? []) {
+        if (entry.foundMappingWish && entry.mappedWishItem?.item_name) {
+          const normalizedMapped = normalizeItemName(entry.mappedWishItem.item_name);
+          if (normalizedWishlistTexts.has(normalizedMapped)) {
+            foundNames.add(normalizedMapped);
+          }
+        }
+      }
+
+      setPantryItemNames(foundNames);
+
+      const matchedCount = data.filter(
+        (item) => foundNames.has(normalizeItemName(item.text ?? "")),
+      ).length;
+
+      if (matchedCount > 0) {
+        showToast(
+          `${matchedCount} of ${data.length} wishlist item${matchedCount === 1 ? " is" : "s"} already in your pantry.`,
+          "success",
+        );
+      } else {
+        showToast("None of your wishlist items are currently in your pantry.", "info");
+      }
+    } catch {
+      showToast("Could not check pantry. Please try again.", "error");
+    } finally {
+      setIsCheckingPantry(false);
+    }
+  }, [data, handleNeedReauth, showToast]);
+
   const availableClasses = useMemo(
     () => [...new Set(data.flatMap((item) => item.tags ?? []))].sort(),
     [data],
   );
 
-  // Filtered view
   const filteredData = useMemo(
     () =>
       selectedClass
@@ -235,7 +276,6 @@ function WishList() {
     [data, selectedClass],
   );
 
-  // Memoized container list
   const containerComponents = useMemo(
     () =>
       filteredData.map((item, idx) => (
@@ -259,12 +299,10 @@ function WishList() {
     [filteredData, increaseItemCount, decreaseItemCount],
   );
 
-  // Initial data load
   useEffect(() => {
     void fetchItems();
   }, [fetchItems]);
 
-  // Loading state
   if (isLoading && data.length === 0 && !needReauth) {
     return (
       <div className="flex justify-center items-center min-h-screen">
@@ -272,27 +310,6 @@ function WishList() {
       </div>
     );
   }
-
-  /*
-  const fetchItemsWithParams = async (setItems: (items: Item[]) => void) => {
-    setError(null);
-
-    try {
-      const params = new URLSearchParams({ only_wish_list: "true" });
-
-      const url = `/api/fetch_items?${params}`;
-      console.log("Calling API with URL:", url);
-
-      const response = await apiCall<ApiResponse>(url);
-      console.log("API returned items:", response.items.length);
-
-      const newItems = transformItems(response);
-      setItems(newItems);
-    } catch {
-      console.error("something has gone wrong while fetching");
-    }
-  };
-*/
 
   const displayError = (() => {
     if (!error) return null;
@@ -311,16 +328,14 @@ function WishList() {
   })();
 
   const noItemsAvailable = filteredData.length === 0 && !error && !isLoading;
-
   const username = localStorage.getItem("username") ?? "L";
 
   return (
     <div
       style={{
         minHeight: "100vh",
-        background: "#0D1117",
-        color: "#E8EDF2",
-        fontFamily: "'DM Sans', system-ui, sans-serif",
+        color: "var(--text-main)",
+        fontFamily: "var(--font-body)",
       }}
     >
       {needReauth && (
@@ -333,10 +348,7 @@ function WishList() {
         />
       )}
 
-      <AppHeader
-        username={username}
-        
-      />
+      <AppHeader username={username} />
 
       {displayError ? (
         <ErrorContainer text={displayError} />
@@ -358,7 +370,6 @@ function WishList() {
             floating={false}
           />
 
-          {/* ── Category filter chips ── */}
           {availableClasses.length > 0 && (
             <div style={{
               display: "flex",
@@ -439,31 +450,56 @@ function WishList() {
             </div>
           )}
 
-          {/* ── Planner shopping list ── */}
-          {(plannerWeekItems.length > 0 || plannerManualItems.length > 0) && (
-            <div style={{ margin: "6px 8px 2px", padding: "12px 14px", borderRadius: 14, backgroundColor: "#161b22", border: "1px solid #21262d" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <svg width="13" height="13" fill="none" stroke="#2dd4bf" viewBox="0 0 24 24" strokeWidth="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                  <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.8px", color: "#2dd4bf" }}>Aus Wochenplan</span>
-                </div>
-                <span style={{ fontSize: 11, color: "#4A5568" }}>{plannerWeekItems.length + plannerManualItems.length} Positionen</span>
-              </div>
-              {plannerWeekItems.map((item, i) => (
-                <div key={`pw-${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0", borderBottom: i < plannerWeekItems.length - 1 || plannerManualItems.length > 0 ? "1px solid #21262d" : "none" }}>
-                  <span style={{ fontSize: 13, color: "#c9d1d9", fontWeight: 500 }}>{item.name}</span>
-                  <span style={{ fontSize: 12, color: "#8b949e", fontWeight: 600 }}>{item.amount} {item.unit}</span>
-                </div>
-              ))}
-              {plannerManualItems.map((item, i) => (
-                <div key={`pm-${i}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0", borderBottom: i < plannerManualItems.length - 1 ? "1px solid #21262d" : "none" }}>
-                  <div>
-                    <div style={{ fontSize: 13, color: "#c9d1d9", fontWeight: 500 }}>{item.name}</div>
-                    <div style={{ fontSize: 11, color: "#4A5568" }}>{item.fromRecipe}</div>
-                  </div>
-                  <span style={{ fontSize: 12, color: "#8b949e", fontWeight: 600 }}>{item.amount} {item.unit}</span>
-                </div>
-              ))}
+          {/* Check Pantry button */}
+          {data.length > 0 && (
+            <div style={{ padding: "6px 12px 0" }}>
+              <button
+                type="button"
+                onClick={() => void handleCheckPantry()}
+                disabled={isCheckingPantry}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  border: "1px solid #0d948880",
+                  background: isCheckingPantry ? "#0f2a28" : "#161b22",
+                  color: isCheckingPantry ? "#5eead460" : "#5eead4",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: isCheckingPantry ? "not-allowed" : "pointer",
+                  transition: "all 0.15s",
+                  fontFamily: "'DM Sans', system-ui, sans-serif",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                }}
+              >
+                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+                  <rect x="9" y="3" width="6" height="4" rx="1" />
+                  <path d="M9 14l2 2 4-4" />
+                </svg>
+                {isCheckingPantry ? "Checking pantry..." : "Check Pantry"}
+              </button>
+            </div>
+          )}
+
+          {/* Items already in pantry indicator */}
+          {pantryItemNames.size > 0 && (
+            <div style={{
+              margin: "6px 12px 0",
+              padding: "8px 12px",
+              borderRadius: 10,
+              backgroundColor: "#0f2a28",
+              border: "1px solid #0d948840",
+              fontSize: 12,
+              color: "#5eead4",
+              lineHeight: 1.5,
+            }}>
+              <strong>Already in pantry:</strong>{" "}
+              {[...pantryItemNames].slice(0, 5).join(", ")}
+              {pantryItemNames.size > 5 ? ` and ${pantryItemNames.size - 5} more` : ""}
             </div>
           )}
 
@@ -479,7 +515,6 @@ function WishList() {
         </>
       )}
 
-      {/* ── Floating add button ── */}
       <button
         onClick={() => navigateScanner(1)}
         aria-label="Artikel hinzufügen"
@@ -516,6 +551,7 @@ function WishList() {
         +
       </button>
 
+      <FeedbackToast toast={toast} onDismiss={clearToast} />
       <BottomTabBar />
     </div>
   );

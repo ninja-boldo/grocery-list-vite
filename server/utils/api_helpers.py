@@ -19,12 +19,14 @@ import hashlib
 
 from supermarkets.classifier import CatalogueClassifier
 from utils.password_helper import verify_token
-from utils.types import (
+from utils.types_custom import (
     AddCatalogueRequest,
     AddSupermarketRequest,
+    ClassificationWishListVsPantryInternal,
     DayPlan,
     DaySettings,
     Ingredient,
+    InternalClassification,
     Item,
     ItemInfo,
     ItemInfoParsed,
@@ -67,28 +69,6 @@ def convert_timestamps_to_dates(
         if logger:
             logger.error(f"Failed to convert timestamps: {e}")
         return []
-
-
-def safe_int(value: Any, default: int = 1, logger: logging.Logger | None = None) -> int:
-    """
-    Safely convert any value to integer with fallback.
-
-    Attempts to convert the input value to an integer. If conversion fails or
-    value is None, returns the provided default value.
-
-    Args:
-        value: Value to convert to int
-        default: Default value to return on failure
-
-    Returns:
-        Integer value or default
-    """
-    try:
-        return int(value) if value is not None else default
-    except (ValueError, TypeError, TypeError) as e:
-        if logger:
-            logger.error(f"Failed to convert to int: {value}: {e}")
-        return default
 
 
 def sanitize_string(value: Optional[str], default: str = "") -> str:
@@ -478,8 +458,6 @@ async def getCurrentWishHashForUser(
     """
     wish_dict = await getCurrentWishListUser(con, user_id)
     return hashListState(list(wish_dict.values()))
-    wish_dict = await getCurrentWishListUser(con, user_id)
-    return hashListState(list(wish_dict.values()))
 
 
 async def getCurrentWishListUser(
@@ -572,6 +550,7 @@ def craftWishItemLists(
 
     if sinkLabel:
         item_to_id[sinkLabel] = generateManualItemId(sinkLabel)
+    item_to_id["null"] = generateManualItemId("null")
 
     item_names = []
     wished_lists = []
@@ -628,7 +607,7 @@ async def addOffersBatch(
         logger.info(f"trying to add these offers to the db: {offerTuples}")
         await con.executemany(
             """
-            insert into grocery_offers(item_name, original_price, offer_price, supermarket_id, is_app_offer, added_at, weight_g, volume_ml, shortened_name)
+            insert into grocery_offers(item_name, original_price, offer_price, supermarket_id, is_app_offer, added_at, weight_g, volume_ml, shortend_name)
             values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         """,
             offerTuples,
@@ -995,7 +974,7 @@ async def replaceMealByTimestamp(
     con: asyncpg.pool.PoolConnectionProxy, uid: int, meal: MealSlot
 ):
     await con.execute(
-        "delete from meal_slots where user_id = $1 and day = $2, and day_time = $3",
+        "delete from meal_slots where user_id = $1 and day = $2 and day_time = $3",
         uid,
         meal.day,
         meal.day_time,
@@ -1134,7 +1113,7 @@ async def insertIngredientAndMap(
         print(f"{i} is of this type: {type(i)}")
     try:
         name = ing.name
-        amount = int(ing.amount) if ing.amount else -1
+        amount = int(float(ing.amount)) if ing.amount else -1
         unit = ing.unit or "none"
 
         ing_id = await con.fetchval(
@@ -1171,11 +1150,12 @@ async def insertRecipe(
     async with con.transaction():
         recipe_id = await con.fetchval(
             """
-            INSERT INTO recipes (user_id, base_time, default_portions, tags, steps, emoji)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO recipes (user_id, name, base_time, default_portions, tags, steps, emoji)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING recipe_id
             """,
             userId,
+            recipe.name,
             recipe.baseTime,
             recipe.baseServings,
             recipe.tags,
@@ -1213,8 +1193,11 @@ def handleUsernameNoneAfterAuth():
 
 
 async def getIdFromUsername(
-    con: asyncpg.pool.PoolConnectionProxy, username: str
+    con: asyncpg.pool.PoolConnectionProxy, username: str | None
 ) -> int:
+    if username is None:
+        raise ValueError("you gotta provide a valid username and not None")
+
     res = await con.fetchrow("select user_id from users where username = $1 ", username)
     if res is None:
         raise ValueError(
@@ -1228,66 +1211,6 @@ async def getIdFromUsername(
 
 def generateManualItemId(itemName: str) -> str:
     return "manual-" + hashlib.sha1(itemName.lower().strip().encode()).hexdigest()[:12]
-
-
-async def handleManualItems(
-    con: asyncpg.pool.PoolConnectionProxy,
-    item_name: str,
-    count: int,
-    userId: int,
-    is_wish: bool,
-    quantity: QuantityInfo | None,
-    date: dt.datetime,
-    logger: logging.Logger,
-) -> dict:
-
-    item_id = generateManualItemId(item_name)
-    try:
-        if not quantity:
-            quantity = QuantityInfo(product_quantity=-1, product_quantity_unit="none")
-            """
-            return {
-                "state": "error",
-                "operation": "add",
-                "mode": "manual adding",
-                "error": "there was no quantity data supplied for the given item",
-                "suggestion": "ask the user for manual quantity entry data",
-            }"""
-
-        await con.execute(
-            "INSERT INTO items (item_id, item_name, amount, unit) VALUES ($1, $2, $3, $4) ON CONFLICT (item_id) DO NOTHING",
-            item_id,
-            item_name,
-            quantity.product_quantity,
-            quantity.product_quantity_unit,
-        )
-        await con.execute(
-            "INSERT INTO item_classification (item_id) VALUES ($1) ON CONFLICT (item_id) DO NOTHING",
-            item_id,
-        )
-
-        await con.execute(
-            """
-                                INSERT INTO inventory (item_id, user_id, count, is_wish, created_at)
-                                SELECT $1, $2, 1, $3, $4
-                                FROM generate_series(1, $5)
-                            """,
-            item_id,
-            userId,
-            is_wish,
-            date,
-            count,
-        )
-        return {"state": "success", "operation": "add", "mode": "manual adding"}
-    except Exception as e:
-        logger.error(f"handleManualItems failed: {e}")
-        logger.error(traceback.format_exc())
-        return {
-            "state": "error",
-            "operation": "add",
-            "mode": "manual adding",
-            "error": str(e),
-        }
 
 
 def parseQuantityString(s: str) -> QuantityInfo | None:
@@ -1385,6 +1308,65 @@ def normalizeItemInfo(itemInfo: ItemInfo | None) -> ItemInfoParsed:
     return parsedItem
 
 
+async def handleManualItems(
+    con: asyncpg.pool.PoolConnectionProxy,
+    item_name: str,
+    count: int,
+    userId: int,
+    is_wish: bool,
+    quantity: QuantityInfo | None,
+    date: dt.datetime,
+    logger: logging.Logger,
+) -> dict:
+
+    item_id = generateManualItemId(item_name)
+    try:
+        if not quantity or quantity.product_quantity == -1:
+            return {
+                "state": "error",
+                "operation": "add",
+                "mode": "manual adding",
+                "error": "there was no quantity data supplied for the given item",
+                "suggestion": "ask the user for manual quantity entry data",
+                "quantity_needed": True,
+            }
+
+        await con.execute(
+            "INSERT INTO items (item_id, item_name, amount, unit) VALUES ($1, $2, $3, $4) ON CONFLICT (item_id) DO NOTHING",
+            item_id,
+            item_name,
+            quantity.product_quantity,
+            quantity.product_quantity_unit,
+        )
+        await con.execute(
+            "INSERT INTO item_classification (item_id) VALUES ($1) ON CONFLICT (item_id) DO NOTHING",
+            item_id,
+        )
+
+        await con.execute(
+            """
+                                INSERT INTO inventory (item_id, user_id, count, is_wish, created_at)
+                                SELECT $1, $2, 1, $3, $4
+                                FROM generate_series(1, $5)
+                            """,
+            item_id,
+            userId,
+            is_wish,
+            date,
+            count,
+        )
+        return {"state": "success", "operation": "add", "mode": "manual adding"}
+    except Exception as e:
+        logger.error(f"handleManualItems failed: {e}")
+        logger.error(traceback.format_exc())
+        return {
+            "state": "error",
+            "operation": "add",
+            "mode": "manual adding",
+            "error": str(e),
+        }
+
+
 async def addItemToInventory(
     http_client: httpx.AsyncClient,
     pool: asyncpg.Pool,
@@ -1423,7 +1405,7 @@ async def addItemToInventory(
         item_name: Item name for manual entry (optional if ean provided)
         count: Number to add (>1) or remove (<-1); 0 returns info
         is_wish: True to add to wish list, False for pantry
-        quantity: Quantity information for manual items (optional)
+        quantity: Quantity information for manual items
         logger: Logger for debugging and error reporting
         date: Date/time for inventory entry (defaults to now)
 
@@ -1658,7 +1640,6 @@ async def getInfoAsync(
         if not data["status_verbose"] == "product found":
             logger.error(f"couldnt resolve item name for ean {ean}")
             return None
-        logger.warning(f"got this data: {data.get('product')}")
         parsed = ItemInfo.model_validate_json(json.dumps(data.get("product")))
         return parsed
     except Exception as e:
@@ -1689,3 +1670,141 @@ async def getImageUrlAsync(
             logger.error(f"Failed to fetch image for ean {ean}: {e}")
         return "https://boldo.ddns.net/none_available.webp"
     return ""
+
+
+def mapWishToNeed(
+    wish: Item, wishRes: ClassificationWishListVsPantryInternal
+) -> QuantityInfo:
+    if wish.quantity.product_quantity is None:
+        raise Exception(
+            f"the wish item cant have quantity None: {wish.model_dump_json()}"
+        )
+
+    quantityNeeded = wish.quantity.product_quantity
+    for mapping in wishRes.mappings:
+        mappedWishItem = mapping.mappedWishItem
+        if mappedWishItem and mappedWishItem.item_name:
+            quantObj = mappedWishItem.quantity
+            if (
+                quantObj.product_quantity
+                and quantObj.product_quantity_unit
+                == wish.quantity.product_quantity_unit
+            ):
+                quantityNeeded -= quantObj.product_quantity
+
+    return QuantityInfo(
+        product_quantity=quantityNeeded,
+        product_quantity_unit=wish.quantity.product_quantity_unit,
+    )
+
+
+async def addWishesToDb(
+    pool: asyncpg.Pool,
+    uid: int,
+    wishes: dict[str, tuple[str, QuantityInfo]],  # item_id -> (item_name, qty)
+    wishRes: ClassificationWishListVsPantryInternal,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Add wishes to database from a dictionary of items with quantity info."""
+    if logger is None:
+        logger = logger_
+
+    async with pool.acquire() as con:
+        for _, (item_name, quant_needed) in wishes.items():
+            if (
+                quant_needed
+                and quant_needed.product_quantity
+                and quant_needed.product_quantity > 0
+            ):
+                await handleManualItems(
+                    con,
+                    item_name,
+                    1,
+                    uid,
+                    True,
+                    quantity=quant_needed,
+                    date=dt.datetime.now(),
+                    logger=logger,
+                )
+        await mapWishesToItemDb(con, wishRes)
+
+
+def isValidManualId(id: str | None) -> bool:
+    if id is None:
+        return False
+    s = re.search("manual-[0-9]*", id)
+    return s is not None
+
+
+def isValidItemId(id: str | None) -> bool:
+    if id is None:
+        return False
+    s = re.fullmatch(r"\d+", id)
+    return s is not None
+
+
+def calcQuantNeed(wish: InternalClassification) -> int:
+    if wish and wish.mappedWishItem and wish.pantryItem:
+        return (wish.mappedWishItem.quantity.product_quantity or 0) - (
+            wish.pantryItem.quantity.product_quantity or 0
+        )
+    else:
+        return 0
+
+
+async def mapWishesToItemDb(
+    con: asyncpg.pool.PoolConnectionProxy,
+    wishRes: ClassificationWishListVsPantryInternal,
+):
+    print(f"now running mapWishesToItemDb wish {len(wishRes.mappings)} mappings ")
+    updatesMap: list[tuple[int, str, int]] = []
+    updatesIngTable: list[tuple[int, int, str, str]] = []
+    for wish in wishRes.mappings:
+        wishItem = wish.mappedWishItem
+        pantryItem = wish.pantryItem
+        if wishItem and pantryItem:
+            if isValidItemId(wishItem.item_id):
+                updatesMap.append(
+                    (int(wishItem.item_id), pantryItem.item_id, calcQuantNeed(wish))
+                )
+                updatesIngTable.append(
+                    (
+                        int(wishItem.item_id),
+                        int(wishItem.quantity.product_quantity)
+                        if wishItem.quantity.product_quantity is not None
+                        else -1,
+                        wishItem.quantity.product_quantity_unit or "none",
+                        wishItem.item_name,
+                    )
+                )
+
+    await con.executemany(
+        """
+        INSERT INTO ingredients (ingredient_id, amount, unit, name)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (ingredient_id) DO NOTHING
+        """,
+        updatesIngTable,
+    )
+
+    await con.executemany(
+        """
+            insert into ingredient_item_map(ingredient_id, item_id, missing_quantity)
+            values ($1, $2, $3)
+            ON CONFLICT (ingredient_id, item_id) DO NOTHING
+        """,
+        updatesMap,
+    )
+
+
+async def addNonClassifiedWishes(
+    pool: asyncpg.Pool,
+    uid: int,
+    wishRes: ClassificationWishListVsPantryInternal,
+    TotalWishes: list[Item],
+) -> None:
+    wishToNeed: dict[str, tuple[str, QuantityInfo]] = {}
+    for wish in TotalWishes:
+        wishToNeed[wish.item_id] = (wish.item_name, mapWishToNeed(wish, wishRes))
+
+    await addWishesToDb(pool, uid, wishToNeed, wishRes)

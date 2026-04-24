@@ -1,4 +1,5 @@
 import { authApiCall } from "./authApi";
+import { API_PATHS } from "./api/openapi";
 
 export type RecipeIngredient = {
   amount: number | null;
@@ -9,11 +10,13 @@ export type RecipeIngredient = {
 
 export type RecipeItem = {
   recipe_id: number;
+  name: string | null;
   base_time: number;
   default_portions: number;
   tags: string[];
   emoji: string | null;
   ingredients: RecipeIngredient[];
+  steps: string[];
 };
 
 export type RecipesResponse = {
@@ -48,6 +51,14 @@ const normalizeIngredients = (value: unknown): RecipeIngredient[] => {
     }));
 };
 
+const normalizeSteps = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((step): step is string => typeof step === "string");
+};
+
 const normalizeTags = (value: unknown): string[] => {
   if (Array.isArray(value)) {
     return value.filter((tag): tag is string => typeof tag === "string");
@@ -74,11 +85,13 @@ export const normalizeRecipesResponse = (value: unknown): RecipesResponse => {
     .filter(isRecord)
     .map((recipe) => ({
       recipe_id: toNumber(recipe.recipe_id),
+      name: toNullableString(recipe.name),
       base_time: toNumber(recipe.base_time),
       default_portions: toNumber(recipe.default_portions),
       tags: normalizeTags(recipe.tags),
       emoji: toNullableString(recipe.emoji),
       ingredients: normalizeIngredients(recipe.ingredients),
+      steps: normalizeSteps(recipe.steps),
     }));
 
   return {
@@ -90,11 +103,52 @@ export const normalizeRecipesResponse = (value: unknown): RecipesResponse => {
 export async function fetchRecipes(
   onUnauthorized?: () => void,
 ): Promise<RecipesResponse> {
-  const response = await authApiCall<unknown>("/api/recipes", undefined, {
+  const response = await authApiCall<unknown>(API_PATHS.recipes, undefined, {
     retries: 2,
     retryDelayMs: 250,
     onUnauthorized,
   });
 
   return normalizeRecipesResponse(response);
+}
+
+export async function getRecipeById(
+  recipeId: number,
+  onUnauthorized?: () => void,
+): Promise<RecipeItem | null> {
+  const response = await authApiCall<unknown>(API_PATHS.recipeById(recipeId), undefined, {
+    retries: 2,
+    retryDelayMs: 250,
+    onUnauthorized,
+  });
+
+  if (!isRecord(response)) {
+    return null;
+  }
+
+  return {
+    recipe_id: toNumber(response.recipe_id),
+    name: toNullableString(response.name),
+    base_time: toNumber(response.base_time),
+    default_portions: toNumber(response.default_portions),
+    tags: normalizeTags(response.tags),
+    emoji: toNullableString(response.emoji),
+    ingredients: normalizeIngredients(response.ingredients),
+    steps: normalizeSteps(response.steps),
+  };
+}
+
+export async function deleteRecipeById(
+  recipeId: number,
+  onUnauthorized?: () => void,
+): Promise<void> {
+  await authApiCall<unknown>(
+    API_PATHS.recipeById(recipeId),
+    { method: "DELETE" },
+    {
+      retries: 2,
+      retryDelayMs: 250,
+      onUnauthorized,
+    },
+  );
 }

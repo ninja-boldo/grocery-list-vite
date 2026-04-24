@@ -2,22 +2,25 @@
 
 import json
 import logging
+import traceback
+import dotenv
 from typing import Any, Literal, cast
 
-from groq import Groq
+from openai import OpenAI
 from pydantic import BaseModel, Field
 
 try:
     from rich.console import Console
     from rich.json import JSON as RichJSON
-except Exception:
+except ImportError:
     Console = None
     RichJSON = None
 
-from utils.types import (
+from utils.types_custom import (
     ClassificationWishListVsPantryInternal,
     InternalClassification,
     Item,
+    ShortenLlmInput,
 )
 
 from .lookups import (
@@ -34,7 +37,18 @@ from .lookups import (
 
 log = logging.getLogger(__name__)
 
-GROQ_MODEL = "openai/gpt-oss-20b"
+
+# ─── Configuration Variables ─────────────────────────────────────────────────
+def _get_model_config() -> tuple[str, str]:
+    model = dotenv.get_key(".env", "MODEL")
+    base_url = dotenv.get_key(".env", "OPENAI_API_BASE_URL")
+    if not model or not base_url:
+        raise ValueError(
+            f"you gotta set both MODEL and BASE_URL \nMODEL = {model} \nBASE_URL = {base_url}"
+        )
+    return model, base_url
+
+
 CONFIDENCE_THRESHOLD = 0.25
 
 # ─── Pydantic result models ──────────────────────────────────────────────────
@@ -65,15 +79,26 @@ class GroceryClassifierLlm:
     LLM-backed classifier for grocery transcript intents.
 
     Primary entry points:
-      classify()          – category + action in one call (with fallback)
-      shorten_text()      – normalise a single product name
-      shorten_text_batch() – normalise many product names in one LLM call
+      classify_categories_batch() – category mapping
+      shorten_text_batch()        – normalise many product names
+      mapWishToItemBatch()        – batch wish mapping
+      classifyWishAgainstPantry() – classify wishes against pantry items
     """
 
-    def __init__(self, model: str = GROQ_MODEL, temperature: float = 0.1):
+    def __init__(
+        self,
+        model: str | None = None,
+        base_url: str | None = None,
+        temperature: float = 0.1,
+    ):
+        if model is None or base_url is None:
+            model, base_url = _get_model_config()
         self._model = model
+        self._base_url = base_url
         self._temperature = temperature
-        self._client = Groq()
+        self._client = OpenAI(
+            base_url=self._base_url, api_key=dotenv.get_key(".env", "API_KEY")
+        )
 
     # ── LLM / chain helpers ───────────────────────────────────────────────────
 
@@ -85,6 +110,7 @@ class GroceryClassifierLlm:
     ) -> dict[str, Any]:
         response = self._client.chat.completions.create(
             model=self._model,
+            temperature=self._temperature,
             messages=[
                 {"role": "system", "content": f"{template.get('system')}"},
                 {
@@ -99,8 +125,7 @@ class GroceryClassifierLlm:
         if content is None:
             raise ValueError("LLM returned empty content")
 
-        result = self._parse_json_content(content)
-        return result
+        return self._parse_json_content(content)
 
     @staticmethod
     def _parse_json_content(content: str) -> dict[str, Any]:
@@ -122,12 +147,9 @@ class GroceryClassifierLlm:
         return parsed
 
     # ── Normalisation helpers ─────────────────────────────────────────────────
+
     def fill_template(self, template, data) -> str:
         return template.format(**data)
-
-    @staticmethod
-    def _as_dict(value: Any) -> dict[str, Any]:
-        return value if isinstance(value, dict) else {}
 
     @staticmethod
     def _print_json_debug(title: str, payload: dict[str, Any]) -> None:
@@ -143,25 +165,6 @@ class GroceryClassifierLlm:
         print(f"{title}:\n{pretty}")
 
     @staticmethod
-    def _parse_confidence(value: Any) -> float:
-        try:
-            return max(0.0, min(1.0, float(value)))
-        except (TypeError, ValueError):
-            return 0.0
-
-    @staticmethod
-    def _normalize_action(action: Any) -> Literal["add", "remove", "unknown"]:
-        s = str(action).strip().lower()
-        if s in {"add", "remove", "unknown"}:
-            return cast(Literal["add", "remove", "unknown"], s)
-        return "unknown"
-
-    @staticmethod
-    def _normalize_category(category: Any, classes: list[str]) -> str:
-        lower_map = {c.lower(): c for c in classes}
-        return lower_map.get(str(category).strip().lower(), "unknown")
-
-    @staticmethod
     def _rows_to_map(rows: Any, key: str, value: str) -> dict[str, Any]:
         """Convert LLM array response to {item: value} dict."""
         if not isinstance(rows, list):
@@ -173,13 +176,6 @@ class GroceryClassifierLlm:
         }
 
     # ── Public API ────────────────────────────────────────────────────────────
-
-    """
-    def classifyItemsAgainstWishList(
-        self, items: list[Item], wishList: list[Item]
-    ) -> ClassificationWishListVsPantryInternal:
-        
-        """
 
     def classify_categories_batch(
         self,
@@ -216,36 +212,33 @@ class GroceryClassifierLlm:
             for item in input_items
         }
 
-    def shorten_text_batch(
-        self, input_items: list[str], categories: list[str] | None = None
-    ) -> dict[str, str] | None:
-        """
-        Normalise many product names in a single LLM call.
-        Returns {original: shortened} or None on hard failure.
-        """
-        if not input_items:
-            return {}
-
-        category_list = [str(c).strip() for c in (categories or [])]
+    def shorten_text_batch(self, items: ShortenLlmInput) -> dict[str, str]:
         try:
             out = self._invoke(
                 SHORTEN_BATCH_TMPL,
                 response_format_shorten_names_batch,
-                {"items_list": input_items, "category_list": category_list},
+                {"items": json.dumps(items.model_dump(), ensure_ascii=False)},
             )
         except Exception as exc:
-            log.warning("Batch text shortening failed: %s", exc)
-            return None
+            log.warning(
+                "Batch text shortening failed: %s\n with this traceback %s",
+                exc,
+                traceback.format_exc(),
+            )
+            return {}
 
-        out_map = self._rows_to_map(out.get("items"), "item", "normalized")
+        out_map = self._rows_to_map(out.get("items"), "original_name", "shortend_name")
+        lower_map = {k.lower().strip(): v for k, v in out_map.items()}
+
         return {
-            item: str(out_map.get(item, item)).strip() or item for item in input_items
+            item.name: (lower_map.get(item.name.lower().strip(), item.name)).strip()
+            or item.name
+            for item in items.items
         }
 
     def convertWishList(self, wishList: list[str]) -> str:
         wishList.sort()
-        wishesStr = ",".join(wishList)
-        return wishesStr
+        return ",".join(wishList)
 
     def mapWishToItemBatch(
         self,
@@ -257,15 +250,11 @@ class GroceryClassifierLlm:
         if not items:
             return {}
 
-        # Normalize to (item_name, info_dict) pairs
         normalized: list[tuple[str, dict]] = []
         for item in items:
             if isinstance(item, Item):
                 normalized.append(
-                    (
-                        item.item_name,
-                        item.model_dump(exclude={"item_name"}),
-                    )
+                    (item.item_name, item.model_dump(exclude={"item_name"}))
                 )
             else:
                 normalized.append((item, {}))
@@ -336,9 +325,7 @@ class GroceryClassifierLlm:
                     "info": item_info.get(item_name, {}),
                 }
 
-            parsedRes: dict = {"items": results, "wish_list_to_idx": wishToIdx}
-            # self._print_json_debug("wish mapping results", parsedRes)
-            return parsedRes
+            return {"items": results, "wish_list_to_idx": wishToIdx}
 
         except Exception as exc:
             log.warning("Wish mapping failed: %s", exc)
@@ -358,19 +345,79 @@ class GroceryClassifierLlm:
     def classifyWishAgainstPantry(
         self, items: list[Item], wishList: list[Item]
     ) -> list[InternalClassification]:
+        # `items` are wished items, `wishList` is the current pantry.
+        # Provide full item payloads so the model can preserve stable IDs from input.
+        payload = {
+            "pantryItems": [w.model_dump() for w in wishList],
+            "wishItems": [it.model_dump() for it in items],
+        }
         result: dict = self._invoke(
             CLASSIFY_AGAINST_PANTRY_TMPL,
             response_format_classify_against_pantry,
-            {"items": [it.item_name for it in items], "wishList": [w.item_name for w in wishList]},
+            payload,
         )
         parsed: ClassificationWishListVsPantryInternal = (
             ClassificationWishListVsPantryInternal.model_validate(result)
         )
-        return parsed.mappings
+
+        pantry_by_id = {p.item_id: p for p in wishList}
+        pantry_by_name = {
+            p.item_name.strip().lower(): p for p in wishList if p.item_name
+        }
+        items_by_id = {i.item_id: i for i in items}
+        items_by_name = {i.item_name.strip().lower(): i for i in items if i.item_name}
+
+        results = []
+        for m in parsed.mappings:
+            pantry_item = pantry_by_id.get(m.pantryItem.item_id)
+            if pantry_item is None and m.pantryItem.item_name:
+                pantry_item = pantry_by_name.get(m.pantryItem.item_name.strip().lower())
+            if pantry_item is None:
+                from utils.types_custom import Item as ItemType
+                from utils.types_custom import QuantityInfo as QuantityInfoType
+
+                pantry_item = ItemType(
+                    item_name=m.pantryItem.item_name,
+                    item_id=m.pantryItem.item_id,
+                    count=1,
+                    quantity=QuantityInfoType(
+                        product_quantity=None, product_quantity_unit=None
+                    ),
+                )
+
+            mapped_item = None
+            if m.foundMappingWish and m.mappedWishItem:
+                mapped_id = getattr(m.mappedWishItem, "item_id", None)
+                if mapped_id:
+                    mapped_item = items_by_id.get(mapped_id)
+
+                if mapped_item is None and m.mappedWishItem.item_name:
+                    mapped_item = items_by_name.get(
+                        m.mappedWishItem.item_name.strip().lower()
+                    )
+
+            found_mapping = mapped_item is not None
+            if m.foundMappingWish and not found_mapping:
+                log.warning(
+                    "LLM reported foundMappingWish=true but no wished item could be resolved "
+                    "(pantry=%s, mapped=%s)",
+                    m.pantryItem.item_name,
+                    m.mappedWishItem.item_name if m.mappedWishItem else None,
+                )
+
+            results.append(
+                InternalClassification.model_validate(
+                    dict(
+                        pantryItem=pantry_item,
+                        mappedWishItem=mapped_item,
+                        foundMappingWish=found_mapping,
+                    )
+                )
+            )
+        return results
 
 
 if __name__ == "__main__":
     g = GroceryClassifierLlm()
-
     res = g.classify_categories_batch(["joghurt", "ben und jerrys", "rice", "huevos"])
     print(res)

@@ -173,16 +173,18 @@ export const transformItems = (data: ApiResponse): Item[] => {
       perish_dates: item.perish_dates ?? [],
       imageUrl: item.imageUrl,
       tags: uniqueTags,
-      mapped_items: item.mapped_items ?? [],
+
+      mapped_items: item.mapped_items ?? item.mappedItems ?? [],
     };
   });
 };
 
-export enum PageModes {
-  HomePage,
-  WishPage,
-  GeoPage,
-}
+export const PageModes = {
+  HomePage: 0,
+  WishPage: 1,
+  GeoPage: 2,
+} as const;
+export type PageMode = typeof PageModes[keyof typeof PageModes];
 
 export type MappedItem = {
   count: number;
@@ -198,6 +200,7 @@ export interface ApiItem {
   imageUrl: string;
   tags: string | null;
   mapped_items?: MappedItem[];
+  mappedItems?: MappedItem[];
 }
 
 export interface ApiResponse {

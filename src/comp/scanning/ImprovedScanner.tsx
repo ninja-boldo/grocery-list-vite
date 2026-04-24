@@ -4,25 +4,37 @@ import { Html5Qrcode } from "html5-qrcode";
 import AppHeader from "@/comp/other/AppHeader";
 import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
-import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
+import QuantityRequiredModal from "@/comp/utils/QuantityRequiredModal";
+import { hasStoredJwtToken } from "@/lib/authApi";
+import { apiClient } from "@/lib/api/client";
+import { isAddEanSuccess, needsQuantityDetails } from "@/lib/api/addEanFlow";
 
 // ── Palette ─────────────────────────────────────────────────────────────────
 const P = {
-  bg: "#0D1117",
-  surface: "#161b22",
-  border: "#21262d",
+  bg: "transparent",
+  surface: "rgba(16, 38, 46, 0.82)",
+  border: "rgba(130, 177, 188, 0.28)",
   teal: "#1D9E75",
   tealD: "#0f2a28",
   tealB: "#0d948850",
-  text: "#e6edf3",
-  muted: "#6e7681",
-  subtle: "#4d5566",
+  text: "#ecf7f8",
+  muted: "#9ab4b8",
+  subtle: "#6f8b91",
   red: "#ef4444",
   redD: "#2a1111",
   redB: "#ef444430",
 } as const;
 
 type ScanMode = "auto" | "manual";
+
+type PendingQuantity = {
+  ean: string | null;
+  itemName: string;
+  count: number;
+  wish_list: string;
+};
+
+const QUANTITY_UNITS = ["g", "kg", "ml", "L", "Stück", "cl", "EL", "TL"] as const;
 
 type ScanResult = {
   ean?: string;
@@ -33,14 +45,6 @@ type ScanResult = {
   isAdd: boolean;
   isWish: boolean;
 };
-
-// Pending product whose package quantity is unknown — triggers the quantity modal
-type PendingQuantity = {
-  ean: string;
-  itemName: string;
-};
-
-const QUANTITY_UNITS = ["g", "kg", "ml", "L", "Stück", "cl", "EL", "TL"] as const;
 
 export default function ImprovedScanner() {
   const navHook = useNavigate();
@@ -67,8 +71,6 @@ export default function ImprovedScanner() {
   const [scannedCode, setScannedCode] = useState<string>("");
   const [needReauth, setNeedReauth] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-
-  // ── Quantity modal state ──────────────────────────────────────────────────
   const [pendingQuantity, setPendingQuantity] = useState<PendingQuantity | null>(null);
   const [qtyAmount, setQtyAmount] = useState<string>("100");
   const [qtyUnit, setQtyUnit] = useState<string>("g");
@@ -102,57 +104,11 @@ export default function ImprovedScanner() {
     setError("Authentication required. Please sign in again.");
   }, []);
 
-  const apiCall = useCallback(
-    async <T,>(
-      url: string,
-      options: RequestInit = {},
-      retries = 3,
-      onUnauthorized?: () => void,
-    ): Promise<T> =>
-      authApiCall<T>(url, options, {
-        retries,
-        retryDelayMs: 300,
-        onUnauthorized,
-      }),
-    [],
-  );
-
   const showResult = useCallback((result: ScanResult) => {
     if (resultTimeoutRef.current) clearTimeout(resultTimeoutRef.current);
     setScanResult(result);
     resultTimeoutRef.current = setTimeout(() => setScanResult(null), 6000);
   }, []);
-
-  // Save verified product quantity to the golden record endpoint
-  const saveVerifiedProduct = useCallback(async () => {
-    if (!pendingQuantity) return;
-    const amount = parseFloat(qtyAmount);
-    if (!isFinite(amount) || amount <= 0) return;
-
-    setQtySaving(true);
-    try {
-      await apiCall(
-        "/api/verified_products",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json; charset=UTF-8" },
-          body: JSON.stringify({
-            ean: pendingQuantity.ean,
-            item_name: pendingQuantity.itemName,
-            quantity: amount,
-            unit: qtyUnit,
-          }),
-        },
-        1,
-        handleNeedReauth,
-      );
-    } catch (err) {
-      console.error("Failed to save verified product:", err);
-    } finally {
-      setQtySaving(false);
-      setPendingQuantity(null);
-    }
-  }, [apiCall, handleNeedReauth, pendingQuantity, qtyAmount, qtyUnit]);
 
   const hardStopCamera = async () => {
     const qr = html5QrCodeRef.current;
@@ -188,47 +144,43 @@ export default function ImprovedScanner() {
         typeof quantityToSend === "number" ? quantityToSend : finalCount;
 
       try {
-        const data = await apiCall<{
-          known_to_db?: boolean;
-          detail?: string;
-          item_name?: string;
-          quantity_known?: boolean;
-        }>(
-          "/api/add_ean_to_list/",
+        const data = await apiClient.addEanToList(
           {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=UTF-8" },
-            body: JSON.stringify({
-              ean: eanToSend,
-              count: requestCount,
-              wish_list: String(isWishList),
-            }),
+            ean: eanToSend,
+            count: requestCount,
+            wish_list: String(isWishList),
           },
-          1,
-          handleNeedReauth,
+          {
+            retries: 1,
+            retryDelayMs: 300,
+            onUnauthorized: handleNeedReauth,
+          },
         );
 
-        if (
-          data.known_to_db === true &&
-          !(String(data.detail).toLowerCase() === "failed to add item")
-        ) {
+        const isSuccess = isAddEanSuccess(data);
+        const needsQuantity = needsQuantityDetails(data);
+
+        if (isSuccess) {
           setShowSuccess(true);
           setTimeout(() => setShowSuccess(false), 2500);
           showResult({
             ean: eanToSend,
-            itemName: data.item_name,
+            itemName: data.item_name ?? data.product_name,
             detail: data.detail ?? "Item processed successfully",
             known: true,
             count: requestCount,
             isAdd: requestCount > 0,
             isWish: isWishList,
           });
-          // If the backend doesn't know the package quantity, ask the user
-          if (data.quantity_known === false && data.item_name) {
-            setPendingQuantity({ ean: eanToSend, itemName: data.item_name });
-            setQtyAmount("100");
-            setQtyUnit("g");
-          }
+        } else if (needsQuantity) {
+          setPendingQuantity({
+            ean: eanToSend,
+            itemName: data.item_name ?? data.product_name ?? eanToSend,
+            count: requestCount,
+            wish_list: String(isWishList),
+          });
+          setQtyAmount("1");
+          setQtyUnit("Stück");
         } else {
           setError("EAN not found in database");
           showResult({
@@ -248,26 +200,41 @@ export default function ImprovedScanner() {
         setTimeout(() => setError(""), 2500);
       }
     },
-    [apiCall, count, handleNeedReauth, isWishList, log, showResult],
+    [count, handleNeedReauth, isWishList, log, showResult],
   );
 
   const sendByName = useCallback(
     async (itemName: string, quantityToSend: number) => {
       try {
-        await apiCall(
-          "/api/add_ean_to_list/",
+        const data = await apiClient.addEanToList(
           {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=UTF-8" },
-            body: JSON.stringify({
-              item_name: itemName,
-              count: quantityToSend,
-              wish_list: String(isWishList),
-            }),
+            item_name: itemName,
+            count: quantityToSend,
+            wish_list: String(isWishList),
           },
-          1,
-          handleNeedReauth,
+          {
+            retries: 1,
+            retryDelayMs: 300,
+            onUnauthorized: handleNeedReauth,
+          },
         );
+
+        if (needsQuantityDetails(data)) {
+          setPendingQuantity({
+            ean: null,
+            itemName,
+            count: quantityToSend,
+            wish_list: String(isWishList),
+          });
+          setQtyAmount("1");
+          setQtyUnit("Stück");
+          return;
+        }
+
+        if (!isAddEanSuccess(data)) {
+          setError("Failed to add item");
+          return;
+        }
 
         if ("vibrate" in navigator) {
           try { navigator.vibrate(200); } catch { /* ignore */ }
@@ -288,8 +255,74 @@ export default function ImprovedScanner() {
         setError("Failed to add item");
       }
     },
-    [apiCall, handleNeedReauth, isWishList, showResult],
+    [handleNeedReauth, isWishList, showResult],
   );
+
+  const saveWithQuantity = useCallback(async () => {
+    if (!pendingQuantity) return;
+    const amount = parseFloat(qtyAmount);
+    if (!isFinite(amount) || amount <= 0) {
+      setError("Please enter a valid quantity");
+      setTimeout(() => setError(""), 2500);
+      return;
+    }
+    setQtySaving(true);
+    let completed = false;
+    try {
+      const response = await apiClient.addEanToList(
+        {
+          ean: pendingQuantity.ean,
+          item_name: pendingQuantity.itemName,
+          count: pendingQuantity.count,
+          wish_list: pendingQuantity.wish_list,
+          quantity_data: {
+            product_quantity: amount,
+            product_quantity_unit: qtyUnit,
+          },
+        },
+        {
+          retries: 1,
+          retryDelayMs: 300,
+          onUnauthorized: handleNeedReauth,
+        },
+      );
+
+      if (needsQuantityDetails(response)) {
+        setError("The server still needs quantity details.");
+        setTimeout(() => setError(""), 2500);
+        return;
+      }
+
+      if (!isAddEanSuccess(response)) {
+        setError("Failed to add item");
+        setTimeout(() => setError(""), 2500);
+        return;
+      }
+
+      showResult({
+        ean: pendingQuantity.ean,
+        itemName: pendingQuantity.itemName,
+        detail: "Added with quantity",
+        known: true,
+        count: pendingQuantity.count,
+        isAdd: pendingQuantity.count > 0,
+        isWish: pendingQuantity.wish_list === "true",
+      });
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 2500);
+      completed = true;
+    } catch (err) {
+      if (!(err instanceof Error && err.message.includes("401"))) {
+        setError("Failed to add item");
+        setTimeout(() => setError(""), 2500);
+      }
+    } finally {
+      setQtySaving(false);
+      if (completed) {
+        setPendingQuantity(null);
+      }
+    }
+  }, [handleNeedReauth, pendingQuantity, qtyAmount, qtyUnit, showResult]);
 
   const handleQuantityChange = (delta: number, isScanner = false) => {
     if (isScanner) {
@@ -458,7 +491,7 @@ export default function ImprovedScanner() {
   const username = localStorage.getItem("username") ?? "L";
 
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: P.bg, paddingBottom: 90 }}>
+    <div style={{ minHeight: "100vh", backgroundColor: P.bg, color: P.text, fontFamily: "var(--font-body)", paddingBottom: 90 }}>
       {needReauth && (
         <AuthPopup
           onAuthenticated={() => {
@@ -955,73 +988,22 @@ export default function ImprovedScanner() {
       </div>
 
       {/* ── Quantity modal ── */}
-      {pendingQuantity && (
-        <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 300, display: "flex", alignItems: "flex-end", backdropFilter: "blur(4px)" }}
-          onClick={() => setPendingQuantity(null)}
-        >
-          <div
-            style={{ background: P.surface, borderRadius: "24px 24px 0 0", padding: "20px 20px 48px", width: "100%", maxWidth: 480, margin: "0 auto" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Handle */}
-            <div style={{ width: 36, height: 4, borderRadius: 2, background: P.border, margin: "0 auto 18px" }} />
-
-            {/* Header */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <svg width="16" height="16" fill="none" stroke="#5eead4" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round">
-                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-              <span style={{ fontSize: 15, fontWeight: 700, color: P.text }}>Packungsinhalt unbekannt</span>
-            </div>
-            <p style={{ margin: "0 0 18px", fontSize: 13, color: P.muted }}>
-              Wie viel enthält eine Packung „{pendingQuantity.itemName}"? Deine Angabe hilft dir beim Wochenplaner.
-            </p>
-
-            {/* Amount + unit row */}
-            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: "block", fontSize: 11, color: P.muted, marginBottom: 5 }}>Menge</label>
-                <input
-                  type="number"
-                  min="0.1"
-                  step="any"
-                  value={qtyAmount}
-                  onChange={(e) => setQtyAmount(e.target.value)}
-                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", background: P.bg, border: `1px solid ${P.tealB}`, borderRadius: 10, color: P.text, fontSize: 16, fontWeight: 700, outline: "none" }}
-                />
-              </div>
-              <div style={{ width: 110 }}>
-                <label style={{ display: "block", fontSize: 11, color: P.muted, marginBottom: 5 }}>Einheit</label>
-                <select
-                  value={qtyUnit}
-                  onChange={(e) => setQtyUnit(e.target.value)}
-                  style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", background: P.bg, border: `1px solid ${P.border}`, borderRadius: 10, color: P.text, fontSize: 14, outline: "none", cursor: "pointer" }}
-                >
-                  {QUANTITY_UNITS.map((u) => (
-                    <option key={u} value={u}>{u}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <button
-              onClick={() => void saveVerifiedProduct()}
-              disabled={qtySaving || !qtyAmount || parseFloat(qtyAmount) <= 0}
-              style={{ width: "100%", padding: 13, borderRadius: 13, background: "#0d9488", color: "#fff", fontSize: 14, fontWeight: 800, border: "none", cursor: "pointer", marginBottom: 10, fontFamily: "inherit", opacity: qtySaving ? 0.6 : 1, transition: "opacity 0.15s" }}
-            >
-              {qtySaving ? "Wird gespeichert…" : "Speichern"}
-            </button>
-            <button
-              onClick={() => setPendingQuantity(null)}
-              style={{ width: "100%", padding: 12, borderRadius: 13, background: P.surface, color: P.muted, fontSize: 13, fontWeight: 700, border: `1px solid ${P.border}`, cursor: "pointer", fontFamily: "inherit" }}
-            >
-              Überspringen
-            </button>
-          </div>
-        </div>
-      )}
+      <QuantityRequiredModal
+        open={pendingQuantity !== null}
+        itemName={pendingQuantity?.itemName ?? "this item"}
+        quantityValue={qtyAmount}
+        unitValue={qtyUnit}
+        units={QUANTITY_UNITS}
+        submitting={qtySaving}
+        onQuantityChange={setQtyAmount}
+        onUnitChange={setQtyUnit}
+        onConfirm={() => void saveWithQuantity()}
+        onClose={() => {
+          if (!qtySaving) {
+            setPendingQuantity(null);
+          }
+        }}
+      />
 
       <BottomTabBar />
     </div>

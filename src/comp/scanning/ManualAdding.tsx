@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import ErrorContainer from "../utils/ErrorContainer";
 import { useLocation, useNavigate } from "react-router-dom";
 import TopBar from "@/comp/other/TopBar";
 import Sidebar from "@/comp/other/Sidebar";
+import QuantityRequiredModal from "@/comp/utils/QuantityRequiredModal";
 import { PageModes } from "@/lib/utils";
+import { apiClient } from "@/lib/api/client";
+import { isAddEanSuccess, needsQuantityDetails } from "@/lib/api/addEanFlow";
+import type { AddEanRequest, QuantityInfo } from "@/lib/api/openapi";
 
-// ── Palette (mirrors main site) ────────────────────────────────────────────
 const P = {
   bg: "#18181b",
   surface: "#161b22",
@@ -18,94 +21,166 @@ const P = {
   subtle: "#4d5566",
 } as const;
 
+type Stage = "input" | "loading" | "success";
+
+const UNITS = ["Stück", "g", "kg", "ml", "L", "EL", "TL", "Prise", "Bund", "Scheiben", "Zehe", "Dose", "Paket"];
+
+type PendingAddPayload = {
+  ean: string | null;
+  item_name: string;
+  count: number;
+  wish_list: string;
+};
+
 const ManualAdd = () => {
   const navhook = useNavigate();
-
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
-  const isWishList = queryParams.get("wishlist");
+  const isWishList = queryParams.get("wishlist") === "true";
 
-  const [inputValue1, setInputValue1] = useState("");
-  const [inputValue2, setInputValue2] = useState("");
-  const [inputValue3, setInputValue3] = useState("");
-  const [inputValue4, setInputValue4] = useState("");
-
-  const [itemName, setItemName] = useState<string | null>(null);
-  const [ean, setEan] = useState<string | null>(null);
-  const [count, setCount] = useState<string | null>(null);
-  const [subgroups, setSubgroups] = useState<string | null>(null);
+  const [itemName, setItemName] = useState("");
+  const [ean, setEan] = useState("");
+  const [count, setCount] = useState("1");
 
   const [errorMessage, setErrorMessage] = useState("");
-  const [showErrorBox, setshowErrorBox] = useState(false);
+  const [showErrorBox, setShowErrorBox] = useState(false);
+  const [stage, setStage] = useState<Stage>("input");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [quantitySubmitting, setQuantitySubmitting] = useState(false);
 
-  const sendRes = () => {
-    let currentCount: string = count ? count : "1";
-    let currentItemName: string = "";
-    let currentSubgroups: string = subgroups ? subgroups : "";
-    //let currentEan = ean
+  const [quantityInput, setQuantityInput] = useState("");
+  const [unitInput, setUnitInput] = useState("Stück");
+  const [pendingPayload, setPendingPayload] = useState<PendingAddPayload | null>(null);
 
-    if (!itemName) {
-      console.warn("no item name supplied");
-      setErrorMessage("you havent supplied the necessary item name");
-      setshowErrorBox(true);
+  const showError = useCallback((msg: string) => {
+    setErrorMessage(msg);
+    setShowErrorBox(true);
+    setTimeout(() => setShowErrorBox(false), 2500);
+  }, []);
 
-      setTimeout(() => {
-        setshowErrorBox(false);
-      }, 2500);
-    } else {
-      currentItemName = itemName;
+  const submitWithQuantity = useCallback(
+    async (quantity: QuantityInfo) => {
+      if (!pendingPayload) return;
+      setQuantitySubmitting(true);
+      try {
+        const response = await apiClient.addEanToList(
+          {
+            ean: pendingPayload.ean,
+            item_name: pendingPayload.item_name,
+            count: pendingPayload.count,
+            wish_list: pendingPayload.wish_list,
+            quantity_data: quantity,
+          },
+          { retries: 2, retryDelayMs: 250 },
+        );
+
+        if (needsQuantityDetails(response)) {
+          showError("The server still needs a valid quantity and unit.");
+          return;
+        }
+
+        if (!isAddEanSuccess(response)) {
+          const message =
+            typeof response.detail === "string" && response.detail.trim()
+              ? response.detail
+              : "Failed to add item. Please try again.";
+          showError(message);
+          return;
+        }
+
+        setPendingPayload(null);
+        setStage("success");
+        setTimeout(() => navhook("/"), 600);
+      } catch (err) {
+        console.error("Failed to add item:", err);
+        showError("Failed to add item. Please try again.");
+      } finally {
+        setQuantitySubmitting(false);
+      }
+    },
+    [pendingPayload, navhook, showError],
+  );
+
+  const handleQuantitySubmit = useCallback(() => {
+    const qty = parseFloat(quantityInput);
+    if (isNaN(qty) || qty <= 0) {
+      showError("Please enter a valid quantity.");
+      return;
     }
-    if (!ean) {
-      console.warn("no ean supplied");
-      setEan("none");
+    const quantity: QuantityInfo = {
+      product_quantity: qty,
+      product_quantity_unit: unitInput,
+    };
+    void submitWithQuantity(quantity);
+  }, [quantityInput, unitInput, submitWithQuantity, showError]);
+
+  const sendRes = async () => {
+    if (!itemName.trim()) {
+      showError("Please enter an item name.");
+      return;
     }
-    if (!subgroups) {
-      console.warn("no subgroups supplied");
-      setSubgroups("none");
-      currentSubgroups = "none";
-    }
-    if (!count) {
-      console.warn("no count supplied");
-      setCount("1");
-      currentCount = "1";
-      setTimeout(() => {}, 50);
+    const parsedCount = parseInt(count, 10);
+    if (!Number.isFinite(parsedCount) || parsedCount < 1) {
+      showError("Count must be a positive number.");
+      return;
     }
 
-    console.log(
-      "ean: " +
-        ean +
-        " item name: " +
-        itemName +
-        " subgroups: " +
-        subgroups +
-        " count: " +
-        currentCount,
-    );
-    console.log("'" + currentSubgroups + "'");
+    setStage("loading");
+    const payload: AddEanRequest = {
+      ean: ean.trim() || null,
+      item_name: itemName.trim(),
+      count: parsedCount,
+      wish_list: String(isWishList),
+    };
 
-    if (
-      currentItemName && currentCount && currentSubgroups && currentCount
-        ? parseInt(currentCount) > 0
-        : false
-    ) {
-      console.log(
-        "now sending to this endpoint with this url: " +
-          `/api/add_ean_to_list_manual/?item_name=${encodeURIComponent(currentItemName)}&subgroups=${currentSubgroups}&count=${encodeURIComponent(currentCount)}&is_wish_list=${isWishList}`,
-      );
+    try {
+      const response = await apiClient.addEanToList(payload, {
+        retries: 2,
+        retryDelayMs: 250,
+      });
 
-      fetch(
-        `/api/add_ean_to_list_manual/?item_name=${encodeURIComponent(currentItemName)}&subgroups=${currentSubgroups}&count=${encodeURIComponent(currentCount)}&is_wish_list=${isWishList}`,
-      );
+      if (needsQuantityDetails(response)) {
+        setPendingPayload({
+          ean: payload.ean ?? null,
+          item_name: payload.item_name ?? "",
+          count: payload.count ?? 1,
+          wish_list: payload.wish_list ?? "false",
+        });
+        setQuantityInput("1");
+        setUnitInput("Stück");
+        setStage("input");
+        return;
+      }
 
-      setTimeout(() => {
-        navhook("/");
-      }, 300);
+      if (!isAddEanSuccess(response)) {
+        const message =
+          typeof response.detail === "string" && response.detail.trim()
+            ? response.detail
+            : "Failed to add item. Please try again.";
+        showError(message);
+        setStage("input");
+      } else {
+        setStage("success");
+        setTimeout(() => navhook("/"), 600);
+      }
+    } catch (err) {
+      console.error("Failed to add item:", err);
+      showError("Failed to add item. Please try again.");
+      setStage("input");
     }
   };
 
+  const isLoading = stage === "loading";
+  const showSuccess = stage === "success";
+
   return (
-    <div className="h-screen" style={{ backgroundColor: P.bg }}>
+    <div
+      className="h-screen"
+      style={{
+        background:
+          "radial-gradient(circle at 12% 14%, rgba(212, 165, 116, 0.16), transparent 24%), radial-gradient(circle at 88% 18%, rgba(124, 170, 124, 0.2), transparent 26%), linear-gradient(180deg, #0f1416 0%, #101a1a 100%)",
+      }}
+    >
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <TopBar
@@ -125,128 +200,208 @@ const ManualAdd = () => {
         <div className="max-w-4xl mx-auto">
           {showErrorBox && <ErrorContainer text={errorMessage} />}
 
-          {/* Form card */}
           <div
             style={{
-              backgroundColor: P.surface,
-              border: `1px solid ${P.border}`,
-              borderRadius: 18,
-              padding: "24px 20px",
+              background:
+                "linear-gradient(160deg, rgba(16, 27, 34, 0.92) 0%, rgba(22, 33, 31, 0.94) 100%)",
+              border: `1px solid ${showSuccess ? "rgba(124,170,124,0.8)" : "rgba(124,170,124,0.24)"}`,
+              borderRadius: 24,
+              padding: "26px 22px",
               marginTop: 16,
-              boxShadow: `0 8px 32px #00000060`,
+              boxShadow: "0 20px 48px rgba(0, 0, 0, 0.45)",
+              transition: "border-color 0.2s",
             }}
           >
-            {/* Title */}
             <p
               style={{
                 margin: "0 0 20px",
-                fontSize: 15,
-                fontWeight: 600,
-                color: P.text,
-                borderBottom: `1px solid ${P.border}`,
+                fontSize: 17,
+                fontWeight: 700,
+                color: showSuccess ? "#c9f4d4" : P.text,
+                borderBottom: "1px solid rgba(124,170,124,0.22)",
                 paddingBottom: 14,
+                transition: "color 0.2s",
               }}
             >
-              {isWishList ? "Add to Wish List" : "Add Item Manually"}
+              {showSuccess
+                ? "✓ Added successfully!"
+                : isWishList
+                  ? "Add to Wish List"
+                  : "Add Item Manually"}
             </p>
 
-            {/* Inputs */}
-            {[
-              {
-                value: inputValue1,
-                onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-                  setInputValue1(e.target.value);
-                  setItemName(e.target.value);
-                },
-                placeholder: "Item name *",
-              },
-              {
-                value: inputValue2,
-                onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-                  setInputValue2(e.target.value);
-                  setEan(e.target.value);
-                },
-                placeholder: "EAN (optional)",
-              },
-              {
-                value: inputValue3,
-                onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-                  setInputValue3(e.target.value);
-                  setCount(e.target.value);
-                },
-                placeholder: "Count (default = 1)",
-              },
-              {
-                value: inputValue4,
-                onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-                  setInputValue4(e.target.value);
-                  console.log("inputValue4: " + inputValue4);
-                  setSubgroups(e.target.value);
-                },
-                placeholder: "Subgroups (optional)",
-              },
-            ].map(({ value, onChange, placeholder }, idx) => (
+            <>
+              <p style={{ fontSize: 13, color: P.muted, margin: "0 0 14px" }}>
+                {isWishList
+                  ? "Save a new wish-list entry with optional barcode and count."
+                  : "Save a new inventory item with optional barcode and count."}
+              </p>
+
               <input
-                key={idx}
                 type="text"
-                value={value}
-                onChange={onChange}
-                placeholder={placeholder}
+                value={itemName}
+                onChange={(e) => setItemName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && stage === "input") void sendRes();
+                }}
+                placeholder="Item name *"
+                disabled={isLoading || showSuccess}
                 style={{
                   display: "block",
                   width: "100%",
                   boxSizing: "border-box",
                   marginBottom: 10,
-                  padding: "9px 12px",
-                  backgroundColor: P.bg,
-                  border: `1px solid ${P.border}`,
-                  borderRadius: 10,
+                  padding: "10px 12px",
+                  backgroundColor: "rgba(10,16,20,0.9)",
+                  border: "1px solid rgba(124,170,124,0.28)",
+                  borderRadius: 12,
                   color: P.text,
                   fontSize: 14,
                   outline: "none",
                   transition: "border-color 0.15s",
+                  opacity: isLoading || showSuccess ? 0.5 : 1,
                 }}
                 onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
-                onBlur={(e) => (e.currentTarget.style.borderColor = P.border)}
+                onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")}
               />
-            ))}
 
-            {/* Submit button */}
-            <button
-              onClick={sendRes}
-              style={{
-                all: "unset",
-                boxSizing: "border-box",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                marginTop: 8,
-                padding: "9px 20px",
-                backgroundColor: P.tealD,
-                border: `1px solid ${P.tealB}`,
-                borderRadius: 10,
-                color: "#5eead4",
-                fontSize: 14,
-                fontWeight: 500,
-                cursor: "pointer",
-                transition: "all 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                const b = e.currentTarget as HTMLElement;
-                b.style.backgroundColor = P.teal;
-                b.style.color = "#fff";
-              }}
-              onMouseLeave={(e) => {
-                const b = e.currentTarget as HTMLElement;
-                b.style.backgroundColor = P.tealD;
-                b.style.color = "#5eead4";
-              }}
-            >
-              Submit
-            </button>
+              <input
+                type="text"
+                value={ean}
+                onChange={(e) => setEan(e.target.value.replace(/\D/g, ""))}
+                placeholder="EAN barcode (optional)"
+                disabled={isLoading || showSuccess}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  boxSizing: "border-box",
+                  marginBottom: 10,
+                  padding: "10px 12px",
+                  backgroundColor: "rgba(10,16,20,0.9)",
+                  border: "1px solid rgba(124,170,124,0.28)",
+                  borderRadius: 12,
+                  color: P.text,
+                  fontSize: 14,
+                  fontFamily: "monospace",
+                  outline: "none",
+                  transition: "border-color 0.15s",
+                  opacity: isLoading || showSuccess ? 0.5 : 1,
+                }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
+                onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")}
+              />
+
+              <input
+                type="number"
+                value={count}
+                min={1}
+                onChange={(e) => setCount(e.target.value)}
+                placeholder="Count (default = 1)"
+                disabled={isLoading || showSuccess}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  boxSizing: "border-box",
+                  marginBottom: 10,
+                  padding: "10px 12px",
+                  backgroundColor: "rgba(10,16,20,0.9)",
+                  border: "1px solid rgba(124,170,124,0.28)",
+                  borderRadius: 12,
+                  color: P.text,
+                  fontSize: 14,
+                  outline: "none",
+                  transition: "border-color 0.15s",
+                  opacity: isLoading || showSuccess ? 0.5 : 1,
+                }}
+                onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
+                onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")}
+              />
+
+              <button
+                onClick={() => void sendRes()}
+                disabled={isLoading || showSuccess || !itemName.trim()}
+                style={{
+                  all: "unset",
+                  boxSizing: "border-box",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  marginTop: 10,
+                  padding: "10px 20px",
+                  background:
+                    "linear-gradient(135deg, rgba(124,170,124,0.92) 0%, rgba(86,130,103,0.95) 100%)",
+                  border: "1px solid rgba(124,170,124,0.5)",
+                  borderRadius: 12,
+                  color: "#101d13",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor:
+                    isLoading || showSuccess || !itemName.trim()
+                      ? "not-allowed"
+                      : "pointer",
+                  opacity: isLoading || !itemName.trim() ? 0.5 : 1,
+                  transition: "all 0.15s",
+                }}
+              >
+                {isLoading ? (
+                  <>
+                    <svg
+                      style={{
+                        width: 13,
+                        height: 13,
+                        animation: "spin 1s linear infinite",
+                      }}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                    >
+                      <circle
+                        style={{ opacity: 0.2 }}
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                      />
+                      <path
+                        style={{ opacity: 0.8 }}
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
+                    </svg>
+                    Adding...
+                  </>
+                ) : (
+                  "Submit"
+                )}
+              </button>
+            </>
           </div>
         </div>
       </div>
+
+      <QuantityRequiredModal
+        open={pendingPayload !== null}
+        itemName={pendingPayload?.item_name || itemName || "this item"}
+        quantityValue={quantityInput}
+        unitValue={unitInput}
+        units={UNITS}
+        submitting={quantitySubmitting}
+        onQuantityChange={setQuantityInput}
+        onUnitChange={setUnitInput}
+        onConfirm={handleQuantitySubmit}
+        onClose={() => {
+          if (!quantitySubmitting) {
+            setPendingPayload(null);
+          }
+        }}
+      />
+
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`,
+        }}
+      />
     </div>
   );
 };

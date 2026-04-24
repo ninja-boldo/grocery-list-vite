@@ -1,9 +1,17 @@
-import { useState, useMemo, useEffect, useCallback, memo } from "react";
+import { useState, useMemo, useEffect, useCallback, memo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import AppHeader from "@/comp/other/AppHeader";
 import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
 import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
+import { apiClient } from "@/lib/api/client";
+import {
+  API_PATHS,
+  buildClassifyItemsAgainstPantryUrl,
+  buildFetchItemsUrl,
+  type AddEanRequest,
+  type PantryClassificationWishItem,
+} from "@/lib/api/openapi";
 import FeedbackToast, { useFeedbackToast } from "@/comp/utils/FeedbackToast";
 import type { ApiResponse } from "@/lib/utils";
 
@@ -20,7 +28,6 @@ interface DayPlan { breakfast: MealSlot | null; lunch: MealSlot | null; dinner: 
 type Week = Record<string, DayPlan>;
 type DayType = "quick" | "normal" | "relaxed";
 interface DaySettingsEntry { type: DayType; blocked: { breakfast: boolean; lunch: boolean; dinner: boolean }; }
-interface PlannerManualItem { id: number; name: string; amount: number; unit: string; fromRecipe: string; }
 interface PlannerWeekItem { name: string; amount: number; unit: string; }
 
 type Modal =
@@ -39,11 +46,13 @@ const MEAL_LABELS = ["Frühstück", "Mittagessen", "Abendessen"];
 const UNITS = ["g", "kg", "ml", "L", "EL", "TL", "Stück", "Prise", "Bund", "Scheiben", "Zehe"];
 const FOOD_EMOJIS = ["🥗","🍝","🍜","🍛","🥘","🍲","🥙","🌮","🥑","🍳","🥞","🥣","🍗","🐟","🥩","🥦","🍅","🍋","🧅","🧄","🍚","🍞","🥐","🧆","🫕","🫙"];
 const ALL_TAGS = ["Frühstück","Mittagessen","Abendessen","Vegan","Vegetarisch","Highprotein","Lowcarb","Schnell"];
-const LS_SHOPPING = "planner_shopping_list";
-const LS_SETTINGS = "planner_settings";
-const LS_RECIPES  = "planner_recipes";
-const LS_WEEK     = "planner_week";
+const LS_SETTINGS     = "planner_settings";
+const LS_WEEK         = "planner_week";
 const LS_DAY_SETTINGS = "planner_day_settings";
+
+// ─── Day-key mapping (app ↔ API) ─────────────────────────────────────────────
+const DAY_TO_API: Record<string, string> = { Mo: "mo", Di: "tu", Mi: "we", Do: "th", Fr: "fr", Sa: "sa", So: "su" };
+const API_TO_DAY: Record<string, string> = { mo: "Mo", tu: "Di", we: "Mi", th: "Do", fr: "Fr", sa: "Sa", su: "So" };
 
 // ─── App Color Palette ───────────────────────────────────────────────────────
 const C = {
@@ -99,6 +108,23 @@ const writeLS = (key: string, value: unknown) => {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
 };
 
+const normalizeItemName = (value: string): string =>
+  value
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const toTokenSet = (value: string): Set<string> =>
+  new Set(
+    normalizeItemName(value)
+      .split(" ")
+      .map((token) => token.trim())
+      .filter((token) => token.length > 1),
+  );
+
 function collectMissing(week: Week, checkInventory: (name: string) => boolean): PlannerWeekItem[] {
   const map: Record<string, PlannerWeekItem> = {};
   DAYS.forEach((day) => {
@@ -142,31 +168,6 @@ function generateWeekPlan(
   });
   return result;
 }
-
-// ─── Initial Recipes ─────────────────────────────────────────────────────────
-const INITIAL_RECIPES: Recipe[] = [
-  { id:1, name:"Avocado Toast", emoji:"🥑", baseTime:10, baseServings:1, favorited:true, tags:["Frühstück","Vegan"],
-    ingredients:[{id:1,name:"Sauerteigbrot",amount:2,unit:"Scheiben"},{id:2,name:"Avocado",amount:1,unit:"Stück"},{id:3,name:"Zitrone",amount:0.5,unit:"Stück"},{id:4,name:"Chiliflocken",amount:1,unit:"Prise"},{id:5,name:"Salz",amount:1,unit:"Prise"}],
-    steps:["Brot toasten bis es goldbraun ist.","Avocado halbieren, Kern entfernen, Fruchtfleisch zerdrücken.","Mit Zitronensaft, Salz und Chiliflocken abschmecken.","Masse auf dem Toast verteilen und sofort servieren."] },
-  { id:2, name:"Hähnchen Bowl", emoji:"🍗", baseTime:25, baseServings:2, favorited:true, tags:["Mittagessen","Highprotein"],
-    ingredients:[{id:1,name:"Hähnchenbrustfilet",amount:300,unit:"g"},{id:2,name:"Reis",amount:150,unit:"g"},{id:3,name:"Avocado",amount:1,unit:"Stück"},{id:4,name:"Tomate",amount:1,unit:"Stück"},{id:5,name:"Olivenöl",amount:2,unit:"EL"},{id:6,name:"Zitrone",amount:1,unit:"Stück"}],
-    steps:["Reis nach Packungsanweisung kochen.","Hähnchen in Olivenöl je 5 Min. pro Seite braten.","Hähnchen in Streifen schneiden, Gemüse würfeln.","Alles in einer Bowl anrichten, mit Zitrone beträufeln."] },
-  { id:3, name:"Pasta Arrabiata", emoji:"🍝", baseTime:20, baseServings:2, favorited:false, tags:["Abendessen","Vegan"],
-    ingredients:[{id:1,name:"Pasta",amount:250,unit:"g"},{id:2,name:"gehackte Tomaten",amount:400,unit:"g"},{id:3,name:"Knoblauch",amount:3,unit:"Zehe"},{id:4,name:"Chili",amount:1,unit:"Stück"},{id:5,name:"Olivenöl",amount:3,unit:"EL"},{id:6,name:"Basilikum",amount:1,unit:"Bund"}],
-    steps:["Pasta in Salzwasser al dente kochen.","Knoblauch und Chili in Olivenöl anbraten.","Tomaten dazugeben, 10 Min. einköcheln lassen.","Pasta abgießen, mit Sauce vermengen, Basilikum drauf."] },
-  { id:4, name:"Overnight Oats", emoji:"🥣", baseTime:5, baseServings:1, favorited:true, tags:["Frühstück","Vegan"],
-    ingredients:[{id:1,name:"Haferflocken",amount:80,unit:"g"},{id:2,name:"Hafermilch",amount:250,unit:"ml"},{id:3,name:"Chiasamen",amount:1,unit:"EL"},{id:4,name:"Banane",amount:1,unit:"Stück"},{id:5,name:"Beeren",amount:100,unit:"g"}],
-    steps:["Haferflocken, Milch und Chiasamen mischen.","Abdecken, über Nacht im Kühlschrank quellen lassen.","Am Morgen mit Banane und Beeren toppen."] },
-  { id:5, name:"Shakshuka", emoji:"🍳", baseTime:25, baseServings:2, favorited:false, tags:["Frühstück","Mittagessen","Vegetarisch"],
-    ingredients:[{id:1,name:"Eier",amount:4,unit:"Stück"},{id:2,name:"Tomaten",amount:400,unit:"g"},{id:3,name:"Paprika",amount:1,unit:"Stück"},{id:4,name:"Zwiebel",amount:1,unit:"Stück"},{id:5,name:"Kreuzkümmel",amount:1,unit:"TL"},{id:6,name:"Paprikapulver",amount:1,unit:"TL"}],
-    steps:["Zwiebel und Paprika in Öl weich dünsten.","Gewürze hinzufügen, 1 Min. rösten.","Tomaten dazugeben, 10 Min. einköcheln.","Mulden formen, Eier hineingeben, 5–7 Min. stocken lassen."] },
-  { id:6, name:"Linsensuppe", emoji:"🥘", baseTime:35, baseServings:4, favorited:false, tags:["Mittagessen","Abendessen","Vegan"],
-    ingredients:[{id:1,name:"Rote Linsen",amount:300,unit:"g"},{id:2,name:"Zwiebel",amount:1,unit:"Stück"},{id:3,name:"Karotte",amount:2,unit:"Stück"},{id:4,name:"Gemüsebrühe",amount:800,unit:"ml"},{id:5,name:"Kreuzkümmel",amount:1,unit:"TL"},{id:6,name:"Kurkuma",amount:0.5,unit:"TL"},{id:7,name:"Zitrone",amount:1,unit:"Stück"}],
-    steps:["Zwiebel und Karotte würfeln, in Öl anbraten.","Gewürze hinzufügen und kurz rösten.","Linsen und Brühe dazugeben, aufkochen.","20 Min. köcheln bis Linsen weich sind.","Mit Zitronensaft abschmecken, nach Wunsch pürieren."] },
-  { id:7, name:"Lachsfilet", emoji:"🐟", baseTime:20, baseServings:2, favorited:true, tags:["Abendessen","Highprotein"],
-    ingredients:[{id:1,name:"Lachsfilet",amount:400,unit:"g"},{id:2,name:"Zitrone",amount:1,unit:"Stück"},{id:3,name:"Dill",amount:0.5,unit:"Bund"},{id:4,name:"Olivenöl",amount:2,unit:"EL"},{id:5,name:"Brokkoli",amount:300,unit:"g"},{id:6,name:"Salz",amount:1,unit:"Prise"}],
-    steps:["Lachsfilet mit Salz, Pfeffer und Dill würzen.","In Olivenöl je 3–4 Min. pro Seite braten.","Brokkoli parallel in Salzwasser 5 Min. kochen.","Mit Zitronenspalten servieren."] },
-];
 
 // ─── Atom Components ─────────────────────────────────────────────────────────
 const Pill = ({ active, onClick, children, small }: { active: boolean; onClick: () => void; children: React.ReactNode; small?: boolean }) => (
@@ -233,7 +234,26 @@ function RecipeForm({ initial, onSave, onClose }: RecipeFormProps) {
         {f.ingredients.map((ing, i) => (
           <div key={ing.id} style={{ display: "flex", gap: 6, marginBottom: 7, alignItems: "center" }}>
             <input style={{ ...inp, flex: 2 }} placeholder="Zutat" value={ing.name} onChange={(e) => set("ingredients", f.ingredients.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
-            <input type="number" style={{ ...inp, width: 62, flex: "0 0 62px" }} placeholder="Menge" value={ing.amount} onChange={(e) => set("ingredients", f.ingredients.map((x, j) => j === i ? { ...x, amount: parseFloat(e.target.value) || 1 } : x))} />
+            <input
+              type="number"
+              style={{ ...inp, width: 62, flex: "0 0 62px" }}
+              placeholder="Menge"
+              value={ing.amount === 0 ? "" : ing.amount}
+              onFocus={(e) => e.target.select()}
+              onChange={(e) => {
+                const parsed = parseFloat(e.target.value);
+                set("ingredients", f.ingredients.map((x, j) =>
+                  j === i ? { ...x, amount: Number.isFinite(parsed) && parsed > 0 ? parsed : 0 } : x
+                ));
+              }}
+              onBlur={(e) => {
+                if (!e.target.value || parseFloat(e.target.value) <= 0) {
+                  set("ingredients", f.ingredients.map((x, j) =>
+                    j === i ? { ...x, amount: 1 } : x
+                  ));
+                }
+              }}
+            />
             <select style={{ ...inp, width: 74, flex: "0 0 74px", padding: "10px 6px" }} value={ing.unit} onChange={(e) => set("ingredients", f.ingredients.map((x, j) => j === i ? { ...x, unit: e.target.value } : x))}>
               {UNITS.map((u) => <option key={u}>{u}</option>)}
             </select>
@@ -423,48 +443,200 @@ function MealPlanner() {
   const handleNeedReauth = useCallback(() => setNeedReauth(true), []);
   useEffect(() => { if (!hasStoredJwtToken()) setNeedReauth(true); }, []);
 
-  // ── Planner settings (read from Settings page via localStorage) ──────────
+  // ── Planner settings (localStorage as initial; overridden by API load below) ──
   const savedSettings = readLS<{ globalPersons: number; thresholds: { quick: number; normal: number } }>(
     LS_SETTINGS, { globalPersons: 2, thresholds: { quick: 20, normal: 35 } }
   );
-  const [globalPersons] = useState(savedSettings.globalPersons);
-  const [thresholds]    = useState(savedSettings.thresholds);
+  const [globalPersons, setGlobalPersons] = useState(savedSettings.globalPersons);
+  const [thresholds, setThresholds]       = useState(savedSettings.thresholds);
 
-  // ── Persisted state ───────────────────────────────────────────────────────
-  const [recipes, setRecipes]         = useState<Recipe[]>(() => readLS<Recipe[]>(LS_RECIPES, INITIAL_RECIPES));
-  const [week, setWeek]               = useState<Week>(() => readLS<Week>(LS_WEEK, EMPTY_WEEK()));
-  const [daySettings, setDaySettings] = useState<Record<string, DaySettingsEntry>>(() => readLS(LS_DAY_SETTINGS, DEFAULT_DAY_SETTINGS()));
-  const [manualItems, setManualItems] = useState<PlannerManualItem[]>([]);
+  // ── Core state (populated from API) ──────────────────────────────────────
+  const [recipes, setRecipes]         = useState<Recipe[]>([]);
+  const [week, setWeek]               = useState<Week>(EMPTY_WEEK);
+  const [daySettings, setDaySettings] = useState<Record<string, DaySettingsEntry>>(DEFAULT_DAY_SETTINGS);
 
   // ── Inventory from real API ───────────────────────────────────────────────
   const [inventoryNames, setInventoryNames] = useState<string[]>([]);
 
+  // ── Refs for week-plan load/save coordination ─────────────────────────────
+  const weekLoadedRef    = useRef(false);
+  const weekSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (!hasStoredJwtToken()) return;
-    authApiCall<ApiResponse>("/api/fetch_items?only_wish_list=false", undefined, { retries: 2, onUnauthorized: handleNeedReauth })
+    authApiCall<ApiResponse>(buildFetchItemsUrl({ onlyWishList: false }), undefined, { retries: 2, onUnauthorized: handleNeedReauth })
       .then((data) => {
-        const names = data.items.map((i) => i.text?.toLowerCase() ?? "").filter(Boolean);
+        const names = data.items
+          .map((i) => normalizeItemName(i.text ?? ""))
+          .filter(Boolean);
         setInventoryNames(names);
       })
       .catch(() => setInventoryNames([]));
   }, [handleNeedReauth]);
 
+  useEffect(() => {
+    if (!hasStoredJwtToken()) return;
+    authApiCall<{ recipes?: Array<{ recipe_id?: number; name?: string; emoji?: string; base_time?: number; default_portions?: number; tags?: string[]; ingredients?: Array<{ amount?: number | null; unit?: string | null; name?: string }>; steps?: string[] }>; recipe_count?: number }>(
+      API_PATHS.recipes, undefined, { retries: 1, onUnauthorized: handleNeedReauth },
+    )
+      .then((data) => {
+        if (data.recipes && data.recipes.length > 0) {
+          const serverRecipes: Recipe[] = data.recipes.map((r) => ({
+            id: r.recipe_id ?? 0,
+            name: r.name ?? "",
+            emoji: r.emoji ?? "🍳",
+            baseTime: r.base_time ?? 15,
+            baseServings: r.default_portions ?? 2,
+            tags: r.tags ?? [],
+            favorited: false,
+            ingredients: (r.ingredients ?? []).map((ing, idx) => ({
+              id: idx + 1,
+              name: ing.name ?? "",
+              amount: ing.amount ?? 1,
+              unit: ing.unit ?? "Stück",
+            })),
+            steps: r.steps ?? [],
+          }));
+          setRecipes(serverRecipes);
+        }
+      })
+      .catch(() => { /* fallback: recipes stay empty */ });
+  }, [handleNeedReauth]);
+
+  // ── Load planner settings from API ────────────────────────────────────────
+  useEffect(() => {
+    if (!hasStoredJwtToken()) return;
+    authApiCall<{ defaultServings?: number; quickMealMinutes?: number; normalMealMinutes?: number }>(
+      API_PATHS.plannerSettings, undefined, { retries: 1, onUnauthorized: handleNeedReauth },
+    )
+      .then((data) => {
+        if (typeof data.defaultServings === "number") setGlobalPersons(data.defaultServings);
+        if (typeof data.quickMealMinutes === "number" && typeof data.normalMealMinutes === "number") {
+          setThresholds({ quick: data.quickMealMinutes, normal: data.normalMealMinutes });
+        }
+      })
+      .catch(() => { /* keep localStorage defaults */ });
+  }, [handleNeedReauth]);
+
+  // ── Load week plan from API (runs once recipes are available) ─────────────
+  useEffect(() => {
+    if (!hasStoredJwtToken()) return;
+    if (recipes.length === 0) return;        // wait until recipes are loaded
+    if (weekLoadedRef.current) return;       // only load once
+    weekLoadedRef.current = true;
+
+    type ApiSlot = { recipe_id: number; servings: number } | null;
+    type ApiDayPlan = { breakfast?: ApiSlot; lunch?: ApiSlot; dinner?: ApiSlot };
+    type ApiDaySettings = { day_meal_time_type?: DayType; breakfast_blocked?: boolean; lunch_blocked?: boolean; dinner_blocked?: boolean };
+
+    authApiCall<{ week?: Record<string, ApiDayPlan>; DaySettings?: Record<string, ApiDaySettings> }>(
+      API_PATHS.weekPlan, undefined, { retries: 1, onUnauthorized: handleNeedReauth },
+    )
+      .then((data) => {
+        if (data.week && Object.keys(data.week).length > 0) {
+          const newWeek = EMPTY_WEEK();
+          for (const [apiDay, apiDayPlan] of Object.entries(data.week)) {
+            const appDay = API_TO_DAY[apiDay];
+            if (!appDay || !apiDayPlan) continue;
+            for (const mealKey of MEAL_KEYS) {
+              const slot = apiDayPlan[mealKey];
+              if (!slot) continue;
+              const recipe = recipes.find((r) => r.id === slot.recipe_id);
+              if (recipe) newWeek[appDay][mealKey] = { recipe, servings: slot.servings };
+            }
+          }
+          setWeek(newWeek);
+        }
+        if (data.DaySettings && Object.keys(data.DaySettings).length > 0) {
+          const newDS = DEFAULT_DAY_SETTINGS();
+          for (const [apiDay, ds] of Object.entries(data.DaySettings)) {
+            const appDay = API_TO_DAY[apiDay];
+            if (!appDay || !ds) continue;
+            newDS[appDay] = {
+              type: ds.day_meal_time_type ?? "normal",
+              blocked: {
+                breakfast: ds.breakfast_blocked ?? false,
+                lunch:     ds.lunch_blocked     ?? false,
+                dinner:    ds.dinner_blocked    ?? false,
+              },
+            };
+          }
+          setDaySettings(newDS);
+        }
+      })
+      .catch(() => {
+        // Fall back to localStorage if API unavailable
+        setWeek(readLS<Week>(LS_WEEK, EMPTY_WEEK()));
+        setDaySettings(readLS<Record<string, DaySettingsEntry>>(LS_DAY_SETTINGS, DEFAULT_DAY_SETTINGS()));
+      });
+  }, [recipes, handleNeedReauth]);
+
+  // ── Auto-save week plan to API (debounced, only after initial load) ────────
+  useEffect(() => {
+    if (!weekLoadedRef.current) return;
+    if (!hasStoredJwtToken()) return;
+
+    if (weekSaveTimerRef.current) clearTimeout(weekSaveTimerRef.current);
+    weekSaveTimerRef.current = setTimeout(() => {
+      const apiWeek: Record<string, unknown> = {};
+      const apiDaySettings: Record<string, unknown> = {};
+      for (const [appDay, apiDay] of Object.entries(DAY_TO_API)) {
+        const dp = week[appDay];
+        const ds = daySettings[appDay];
+        const slots: Record<string, unknown> = {};
+        for (const mk of MEAL_KEYS) {
+          const slot = dp[mk];
+          slots[mk] = slot
+            ? { recipe_id: slot.recipe.id, servings: slot.servings, meal_type: mk, day: apiDay, day_time: mk }
+            : null;
+        }
+        apiWeek[apiDay] = slots;
+        apiDaySettings[apiDay] = {
+          day: apiDay,
+          day_meal_time_type: ds.type,
+          breakfast_blocked: ds.blocked.breakfast,
+          lunch_blocked:     ds.blocked.lunch,
+          dinner_blocked:    ds.blocked.dinner,
+        };
+      }
+      void authApiCall(
+        API_PATHS.weekPlan,
+        { method: "POST", headers: { "Content-Type": "application/json; charset=UTF-8" }, body: JSON.stringify({ week: apiWeek, DaySettings: apiDaySettings }) },
+        { retries: 1, onUnauthorized: handleNeedReauth },
+      );
+    }, 1500);
+
+    return () => { if (weekSaveTimerRef.current) clearTimeout(weekSaveTimerRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [week, daySettings, handleNeedReauth]);
+
   const inInventory = useCallback((name: string) => {
     if (!inventoryNames.length) return false;
-    const n = name.toLowerCase();
-    return inventoryNames.some((inv) => inv.includes(n) || n.includes(inv));
+    const queryTokens = toTokenSet(name);
+    if (queryTokens.size === 0) {
+      return false;
+    }
+
+    return inventoryNames.some((inventoryItem) => {
+      const inventoryTokens = toTokenSet(inventoryItem);
+      if (inventoryTokens.size === 0) {
+        return false;
+      }
+
+      // Require every ingredient token to be present in the pantry item token set.
+      for (const token of queryTokens) {
+        if (!inventoryTokens.has(token)) {
+          return false;
+        }
+      }
+      return true;
+    });
   }, [inventoryNames]);
 
   // ── Reactive shopping list ────────────────────────────────────────────────
   const weekPlanItems = useMemo(() => collectMissing(week, inInventory), [week, inInventory]);
 
-  // Sync to localStorage so WishList can read it
-  useEffect(() => {
-    writeLS(LS_SHOPPING, { weekPlanItems, manualItems });
-  }, [weekPlanItems, manualItems]);
-
-  // Persist recipes / week / daySettings
-  useEffect(() => { writeLS(LS_RECIPES, recipes); }, [recipes]);
+  // Cache week / daySettings in localStorage as offline fallback
   useEffect(() => { writeLS(LS_WEEK, week); }, [week]);
   useEffect(() => { writeLS(LS_DAY_SETTINGS, daySettings); }, [daySettings]);
 
@@ -474,6 +646,7 @@ function MealPlanner() {
   const [modal, setModal]        = useState<Modal>(null);
   const [favFilter, setFavFilter] = useState(false);
   const [search, setSearch]       = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [toast, showToast, clearToast] = useFeedbackToast(3000);
 
   const today     = new Date().getDay();
@@ -497,30 +670,203 @@ function MealPlanner() {
     });
   };
 
-  const saveRecipe = (r: Recipe) => {
-    setRecipes((prev) => prev.find((x) => x.id === r.id) ? prev.map((x) => x.id === r.id ? r : x) : [...prev, r]);
+  const saveRecipe = async (r: Recipe) => {
+    const isExistingRecipe = recipes.some((x) => x.id === r.id);
+    let savedRecipe = r;
+
+    if (!isExistingRecipe) {
+      try {
+        const created = await authApiCall<{ recipe_id?: number }>(
+          API_PATHS.recipes,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=UTF-8" },
+            body: JSON.stringify({
+              name: r.name,
+              emoji: r.emoji,
+              baseTime: r.baseTime,
+              baseServings: r.baseServings,
+              tags: r.tags,
+              favorited: r.favorited,
+              ingredients: r.ingredients.map((ingredient) => ({
+                amount: Math.max(1, Math.round(ingredient.amount)),
+                unit: ingredient.unit,
+                name: ingredient.name,
+                count: null,
+              })),
+              steps: r.steps,
+            }),
+          },
+          { retries: 1, onUnauthorized: handleNeedReauth },
+        );
+        // Use server-assigned ID so subsequent deletes hit the right resource
+        if (typeof created.recipe_id === "number") {
+          savedRecipe = { ...r, id: created.recipe_id };
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Rezept konnte nicht im Backend gespeichert werden";
+        showToast(message, "error");
+        return;
+      }
+    }
+
+    setRecipes((prev) =>
+      prev.find((x) => x.id === savedRecipe.id)
+        ? prev.map((x) => x.id === savedRecipe.id ? savedRecipe : x)
+        : [...prev, savedRecipe],
+    );
     setModal(null);
-    showToast(`${r.emoji} ${r.name} gespeichert`, "success");
+    showToast(`${savedRecipe.emoji} ${savedRecipe.name} gespeichert`, "success");
   };
 
   const toggleFav = (recipe: Recipe) =>
     setRecipes((prev) => prev.map((r) => r.id === recipe.id ? { ...r, favorited: !r.favorited } : r));
 
-  const addMissingToList = (recipe: Recipe, servings: number) => {
-    const items = recipe.ingredients
-      .filter((i) => !inInventory(i.name))
-      .map((i) => ({ id: uid(), name: i.name, amount: fmtAmt(i.amount, recipe.baseServings, servings), unit: i.unit, fromRecipe: recipe.name }));
-    setManualItems((prev) => {
-      const updated = [...prev];
-      items.forEach((m) => {
-        const idx = updated.findIndex((w) => w.name.toLowerCase() === m.name.toLowerCase());
-        if (idx >= 0) updated[idx] = { ...updated[idx], amount: parseFloat((updated[idx].amount + m.amount).toFixed(1)) };
-        else updated.push(m);
+  const deleteRecipe = useCallback(async (recipe: Recipe) => {
+    // Optimistic: remove from list and any week-plan slots immediately
+    setRecipes((prev) => prev.filter((r) => r.id !== recipe.id));
+    setWeek((prev) => {
+      const next = { ...prev };
+      DAYS.forEach((day) => {
+        const dp = { ...next[day] };
+        MEAL_KEYS.forEach((key) => {
+          if (dp[key]?.recipe.id === recipe.id) dp[key] = null;
+        });
+        next[day] = dp;
       });
-      return updated;
+      return next;
     });
-    setModal(null);
-    showToast(`${items.length} Zutaten zur Einkaufsliste hinzugefügt`, "success");
+    setConfirmDeleteId(null);
+    if (modal?.type === "detail" && modal.recipe.id === recipe.id) setModal(null);
+
+    try {
+      await authApiCall(
+        API_PATHS.recipeById(recipe.id),
+        { method: "DELETE" },
+        { retries: 1, onUnauthorized: handleNeedReauth },
+      );
+      showToast(`${recipe.emoji} „${recipe.name}" gelöscht`, "success");
+    } catch {
+      // Revert on failure
+      setRecipes((prev) => [...prev, recipe]);
+      showToast("Löschen fehlgeschlagen", "error");
+    }
+  }, [handleNeedReauth, modal, showToast]);
+
+  const addMissingToList = async (recipe: Recipe, servings: number) => {
+    const scaledIngredients = recipe.ingredients.map((ingredient, index) => ({
+      ingredient,
+      scaledAmount: fmtAmt(ingredient.amount, recipe.baseServings, servings),
+      wishItemId: `planner-${recipe.id}-${ingredient.id}-${index}`,
+    }));
+
+    const missingByInventory = scaledIngredients.filter(({ ingredient }) => !inInventory(ingredient.name));
+
+    if (missingByInventory.length === 0) {
+      setModal(null);
+      showToast("Alle Zutaten sind bereits im Vorrat", "success");
+      return;
+    }
+
+    const payload: PantryClassificationWishItem[] = missingByInventory.map(({ ingredient, scaledAmount, wishItemId }) => ({
+      item_name: ingredient.name,
+      item_id: wishItemId,
+      count: 1,
+      quantity: {
+        product_quantity: Math.max(1, Math.round(scaledAmount)),
+        product_quantity_unit: ingredient.unit,
+      },
+      info: "",
+    }));
+
+    let toAdd = missingByInventory;
+
+    try {
+      const classification = await authApiCall<{
+        mapping?: Array<{
+          foundMappingWish?: boolean;
+          mappedWishItem?: { item_id?: string | null; item_name?: string | null } | null;
+          pantryItem?: { item_name?: string | null } | null;
+        }>;
+      }>(buildClassifyItemsAgainstPantryUrl(payload), undefined, {
+        retries: 1,
+        onUnauthorized: handleNeedReauth,
+      });
+
+      const mappedWishIds = new Set<string>();
+      for (const entry of classification.mapping ?? []) {
+        if (entry.foundMappingWish && entry.mappedWishItem?.item_id) {
+          mappedWishIds.add(entry.mappedWishItem.item_id);
+        }
+      }
+
+      toAdd = missingByInventory.filter(({ wishItemId }) => {
+        if (mappedWishIds.has(wishItemId)) return false;
+        return true;
+      });
+
+      if (toAdd.length === 0) {
+        setModal(null);
+        showToast("Alle fehlenden Zutaten sind bereits in deiner Vorratsliste erfasst", "success");
+        return;
+      }
+    } catch {
+      toAdd = missingByInventory;
+    }
+
+    const aggregated = new Map<string, { name: string; count: number; quantity: number | null; unit: string | null }>();
+    for (const entry of toAdd) {
+      const key = normalizeItemName(entry.ingredient.name);
+      if (!key) continue;
+      const existing = aggregated.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        aggregated.set(key, {
+          name: entry.ingredient.name,
+          count: 1,
+          quantity: entry.scaledAmount,
+          unit: entry.ingredient.unit,
+        });
+      }
+    }
+
+    if (aggregated.size === 0) {
+      setModal(null);
+      showToast("Keine neuen Zutaten für die Wunschliste gefunden", "success");
+      return;
+    }
+
+    try {
+      for (const value of aggregated.values()) {
+        const body: AddEanRequest = {
+          item_name: value.name,
+          count: value.count,
+          wish_list: "true",
+        };
+        if (value.quantity !== null && value.unit !== null) {
+          body.quantity_data = {
+            product_quantity: Math.max(1, Math.round(value.quantity)),
+            product_quantity_unit: value.unit,
+          };
+        }
+        await apiClient.addEanToList(body, {
+          retries: 1,
+          retryDelayMs: 300,
+          onUnauthorized: handleNeedReauth,
+        });
+      }
+
+      setModal(null);
+      showToast(`${aggregated.size} Zutaten zur Wunschliste hinzugefügt`, "success");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Fehlende Zutaten konnten nicht zur Wunschliste hinzugefügt werden";
+      showToast(message, "error");
+    }
   };
 
   const handleGenerate = () => {
@@ -535,10 +881,78 @@ function MealPlanner() {
     );
   };
 
+  // Silent wish-list sync used when adding a slot – runs in background
+  const addIngredientsToWishListSilently = useCallback(async (recipe: Recipe, servings: number) => {
+    const scaledIngredients = recipe.ingredients.map((ingredient, index) => ({
+      ingredient,
+      scaledAmount: fmtAmt(ingredient.amount, recipe.baseServings, servings),
+      wishItemId: `planner-${recipe.id}-${ingredient.id}-${index}`,
+    }));
+
+    let toAdd = scaledIngredients.filter(({ ingredient }) => !inInventory(ingredient.name));
+    if (toAdd.length === 0) return;
+
+    const payload: PantryClassificationWishItem[] = toAdd.map(({ ingredient, scaledAmount, wishItemId }) => ({
+      item_name: ingredient.name,
+      item_id: wishItemId,
+      count: 1,
+      quantity: { product_quantity: Math.max(1, Math.round(scaledAmount)), product_quantity_unit: ingredient.unit },
+      info: "",
+    }));
+
+    try {
+      const classification = await authApiCall<{
+        mapping?: Array<{ foundMappingWish?: boolean; mappedWishItem?: { item_id?: string | null } | null }>;
+      }>(buildClassifyItemsAgainstPantryUrl(payload), undefined, { retries: 1, onUnauthorized: handleNeedReauth });
+
+      const alreadyInWishList = new Set<string>();
+      for (const entry of classification.mapping ?? []) {
+        if (entry.foundMappingWish && entry.mappedWishItem?.item_id) {
+          alreadyInWishList.add(entry.mappedWishItem.item_id);
+        }
+      }
+      toAdd = toAdd.filter(({ wishItemId }) => !alreadyInWishList.has(wishItemId));
+    } catch {
+      /* fallback: add all missing */
+    }
+
+    if (toAdd.length === 0) return;
+
+    const aggregated = new Map<string, { name: string; scaledAmount: number; unit: string }>();
+    for (const { ingredient, scaledAmount } of toAdd) {
+      const key = normalizeItemName(ingredient.name);
+      if (!key) continue;
+      const existing = aggregated.get(key);
+      if (existing) existing.scaledAmount = parseFloat((existing.scaledAmount + scaledAmount).toFixed(1));
+      else aggregated.set(key, { name: ingredient.name, scaledAmount, unit: ingredient.unit });
+    }
+
+    for (const { name, scaledAmount, unit } of aggregated.values()) {
+      await apiClient.addEanToList(
+        {
+          item_name: name,
+          count: 1,
+          wish_list: "true",
+          quantity_data: {
+            product_quantity: Math.max(1, Math.round(scaledAmount)),
+            product_quantity_unit: unit,
+          },
+        },
+        { retries: 1, retryDelayMs: 300, onUnauthorized: handleNeedReauth },
+      );
+    }
+
+    if (aggregated.size > 0) {
+      showToast(`🛒 ${aggregated.size} Zutat${aggregated.size > 1 ? "en" : ""} auf Wunschliste`, "success");
+    }
+  }, [inInventory, handleNeedReauth, showToast]);
+
   const addSlot = (day: string, mealKey: keyof DayPlan, recipe: Recipe) => {
     setWeek((prev) => ({ ...prev, [day]: { ...prev[day], [mealKey]: { recipe, servings: globalPersons } } }));
     setModal(null);
     showToast(`${recipe.emoji} ${recipe.name} geplant`, "success");
+    // Fire-and-forget: sync missing ingredients to wish list
+    void addIngredientsToWishListSilently(recipe, globalPersons);
   };
 
   const updateSlotServings = (day: string, mealKey: keyof DayPlan, servings: number) =>
@@ -557,11 +971,11 @@ function MealPlanner() {
   const dayData    = week[DAYS[activeDay]];
   const daySetting = daySettings[DAYS[activeDay]];
   const allMeals   = DAYS.flatMap((d) => Object.values(week[d]).filter(Boolean) as MealSlot[]);
-  const totalShoppingItems = weekPlanItems.length + manualItems.length;
+  const totalShoppingItems = weekPlanItems.length;
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, fontFamily: "'DM Sans', system-ui, sans-serif", paddingBottom: 80 }}>
+    <div style={{ minHeight: "100vh", background: "transparent", color: C.text, fontFamily: "var(--font-body)", paddingBottom: 80 }}>
       {needReauth && <AuthPopup onAuthenticated={() => { setNeedReauth(false); }} />}
 
       <AppHeader username={username} />
@@ -710,19 +1124,75 @@ function MealPlanner() {
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
             {filteredRecipes.length === 0 && <div style={{ textAlign: "center", color: C.muted, padding: 36, fontSize: 14 }}>{favFilter ? "Noch keine Favoriten." : "Keine Rezepte gefunden."}</div>}
-            {filteredRecipes.map((r) => (
-              <div key={r.id} onClick={() => setModal({ type: "detail", recipe: r })} style={{ background: C.surf, border: `1px solid ${C.border}`, borderRadius: 16, padding: "14px 16px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer" }}>
-                <div style={{ fontSize: 28, width: 50, height: 50, background: C.surf2, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{r.emoji}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{r.name}</div>
-                  <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{r.baseTime} min · {r.baseServings} Port. · {r.ingredients.length} Zutaten</div>
-                  <div style={{ display: "flex", gap: 4, marginTop: 5, flexWrap: "wrap" }}>
-                    {r.tags.map((t) => <span key={t} style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 5, background: C.surf2, color: C.muted }}>{t}</span>)}
-                  </div>
+            {filteredRecipes.map((r) => {
+              const isConfirming = confirmDeleteId === r.id;
+              return (
+                <div key={r.id}
+                  onClick={() => { if (!isConfirming) setModal({ type: "detail", recipe: r }); }}
+                  style={{
+                    background: isConfirming ? C.redBg : C.surf,
+                    border: `1px solid ${isConfirming ? C.redBorder : C.border}`,
+                    borderRadius: 16,
+                    padding: "14px 16px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    cursor: isConfirming ? "default" : "pointer",
+                    transition: "background 0.15s, border-color 0.15s",
+                  }}
+                >
+                  <div style={{ fontSize: 28, width: 50, height: 50, background: C.surf2, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{r.emoji}</div>
+                  {isConfirming ? (
+                    /* ── Inline delete confirmation ── */
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.red, marginBottom: 4 }}>Rezept löschen?</div>
+                      <div style={{ fontSize: 12, color: C.muted, marginBottom: 10 }}>„{r.name}" wird dauerhaft entfernt.</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void deleteRecipe(r); }}
+                          style={{ flex: 1, padding: "7px 0", borderRadius: 9, background: C.red, color: "#fff", fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer", fontFamily: "inherit" }}
+                        >Ja, löschen</button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}
+                          style={{ flex: 1, padding: "7px 0", borderRadius: 9, background: C.surf2, color: C.muted, fontSize: 13, fontWeight: 600, border: `1px solid ${C.border}`, cursor: "pointer", fontFamily: "inherit" }}
+                        >Abbrechen</button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* ── Normal card content ── */
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{r.name}</div>
+                      <div style={{ fontSize: 12, color: C.muted, marginTop: 2 }}>{r.baseTime} min · {r.baseServings} Port. · {r.ingredients.length} Zutaten</div>
+                      <div style={{ display: "flex", gap: 4, marginTop: 5, flexWrap: "wrap" }}>
+                        {r.tags.map((t) => <span key={t} style={{ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 5, background: C.surf2, color: C.muted }}>{t}</span>)}
+                      </div>
+                    </div>
+                  )}
+                  {!isConfirming && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleFav(r); }}
+                        style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", padding: 4 }}
+                      >{r.favorited ? "❤️" : "🤍"}</button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(r.id); }}
+                        aria-label="Rezept löschen"
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: C.dim, display: "flex", alignItems: "center", justifyContent: "center" }}
+                        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = C.red; }}
+                        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = C.dim; }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6M14 11v6" />
+                          <path d="M9 6V4h6v2" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <button onClick={(e) => { e.stopPropagation(); toggleFav(r); }} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", padding: 4, flexShrink: 0 }}>{r.favorited ? "❤️" : "🤍"}</button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

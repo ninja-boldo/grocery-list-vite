@@ -1,7 +1,8 @@
 # ============================================================================
 # Lookup table for item name denoising
 # ============================================================================
-WORD_STRIP = {
+
+FILLER_WORDS = {
     # ====================
     # ENGLISH
     # ====================
@@ -194,6 +195,158 @@ WORD_STRIP = {
     "formato familiar": "",
 }
 
+FOOD_BRAND_MAP = {
+    # Germany
+    "weihenstephan": "",
+    "müller": "",
+    "mueller": "",
+    "ehrmann": "",
+    "dr. oetker": "",
+    "rügenwalder mühle": "",
+    "ruegenwalder muehle": "",
+    "alnatura": "",
+    "alpro": "",
+    "henglein": "",
+    "knorr": "",
+    "maggi": "",
+    "milka": "",
+    "haribo": "",
+    "hipp": "",
+    "iglo": "",
+    "kühne": "",
+    "kuehne": "",
+    "thomy": "",
+    "zott": "",
+    "berchtesgadener land": "",
+    "meggle": "",
+    "kerrygold": "",
+    "dallmayr": "",
+    "tchibo": "",
+    # UK
+    "tesco": "",
+    "sainsbury's": "",
+    "sainsburys": "",
+    "waitrose": "",
+    "marks & spencer": "",
+    "marks and spencer": "",
+    "morrisons": "",
+    "asda": "",
+    "heinz": "",
+    "cadbury": "",
+    "walkers": "",
+    "warburtons": "",
+    "birds eye": "",
+    "mcvitie's": "",
+    "mcvities": "",
+    "branston": "",
+    "bisto": "",
+    "pg tips": "",
+    "twinings": "",
+    # Spain
+    "hacendado": "",
+    "gallina blanca": "",
+    "gallo": "",
+    "carbonell": "",
+    "campofrío": "",
+    "campofrio": "",
+    "elpozo": "",
+    "central lechera asturiana": "",
+    "kaiku": "",
+    "pascual": "",
+    "bimbo": "",
+    "don simón": "",
+    "don simon": "",
+    "la española": "",
+    "la espanola": "",
+    "hero": "",
+    "cuétara": "",
+    "cuetara": "",
+    # France
+    "danone": "",
+    "président": "",
+    "president": "",
+    "lactel": "",
+    "yoplait": "",
+    "bonne maman": "",
+    "fleury michon": "",
+    "herta": "",
+    "panzani": "",
+    "amora": "",
+    "maille": "",
+    "andros": "",
+    "elle & vire": "",
+    "elle and vire": "",
+    "casino": "",
+    "carrefour": "",
+    "auchan": "",
+    # USA
+    "kraft": "",
+    "kraft heinz": "",
+    "general mills": "",
+    "kellogg's": "",
+    "kelloggs": "",
+    "nestlé": "",
+    "nestle": "",
+    "campbell's": "",
+    "campbells": "",
+    "hormel": "",
+    "tyson": "",
+    "perdue": "",
+    "dole": "",
+    "del monte": "",
+    "chobani": "",
+    "philadelphia": "",
+    "oscar mayer": "",
+    "planters": "",
+    "jif": "",
+    "skippy": "",
+    "smucker's": "",
+    "smuckers": "",
+    "land o'lakes": "",
+    "land olakes": "",
+    "blue diamond": "",
+    "hidden valley": "",
+    "stouffer's": "",
+    "stouffers": "",
+    # Store brands (important!)
+    "edeka": "",
+    "rewe": "",
+    "gut & günstig": "",
+    "gut und günstig": "",
+    "ja!": "",
+    "k-classic": "",
+    "lidl": "",
+    "aldi": "",
+    "aldi süd": "",
+    "aldi sud": "",
+    "aldi nord": "",
+    "mercadona": "",
+}
+
+
+TYPO_CORRECTIONS = {
+    "mayonesse": "mayonnaise",
+    "chapaty": "chapati",
+    "kokusnuss": "kokosnuss",
+    "doppelrahmstufe": "frischkäse",
+    "salatmayo": "mayonnaise",
+    "vegane salatmayo": "mayonnaise",
+    "indian chicken tikka": "chicken tikka",
+}
+
+
+CANONICAL_COMPOUNDS = {
+    "hafer milch": "hafermilch",
+    "reis essig": "reisessig",
+}
+
+
+WORD_STRIP = FILLER_WORDS
+WORD_STRIP.update(FOOD_BRAND_MAP)
+WORD_STRIP.update(TYPO_CORRECTIONS)
+WORD_STRIP["sojaprodukt"] = "sojajoghurt"
+
+
 PHRASE_STRIP = [
     "ready to eat",
     "ready-to-eat",
@@ -211,4 +364,10 @@ PHRASE_STRIP = [
     "format familial",
     "family pack",
     "value pack",
+    "gepufft mit",
+    "gesüßt",
+    "gesusst",
+    "fermentiertes sojaprodukt",
+    "sommerblüte",
+    "sommerbluete",
 ]

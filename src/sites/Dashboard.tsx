@@ -4,6 +4,7 @@ import AppHeader from "@/comp/other/AppHeader";
 import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
 import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
+import { buildFetchItemsUrl } from "@/lib/api/openapi";
 import type { ApiResponse } from "@/lib/utils";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -126,8 +127,8 @@ const Dashboard = () => {
     setIsLoading(true);
     try {
       const [invResp, wishResp] = await Promise.all([
-        authApiCall<ApiResponse>("/api/fetch_items?only_wish_list=false&sortOrder=new-old&skip=0&limit=20&userId=1", undefined, { retries: 2, onUnauthorized: () => setNeedReauth(true) }),
-        authApiCall<ApiResponse>("/api/fetch_items?only_wish_list=true", undefined, { retries: 2, onUnauthorized: () => setNeedReauth(true) }),
+        authApiCall<ApiResponse>(buildFetchItemsUrl({ onlyWishList: false, sortOrder: "new-old", skip: 0, limit: 20, userId: "1" }), undefined, { retries: 2, onUnauthorized: () => setNeedReauth(true) }),
+        authApiCall<ApiResponse>(buildFetchItemsUrl({ onlyWishList: true }), undefined, { retries: 2, onUnauthorized: () => setNeedReauth(true) }),
       ]);
       const invParsed = parseStats(invResp, false);
       setRecentItems(invParsed.recent ?? []);

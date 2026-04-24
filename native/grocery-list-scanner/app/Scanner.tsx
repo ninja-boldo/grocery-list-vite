@@ -4,7 +4,8 @@ import { useCallback, useRef, useState } from "react";
 import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { useAuthSession } from "../lib/AuthSession";
-import { mobileApiUrl, MOBILE_LOGIN_ROUTE } from "../lib/config";
+import { MOBILE_LOGIN_ROUTE } from "../lib/config";
+import { addEanToList } from "../lib/api";
 
 type InventoryAction = "add" | "remove";
 
@@ -86,24 +87,26 @@ export default function Scanner() {
       resetScanner();
 
       try {
-        const authValue = jwtToken.startsWith("Bearer ")
-          ? jwtToken
-          : `Bearer ${jwtToken}`;
-
-        const resp = await fetch(mobileApiUrl("/add_ean_to_list/"), {
-          method: "POST",
-          body: JSON.stringify({
-            ean: scannedEan,
-            count: countDelta,
-            wish_list: "false",
-          }),
-          headers: {
-            "Content-type": "application/json; charset=UTF-8",
-            Authorization: authValue,
-          },
+        const data = await addEanToList(jwtToken, {
+          ean: scannedEan,
+          count: countDelta,
+          wish_list: "false",
         });
 
-        if (resp.status === 401) {
+        console.log("response: ", data);
+        const itemLabel = String(data.product_name || scannedEan || "item");
+        const operation = String(data.operation || "").toLowerCase();
+        const isRemoveSuccess = operation === "delete" || action === "remove";
+
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        if (isRemoveSuccess) {
+          showToast(true, `Removed ${requestedCount}x ${itemLabel}`);
+        } else {
+          showToast(true, `Added ${requestedCount}x ${itemLabel}`);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "";
+        if (message.startsWith("HTTP 401")) {
           clearSession();
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           showToast(false, "Session expired. Please sign in again.");
@@ -111,24 +114,6 @@ export default function Scanner() {
           return;
         }
 
-        if (resp.ok) {
-          const data = await resp.json();
-          console.log("response: ", data);
-          const itemLabel = String(data.product_name || scannedEan || "item");
-          const operation = String(data.operation || "").toLowerCase();
-          const isRemoveSuccess = operation === "delete" || action === "remove";
-
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          if (isRemoveSuccess) {
-            showToast(true, `Removed ${requestedCount}x ${itemLabel}`);
-          } else {
-            showToast(true, `Added ${requestedCount}x ${itemLabel}`);
-          }
-        } else {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-          showToast(false, `Server error ${resp.status}`);
-        }
-      } catch {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         showToast(false, "Network error");
       } finally {
