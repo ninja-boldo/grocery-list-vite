@@ -71,17 +71,28 @@ type Modal =
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const DAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-const DAY_FULL = [
-  "Montag",
-  "Dienstag",
-  "Mittwoch",
-  "Donnerstag",
-  "Freitag",
-  "Samstag",
-  "Sonntag",
+// These are computed at render time via t() — see useDayFull/useMealLabels hooks below
+const DAY_FULL_KEYS = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+] as const;
+const DAY_FULL_DEFAULTS = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
 ];
 const MEAL_KEYS: (keyof DayPlan)[] = ["breakfast", "lunch", "dinner"];
-const MEAL_LABELS = ["Frühstück", "Mittagessen", "Abendessen"];
+const MEAL_LABEL_KEYS = ["breakfast", "lunch", "dinner"] as const;
+const MEAL_LABEL_DEFAULTS = ["Breakfast", "Lunch", "Dinner"];
 const UNITS = [
   "g",
   "kg",
@@ -157,24 +168,24 @@ const API_TO_DAY: Record<string, string> = {
   su: "So",
 };
 
-// ─── App Color Palette ───────────────────────────────────────────────────────
+// ─── App Color Palette — uses CSS variables for full theme support ────────────
 const C = {
-  bg: "#0D1117",
-  surf: "#161b22",
-  surf2: "#21262d",
-  border: "#21262d",
-  text: "#e6edf3",
-  muted: "#8b949e",
-  dim: "#4A5568",
-  accent: "#2dd4bf",
-  accentBg: "#0f2a28",
-  accentBorder: "#0d9488",
-  green: "#1D9E75",
-  greenBg: "#0f2a28",
-  greenBorder: "#0d9488",
-  red: "#e05252",
-  redBg: "#1f0d0d",
-  redBorder: "#3d1e1e",
+  bg: "var(--bg)",
+  surf: "var(--surface)",
+  surf2: "var(--surface-2)",
+  border: "var(--border)",
+  text: "var(--text-main)",
+  muted: "var(--text-muted)",
+  dim: "var(--text-dim)",
+  accent: "var(--accent)",
+  accentBg: "var(--accent-light)",
+  accentBorder: "var(--accent-border)",
+  green: "var(--success)",
+  greenBg: "var(--success-bg)",
+  greenBorder: "var(--success-border)",
+  red: "var(--error)",
+  redBg: "var(--error-bg)",
+  redBorder: "var(--error-border)",
 } as const;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -268,6 +279,10 @@ function collectMissing(
   return Object.values(map);
 }
 
+const MEAL_LABELS = MEAL_LABEL_KEYS.map((k, i) =>
+    MEAL_LABEL_DEFAULTS[i],
+  );
+  
 function generateWeekPlan(
   recipes: Recipe[],
   daySettings: Record<string, DaySettingsEntry>,
@@ -469,7 +484,7 @@ function RecipeForm({ initial, onSave, onClose }: RecipeFormProps) {
     setF((p) => ({ ...p, [k]: v }));
   const inp: React.CSSProperties = {
     background: C.surf2,
-    border: "15pxSolidBorder",
+    border: `1.5px solid var(--border)`,
     borderRadius: 10,
     padding: "10px 12px",
     color: C.text,
@@ -1632,6 +1647,12 @@ function MealPlanner() {
   const navigate = useNavigate();
   const username = localStorage.getItem("username") ?? "L";
 
+  // Translated day and meal label arrays
+  const DAY_FULL = DAY_FULL_KEYS.map((k, i) => t(k, DAY_FULL_DEFAULTS[i]));
+  const MEAL_LABELS = MEAL_LABEL_KEYS.map((k, i) =>
+    t(k, MEAL_LABEL_DEFAULTS[i]),
+  );
+
   // ── Auth ──────────────────────────────────────────────────────────────────
   const [needReauth, setNeedReauth] = useState(false);
   const handleNeedReauth = useCallback(() => setNeedReauth(true), []);
@@ -1979,17 +2000,18 @@ function MealPlanner() {
     const isExistingRecipe = recipes.some((x) => x.id === r.id);
     let savedRecipe = r;
 
-    if (!isExistingRecipe) {
+
       try {
+        const method = isExistingRecipe ? "PUT" : "POST";
+        const endpoint = isExistingRecipe
+          ? API_PATHS.recipeById(r.id)
+          : API_PATHS.recipes;
         const created = await authApiCall<{ recipe_id?: number }>(
-          API_PATHS.recipes,
+          endpoint,
           {
-            method: "POST",
+            method: method,
             headers: {
-              "Content-Type": t(
-                "content_type_application_json_utf8",
-                "application/json; charset=UTF-8",
-              ),
+              "Content-Type": "application/json; charset=UTF-8",
             },
             body: JSON.stringify({
               name: r.name,
@@ -2023,7 +2045,7 @@ function MealPlanner() {
               );
         showToast(message, "error");
         return;
-      }
+      
     }
 
     setRecipes((prev) =>
@@ -2597,25 +2619,25 @@ function MealPlanner() {
               {DAY_FULL[activeDay]}
             </div>
             <div style={{ display: "flex", gap: 5 }}>
-              {DAY_TYPE_OPTIONS.map((t) => (
+              {DAY_TYPE_OPTIONS.map((x) => (
                 <button
-                  key={t.id}
-                  onClick={() => setDayType(DAYS[activeDay], t.id)}
-                  title={t("labelDesc", "{{label}} ({{desc}})", {
-                    label: t.label,
-                    desc: t.desc,
+                  key={x.id}
+                  onClick={() => setDayType(DAYS[activeDay], x.id)}
+                  title={t("labelDesc", "label desc", {
+                    label: x.label,
+                    desc: x.desc,
                   })}
                   style={{
                     width: 32,
                     height: 32,
                     borderRadius: 9,
                     fontSize: 14,
-                    border: `1.5px solid ${daySetting.type === t.id ? C.accentBorder : C.border}`,
-                    background: daySetting.type === t.id ? C.accentBg : C.surf2,
+                    border: `1.5px solid ${daySetting.type === x.id ? C.accentBorder : C.border}`,
+                    background: daySetting.type === x.id ? C.accentBg : C.surf2,
                     cursor: "pointer",
                   }}
                 >
-                  {t.icon}
+                  {x.icon}
                 </button>
               ))}
             </div>

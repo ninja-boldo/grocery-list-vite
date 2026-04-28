@@ -13,13 +13,16 @@ interface Props {
   type: BadgeType | null;
   Color_1: string | undefined;
   Color_2: string | undefined;
+  /** Override: pass a pre-computed expiryDays number to show "X days" text */
+  expiryDaysOverride?: number | null;
 }
 
 const Badge = ({
   text_or_dates,
   type,
-  Color_1 = "#5eead4",
-  Color_2 = "#0f2a28",
+  Color_1 = "var(--accent)",
+  Color_2 = "var(--accent-light)",
+  expiryDaysOverride,
 }: Props) => {
   const { t } = useTranslation();
 
@@ -41,22 +44,37 @@ const Badge = ({
   const text = isTextBadge ? (text_or_dates as string) : null;
   const dates = isDateBadge ? (text_or_dates as string[]) : [];
 
-  return isTextBadge ? (
-    <div
-      style={{
-        background: Color_2,
-        fontSize: 11,
-        border: `1px solid #0d948850`,
-        color: Color_1,
-        padding: "3px 10px",
-        marginInline: "0.6em",
-        borderRadius: 999,
-        margin: "0.4em",
-      }}
-    >
-      {text}
-    </div>
-  ) : (
+  if (isTextBadge) {
+    return (
+      <div
+        style={{
+          background: Color_2,
+          fontSize: 11,
+          border: `1px solid #0d948850`,
+          color: Color_1,
+          padding: "3px 10px",
+          marginInline: "0.6em",
+          borderRadius: 999,
+          margin: "0.4em",
+        }}
+      >
+        {text}
+      </div>
+    );
+  }
+
+  const daysLabel = (() => {
+    if (expiryDaysOverride !== undefined && expiryDaysOverride !== null) {
+      const d = expiryDaysOverride;
+      if (d < 0) return null;
+      if (d === 0) return t("expiresToday", "expires today");
+      if (d === 1) return t("expiresTomorrow", "expires tomorrow");
+      return t("expiresInDays", "{{days}} days", { days: d });
+    }
+    return null;
+  })();
+
+  return (
     <div>
       <span
         style={{
@@ -83,14 +101,12 @@ const Badge = ({
           stroke="currentColor"
           strokeWidth="2"
         >
-          {/* calendar sign */}
           <rect x="3" y="4" width="18" height="18" rx="2" />
           <line x1="16" y1="2" x2="16" y2="6" />
           <line x1="8" y1="2" x2="8" y2="6" />
           <line x1="3" y1="10" x2="21" y2="10" />
         </svg>
-        {t("lengthDate", "{{length}} date", { length: dates.length })}
-        {dates.length !== 1 ? "s" : ""}
+        {daysLabel ?? t("lengthDate", "{{length}} date", { length: dates.length }) + (dates.length !== 1 ? "s" : "")}
       </span>
     </div>
   );

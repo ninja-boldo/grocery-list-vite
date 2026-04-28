@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import i18next from "i18next";
 
 const euro = new Intl.NumberFormat("de-DE", {
   style: "currency",
@@ -29,8 +28,8 @@ export type OfferCardProps = {
 };
 
 function formatSize(w: number | null, v: number | null): string {
-  if (w !== null) return i18next.t("wG", "{{w}} g", { w });
-  if (v !== null) return i18next.t("vMl", "{{v}} ml", { v });
+  if (w !== null) return `${w} g`;
+  if (v !== null) return `${v} ml`;
   return "—";
 }
 
@@ -40,13 +39,8 @@ function formatUnitPrice(
   v: number | null,
 ): string | null {
   if (w !== null && w > 0)
-    return i18next.t("valKg", "{{val}} €/kg", {
-      val: decimal.format(price / (w / 1000)),
-    });
-  if (v !== null && v > 0)
-    return i18next.t("valL", "{{val}} €/L", {
-      val: decimal.format(price / (v / 1000)),
-    });
+    return `${((price / weight) * 1000).toFixed(2)} €/kg`;
+  if (v !== null && v > 0) return `${((price / volume) * 1000).toFixed(2)} €/L`;
   return null;
 }
 

@@ -69,7 +69,7 @@ export const RecipeCardWeb = ({
           style={{
             border: "1px solid #2A333C",
             borderRadius: 16,
-            background: "#161B22",
+            background: "var(--surface)",
             padding: 16,
             display: "grid",
             gap: 12,
@@ -87,7 +87,7 @@ export const RecipeCardWeb = ({
               <h3
                 style={{
                   margin: 0,
-                  color: "#E6EDF3",
+                  color: "var(--text-main)",
                   fontSize: 17,
                   fontWeight: 700,
                   lineHeight: 1.2,
@@ -103,7 +103,7 @@ export const RecipeCardWeb = ({
                 style={{
                   borderRadius: 999,
                   border: "1px solid #2C363F",
-                  color: "#A7B7C7",
+                  color: "var(--text-muted)",
                   fontSize: 12,
                   padding: "4px 8px",
                 }}
@@ -116,7 +116,7 @@ export const RecipeCardWeb = ({
                 style={{
                   borderRadius: 999,
                   border: "1px solid #2C363F",
-                  color: "#A7B7C7",
+                  color: "var(--text-muted)",
                   fontSize: 12,
                   padding: "4px 8px",
                 }}
@@ -131,7 +131,7 @@ export const RecipeCardWeb = ({
                 style={{
                   borderRadius: 999,
                   border: "1px solid #2C363F",
-                  color: "#A7B7C7",
+                  color: "var(--text-muted)",
                   fontSize: 12,
                   padding: "4px 8px",
                 }}
@@ -145,7 +145,7 @@ export const RecipeCardWeb = ({
 
           <div
             style={{
-              color: "#9FB0C0",
+              color: "var(--text-muted)",
               fontSize: 12,
               textTransform: "uppercase",
               letterSpacing: "0.04em",
@@ -158,7 +158,7 @@ export const RecipeCardWeb = ({
             style={{
               margin: 0,
               paddingLeft: 18,
-              color: "#D4E2EF",
+              color: "var(--text-main)",
               fontSize: 13,
               display: "grid",
               gap: 4,
@@ -178,7 +178,7 @@ export const RecipeCardWeb = ({
           </ul>
 
           {recipe.ingredients.length > 5 && (
-            <div style={{ color: "#8FA2B4", fontSize: 12 }}>
+            <div style={{ color: "var(--text-dim)", fontSize: 12 }}>
               +{recipe.ingredients.length - 5}{" "}
               {t("moreIngredients", "more ingredients")}
             </div>
@@ -197,8 +197,10 @@ export const RecipeCardWeb = ({
                 border: "1px solid #1D9E75",
                 borderRadius: 12,
                 background:
-                  addingRecipeId === recipe.recipe_id ? "#0F2A28" : "#1D9E75",
-                color: "#FFFFFF",
+                  addingRecipeId === recipe.recipe_id
+                    ? "var(--accent-light)"
+                    : "var(--accent)",
+                color: "#fff",
                 padding: "9px 12px",
                 fontSize: 13,
                 fontWeight: 700,
@@ -226,8 +228,10 @@ export const RecipeCardWeb = ({
                 border: "1px solid #7F1D1D",
                 borderRadius: 12,
                 background:
-                  deletingRecipeId === recipe.recipe_id ? "#2B1111" : "#3A1212",
-                color: "#FCA5A5",
+                  deletingRecipeId === recipe.recipe_id
+                    ? "var(--error-bg)"
+                    : "var(--error-bg)",
+                color: "var(--error)",
                 padding: "9px 12px",
                 fontSize: 13,
                 fontWeight: 700,
@@ -252,8 +256,8 @@ export const RecipeCardWeb = ({
                   style={{
                     borderRadius: 999,
                     border: "1px solid #1D9E7550",
-                    background: "#0F2A28",
-                    color: "#5EEAD4",
+                    background: "var(--accent-light)",
+                    color: "var(--accent)",
                     fontSize: 11,
                     padding: "3px 8px",
                   }}

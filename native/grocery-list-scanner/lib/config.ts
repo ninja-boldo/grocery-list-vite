@@ -2,10 +2,11 @@
 const RAW_API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ??
   process.env.EXPO_PUBLIC_SERVER_BASE_URL ??
-  //"http://192.168.1.163:3030";
-  "https://boldo.ddns.net/api";
+  "http://192.168.1.163:3030";
+  //"https://boldo.ddns.net/api";
 
-const RAW_WEB_BASE_URL = "https://boldo.ddns.net";
+const RAW_WEB_BASE_URL =   "http://192.168.1.163:5173";
+//"https://boldo.ddns.net";
 const RAW_API_PREFIX = process.env.EXPO_PUBLIC_API_PREFIX ?? "";
 
 const normalizeUrl = (rawUrl: string) => {
@@ -15,7 +16,7 @@ const normalizeUrl = (rawUrl: string) => {
   const withProtocol = /^https?:\/\//i.test(trimmed)
     ? trimmed
     : `https://${trimmed}`;
-
+ 
   return withProtocol.replace(/\/+$/, "");
 };
 

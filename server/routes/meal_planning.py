@@ -11,6 +11,7 @@ from utils.api_helpers import (
     deleteRecipeById,
     getWeekPlanForUser,
     getWeekSettingsForUser,
+    modifyRecipe,
     replaceWeekPlanForUser,
     replaceWeekSettingsForUser,
     getPlannerSettings,
@@ -118,6 +119,26 @@ async def get_recipe_by_id(request: Request, recipe_id: int):
                 "code": status.HTTP_404_NOT_FOUND,
                 "detail": f"no recipe with id {recipe_id}",
             }
+
+
+@router.put("/recipes/{recipe_id}")
+async def modify_recipe(request: Request, body: AddRecipe, recipe_id: int):
+    try:
+        print(f"got this body: {body.model_dump_json()}")
+        username = getUsernameFromReq(request)
+        async with request.app.state.pool.acquire() as con:
+            uid = await getIdFromUsername(con, username)
+            await modifyRecipe(con, uid, recipe_id, body)
+        return {
+            "message": f"Successfully deleted recipe for user {uid}",
+            "status": "success",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"failed with this error: {e}",
+            "code": "500",
+        }
 
 
 @router.delete("/recipes/{recipe_id}")

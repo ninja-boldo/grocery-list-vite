@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional
 from typing_extensions import Literal
@@ -31,6 +32,11 @@ class ShortenLlmItemSingle(BaseModel):
 
 class ShortenLlmInput(BaseModel):
     items: list[ShortenLlmItemSingle]
+
+
+class PantryAndWishes(BaseModel):
+    pantry: list[str]
+    wishList: list[str]
 
 
 class GroceryItem(BaseModel):
@@ -78,6 +84,15 @@ class QuantityInfo(BaseModel):
     product_quantity_unit: Optional[str]
 
 
+class LogModelUsage(BaseModel):
+    model_name: str
+    usage_stats: dict
+    timestamp: Optional[datetime] = datetime.now(timezone.utc)
+    user_id: Optional[int] = None
+    process_name: str
+    provider_url: str
+
+
 class AddEanRequest(BaseModel):
     """Request model for add_ean_to_list endpoint"""
 
@@ -86,7 +101,6 @@ class AddEanRequest(BaseModel):
     count: Optional[int] = 1
     wish_list: Optional[str] = None
     quantity_data: Optional[QuantityInfo] = None
-
 
 
 class ItemInfoParsed(BaseModel):
@@ -190,8 +204,10 @@ class PlannerSettings(BaseModel):
 class Item(BaseModel):
     item_name: str
     item_id: str
-    count: int
-    quantity: QuantityInfo
+    count: int = 1
+    quantity: QuantityInfo = QuantityInfo(
+        product_quantity=None, product_quantity_unit=None
+    )
     # info: Optional[str] = ""
 
 
@@ -205,6 +221,7 @@ class ItemsFetched(BaseModel):
     tags: str
     mappedItems: list
     quantity: QuantityInfo | None = None
+    expiryDays: int
 
 
 class FetchItemsResponse(BaseModel):
@@ -217,12 +234,21 @@ class FetchItemsResponse(BaseModel):
 class InternalClassification(BaseModel):
     pantryItem: Item
     mappedWishItem: Item | None
-    foundMappingWish: bool
+    confidence: float
 
 
 class ClassificationWishListVsPantryInternal(BaseModel):
     mappings: list[InternalClassification]
     # info: Optional[str] = None
+
+
+class ItemToExpiryDays(BaseModel):
+    item: Item
+    expiryDays: int | None
+
+
+class ExpiryDateEstimationResponse(BaseModel):
+    mappings: list[ItemToExpiryDays]
 
 
 class SingleItemClassification(BaseModel):
@@ -253,16 +279,6 @@ class ItemClassificationRes(BaseModel):
 
 class ItemsWishedForRecipe(BaseModel):
     items: list[Item]
-
-
-class MappedWish(BaseModel):
-    item: str
-    mapped_wish: str
-    index_wish_list: int
-
-
-class WishMappingRes(BaseModel):
-    items: list[MappedWish]
 
 
 class ShortenedItem(BaseModel):
@@ -339,6 +355,7 @@ class AddRecipe(BaseModel):
     ingredients: list[Ingredient]
     steps: list[str]
 
+
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
@@ -351,6 +368,16 @@ class FetchedSingleItem(BaseModel):
     per_date_count: list[int]
     perish_dates: list[str]
     isWished: str
+
+
+class MappedWish(BaseModel):
+    item: Item
+    mapped_wish: Item
+    confidence: float
+
+
+class WishMapResponse(BaseModel):
+    items: list[MappedWish]
 
 
 class AddFetchedItems(BaseModel):

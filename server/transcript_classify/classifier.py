@@ -21,15 +21,22 @@ import asyncpg
 
 from utils.text_processing import shortenWithTable
 from utils.types_custom import (
+    ExpiryDateEstimationResponse,
     InternalClassification,
     Item,
+    PantryAndWishes,
     QuantityInfo,
     ShortenLlmInput,
     ShortenLlmItemSingle,
+    WishMapResponse,
 )
-from transcript_classify.groceryClassifier.groceryClassifierCustom import (
+'''from transcript_classify.groceryClassifier.groceryClassifierCustom import (
     GroceryClassifier,
-)
+)'''
+class GroceryClassifier:
+    def __init__(self) -> None:
+        pass
+    
 from transcript_classify.groceryClassifier.groceryClassifierLlm import (
     GroceryClassifierLlm,
 )
@@ -156,11 +163,14 @@ def mapWishItem(item_name: str, wished_items: list[str], min_conf: float = 0.8) 
 
 
 def mapWishItemBatch(
-    items: list[str],
-    wished_items_list: list[list[str]],
-) -> dict[str, dict]:
+    userToPantry: dict[int, PantryAndWishes], itemIdNameMapping: dict
+) -> WishMapResponse:
     """Batch wish mapping."""
-    return _get_llm_classifier().mapWishToItemBatch(items, wished_items_list)
+    return _get_llm_classifier().mapWishToItemBatch(userToPantry, itemIdNameMapping)
+
+
+def estimateExpiryDays(items: list[Item]) -> ExpiryDateEstimationResponse:
+    return _get_llm_classifier().estimateExpiryDays(items)
 
 
 async def getCachedMappings(
@@ -178,7 +188,8 @@ async def getCachedMappings(
             it.amount AS item_amount,
             inv.count AS count,
             ing_map.item_id AS item_id,
-            it.item_name AS item_name
+            it.item_name AS item_name,
+            ing_map.confidence as confidence,
         FROM ingredient_item_map ing_map
         JOIN ingredients ing ON ing.ingredient_id = ing_map.ingredient_id
         JOIN inventory inv ON inv.item_id = ing_map.item_id
@@ -210,7 +221,7 @@ async def getCachedMappings(
                     product_quantity_unit=row["item_unit"],
                 ),
             ),
-            foundMappingWish=True,
+            confidence=float(row.get("confidence", 0.5)),
         )
         for row in rows
     ]
@@ -229,7 +240,7 @@ def filterNeededIngredients(
         idToItemMap[ing.item_id] = ing
 
     for map in mapping:
-        if map.foundMappingWish:
+        if map.mappedWishItem is not None:
             ingId = map.mappedWishItem.item_id  # type: ignore
             alreadyInStockAmount = (
                 map.pantryItem.quantity.product_quantity or 0

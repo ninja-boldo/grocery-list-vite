@@ -62,7 +62,9 @@ const MergedDropdown = ({
           style={{
             all: "unset",
             boxSizing: "border-box",
-            backgroundColor: mainHover ? "#374151" : "#4b5563",
+            backgroundColor: mainHover
+              ? "var(--surface-3)"
+              : "var(--surface-2)",
             color: "#ffffff",
             border: "1px solid #6b7280",
             borderRight: "none",
@@ -89,7 +91,9 @@ const MergedDropdown = ({
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: toggleHover ? "#374151" : "#4b5563",
+            backgroundColor: toggleHover
+              ? "var(--surface-3)"
+              : "var(--surface-2)",
             color: "#ffffff",
             border: "1px solid #6b7280",
             borderLeft: "1px solid #374151",
@@ -124,7 +128,7 @@ const MergedDropdown = ({
             top: "100%",
             left: "0",
             marginTop: "4px",
-            backgroundColor: "#374151",
+            backgroundColor: "var(--surface-3)",
             border: "1px solid #4b5563",
             borderRadius: "8px",
             boxShadow: "0 10px 25px rgba(0, 0, 0, 0.25)",
@@ -148,7 +152,7 @@ const MergedDropdown = ({
                 fontWeight: "500",
                 color: activeTab === "subs" ? "#ffffff" : "#9ca3af",
                 backgroundColor:
-                  activeTab === "subs" ? "#4b5563" : "transparent",
+                  activeTab === "subs" ? "var(--surface-2)" : "transparent",
                 transition: "all 0.15s ease",
               }}
             >
@@ -167,7 +171,9 @@ const MergedDropdown = ({
                 fontWeight: "500",
                 color: activeTab === "sortOrder" ? "#ffffff" : "#9ca3af",
                 backgroundColor:
-                  activeTab === "sortOrder" ? "#4b5563" : "transparent",
+                  activeTab === "sortOrder"
+                    ? "var(--surface-2)"
+                    : "transparent",
                 transition: "all 0.15s ease",
               }}
             >
@@ -190,7 +196,7 @@ const MergedDropdown = ({
                   width: "100%",
                   padding: "8px 10px",
                   backgroundColor:
-                    hoveredIndex === index ? "#4b5563" : "transparent",
+                    hoveredIndex === index ? "var(--surface-2)" : "transparent",
                   color: hoveredIndex === index ? "#ffffff" : "#d1d5db",
                   cursor: "pointer",
                   fontSize: "13px",

@@ -1,5 +1,5 @@
+import { useTranslation } from "react-i18next";
 import type { Position } from "./Map";
-import i18next from "i18next";
 
 const mapsUrl = ({ lat, lon }: Position) =>
   /iPhone|iPad|MacIntel/.test(navigator.platform)
@@ -20,65 +20,63 @@ export const BottomSheet = ({
   onClose: () => void;
   onSubmitCatalogue: (pos: Position) => void;
   onViewOffers: (pos: Position) => void;
-}) => (
-  <>
-    {/* Overlay */}
-    <div
-      onClick={onClose}
-      style={{ position: "absolute", inset: 0, zIndex: 10 }}
-    />
+}) => {
+  const { t } = useTranslation();
 
-    {/* Sheet */}
-    <div className="geo-sheet">
-      <div className="geo-sheet__handle" />
+  return (
+    <>
+      {/* Overlay */}
+      <div
+        onClick={onClose}
+        style={{ position: "absolute", inset: 0, zIndex: 10 }}
+      />
 
-      <p className="geo-sheet__title">{pos.text}</p>
-
-      <div className="geo-sheet__actions">
-        {/* Directions */}
-        <a
-          href={mapsUrl(pos)}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="geo-sheet__btn geo-sheet__btn--primary"
-        >
-          <svg
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+      {/* Sheet */}
+      <div className="geo-sheet">
+        <div className="geo-sheet__handle" />
+        <p className="geo-sheet__title">{pos.text}</p>
+        <div className="geo-sheet__actions">
+          <a
+            href={mapsUrl(pos)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="geo-sheet__btn geo-sheet__btn--primary"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M17.657 16.657L13.414 20.9a2 2 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
-            />
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
-            />
-          </svg>
-          {i18next.t("direction", "Direction")}
-        </a>
+            <svg
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M17.657 16.657L13.414 20.9a2 2 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"
+              />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
+              />
+            </svg>
+            {t("direction", "Direction")}
+          </a>
+        </div>
+        <div className="mt-4">
+          <button
+            onClick={() => onSubmitCatalogue(pos)}
+            className="geo-sheet__btn geo-sheet__btn--ghost"
+          >
+            {t("submit", "Submit")}
+          </button>
+          <button onClick={() => onViewOffers(pos)} className="geo-sheet__btn">
+            {t("viewOffers", "View Offers")}
+          </button>
+        </div>
       </div>
-      <div className="mt-4">
-        {/* Submit */}
-        <button
-          onClick={() => onSubmitCatalogue(pos)}
-          className="geo-sheet__btn geo-sheet__btn--ghost"
-        >
-          {i18next.t("submit", "Submit")}
-        </button>
-
-        {/* View Offers */}
-        <button onClick={() => onViewOffers(pos)} className="geo-sheet__btn">
-          {i18next.t("viewOffers", "View Offers")}
-        </button>
-      </div>
-    </div>
-  </>
-);
+    </>
+  );
+};

@@ -9,9 +9,9 @@ from typing import Any
 
 from utils.types_custom import (
     ClassificationWishListVsPantryInternal,
+    ExpiryDateEstimationResponse,
     ItemClassificationRes,
     ShortenNamesRes,
-    WishMappingRes,
 )
 
 
@@ -33,13 +33,32 @@ def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _apply_groq_strict_object_rules(node: Any) -> None:
-    """Groq strict json_schema expects additionalProperties:false on every object."""
+    """Groq/OpenAI strict json_schema requirements:
+    1. additionalProperties: false on every object.
+    2. All properties must be in the 'required' array.
+    """
     if isinstance(node, dict):
-        if node.get("type") == "object" and "additionalProperties" not in node:
-            node["additionalProperties"] = False
+        if node.get("type") == "object":
+            # 1. Set additionalProperties to False
+            if "additionalProperties" not in node:
+                node["additionalProperties"] = False
+
+            # 2. Ensure ALL properties are in the 'required' list
+            if "properties" in node:
+                # Get all keys from properties
+                all_props = list(node["properties"].keys())
+                # Set them as required (merging with existing if necessary)
+                node["required"] = all_props
+
+        # Recurse through dictionary values
         for value in node.values():
             _apply_groq_strict_object_rules(value)
         return
+
+    if isinstance(node, list):
+        # Recurse through list items (like 'anyOf' or 'items' blocks)
+        for value in node:
+            _apply_groq_strict_object_rules(value)
 
     if isinstance(node, list):
         for value in node:
@@ -440,6 +459,17 @@ Return JSON: {"items": [{"item": "<original>", "mapped_wish": "<wish>", "index_w
     "user": "{item_wish_dict}",
 }
 
+CLASSIFY_EXPIRY_DAYS_TMPL = {
+    "system": """Estimate the shelf life (in days) for newly bought pantry items. Output exact JSON matching the provided schema.
+
+Estimation Rules:
+- Isolate the core food: Ignore brands, packaging, and sizes to determine what the item actually is (e.g., treat "Alpro Soja Joghurt 400g" simply as "soy yogurt").
+- Differentiate strict subtypes: Shelf life varies significantly by exact type. Do not generalize (e.g., parmesan lasts much longer than fresh cheese; milk differs from cream).
+- Fallback: If an item is completely unrecognized, ambiguous, or non-food, return `null` for its expiry days.""",
+    "user": "Items to classify: {items}",
+}
+
+
 CLASSIFY_AGAINST_PANTRY_TMPL = {
     "system": """Match each pantry item against the wish list. Return valid JSON matching the provided schema exactly.
 
@@ -452,10 +482,10 @@ Rules:
 - Still forbidden: substitutes, related categories, and different ingredient subtypes
 - "parmesan" != "kaese", "kaese" != "mozzarella", "frischkaese" != "sahne"
 - Multiple candidates: pick the most exact one; if no clear best canonical match, return no match
-- No match: mappedWishItem=null, foundMappingWish=false
-- Match found: mappedWishItem≠null, foundMappingWish=true
+- No match: mappedWishItem=null
+- Match found: mappedWishItem≠null
 - Prefer precision, but do not reject clear canonical matches.""",
-    "user": "pantry: {pantryItems}\nwish: {wishItems}",
+    "user": "pantry_To_WishList: {pantryWishStr}",
 }
 
 
@@ -514,7 +544,7 @@ Rules:
 schema = _strict_schema_from_model(ClassificationWishListVsPantryInternal)
 response_format_classify_against_pantry = {
     "type": "json_schema",
-    "json_schema": {"name": "name_shortening", "strict": True, "schema": schema},
+    "json_schema": {"name": "map_pantry_to_wishes", "strict": True, "schema": schema},
 }
 
 schema = _strict_schema_from_model(ItemClassificationRes)
@@ -523,15 +553,15 @@ response_format_classify_item = {
     "json_schema": {"name": "item_categories", "strict": True, "schema": schema},
 }
 
-schema = _strict_schema_from_model(WishMappingRes)
-response_format_map_wish_list = {
-    "type": "json_schema",
-    "json_schema": {"name": "wish_mapping", "strict": True, "schema": schema},
-}
-
 
 schema = _strict_schema_from_model(ShortenNamesRes)
 response_format_shorten_names_batch = {
     "type": "json_schema",
     "json_schema": {"name": "name_shortening", "strict": True, "schema": schema},
+}
+
+schema = _strict_schema_from_model(ExpiryDateEstimationResponse)
+response_format_expiry_estimation = {
+    "type": "json_schema",
+    "json_schema": {"name": "estimate_expiry_days", "strict": True, "schema": schema},
 }

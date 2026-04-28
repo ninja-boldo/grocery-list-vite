@@ -76,7 +76,9 @@ const DropdownComp = ({
             all: "unset",
             boxSizing: "border-box",
             display: "inline-block",
-            backgroundColor: mainHover ? "#374151" : "#4b5563",
+            backgroundColor: mainHover
+              ? "var(--surface-3)"
+              : "var(--surface-2)",
             color: "#ffffff",
             borderTop: "1px solid #6b7280",
             borderBottom: "1px solid #6b7280",
@@ -114,7 +116,9 @@ const DropdownComp = ({
             display: "inline-flex",
             alignItems: "center",
             justifyContent: "center",
-            backgroundColor: toggleHover ? "#374151" : "#4b5563",
+            backgroundColor: toggleHover
+              ? "var(--surface-3)"
+              : "var(--surface-2)",
             color: "#ffffff",
             borderTop: "1px solid #6b7280",
             borderBottom: "1px solid #6b7280",
@@ -156,7 +160,7 @@ const DropdownComp = ({
             top: "100%",
             left: "0",
             marginTop: "4px",
-            backgroundColor: "#374151",
+            backgroundColor: "var(--surface-3)",
             border: "1px solid #4b5563",
             borderRadius: "8px",
             boxShadow:
@@ -181,7 +185,7 @@ const DropdownComp = ({
                 width: "100%",
                 padding: "8px 10px" /* reduced padding */,
                 backgroundColor:
-                  hoveredIndex === index ? "#4b5563" : "transparent",
+                  hoveredIndex === index ? "var(--surface-2)" : "transparent",
                 color: hoveredIndex === index ? "#ffffff" : "#d1d5db",
                 cursor: "pointer",
                 fontSize: "13px",

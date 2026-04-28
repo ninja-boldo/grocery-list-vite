@@ -1,6 +1,14 @@
+from pathlib import Path
+import sys
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 import asyncio
 import base64
-from datetime import datetime
+from datetime import datetime, timezone
+from itertools import chain
 import json
 import logging
 import os
@@ -32,6 +40,7 @@ from utils.types_custom import (
     ItemInfoParsed,
     MealSlot,
     Offer,
+    PantryAndWishes,
     PlannerSettings,
     QuantityInfo,
     AddRecipe,
@@ -320,39 +329,6 @@ async def getAllUserItems(
     return users
 
 
-async def getAllExistingMappings(
-    con: asyncpg.pool.PoolConnectionProxy,
-) -> set[tuple[str, str]]:
-    """
-    Retrieve all existing wish-to-pantry mappings from the wish_mapping table.
-
-    Fetches unique combinations of wish list hash and pantry list hash that exist in
-    the wish_mapping table. These mappings represent automated classifications where system
-    has determined a wish list item can be satisfied by a pantry item.
-
-    Returns:
-        Set of tuples containing (wish_list_hash, pantry_list_hash) pairs
-
-    This function is typically used to avoid re-processing the same pairs during batch
-    wish-to-pantry matching operations, ensuring data consistency.
-
-    Args:
-        con: Database connection pool
-
-    Example:
-        Returns {(hash1, hash2), (hash3, hash4), ...} where each pair
-        represents a previously established mapping
-    """
-    try:
-        res = await con.fetch(
-            "select distinct wish_list_hash, pantry_list_hash from wish_mapping"
-        )
-        return {(r["wish_list_hash"], r["pantry_list_hash"]) for r in res}
-    except Exception as e:
-        logger_.error(f"Failed to fetch existing mappings: {e}")
-        return set()
-
-
 async def cleanupStaleWishMappings(
     con: asyncpg.pool.PoolConnectionProxy,
     user_id: Optional[int] = None,
@@ -511,74 +487,158 @@ async def getCurrentPantryListUserPydantic(
     ]
 
 
+async def setUserReclassificationNeed(
+    con, user_id: int, classificationKind: str = "wish_mapping"
+):
+    await con.execute(
+        """
+        INSERT INTO classification_need(user_id, classification_kind)
+        VALUES($1, $2)
+        ON CONFLICT (user_id)
+        DO UPDATE SET classification_kind = EXCLUDED.classification_kind
+        """,
+        user_id,
+        classificationKind,
+    )
+
+
+async def deleteReclassificationNeedBatch(
+    con, userIds: list[int] | str, kind: str = "wish_mapping"
+):
+    if userIds == "*":
+        await con.execute(
+            "delete from classification_need where classification_kind = $1",
+            kind,
+        )
+    elif isinstance(userIds, str):
+        raise Exception(
+            f"user ids can only be '*' or an int list and not this: {userIds}"
+        )
+    else:
+        await con.execute(
+            "delete from classification_need where user_id = ANY($1) and classification_kind = $2",
+            userIds,
+            kind,
+        )
+
+
+async def getUserIdsNeedReclassification(
+    con, classificationKind: str = "wish_mapping"
+) -> list[int]:
+    classificationKind = classificationKind.strip()
+    if classificationKind == "" or classificationKind == "*":
+        rows = await con.fetch("select user_id from classification_need")
+    else:
+        rows = await con.fetch(
+            "select user_id from classification_need where classification_kind = $1",
+            classificationKind,
+        )
+
+    return [int(row["user_id"]) for row in rows]
+
+
+async def getItemsParsedForIds(con, itemIds: list[str]) -> list[Item]:
+    rows = await con.fetch(
+        """select items.item_id, item_name, inv.is_wish as is_wish from items 
+                           join inventory inv on inv.item_id = items.item_id where items.item_id in $1""",
+        tuple(itemIds),
+    )
+    res = []
+    for row in rows:
+        res.append(
+            Item(
+                item_id=row["item_id"],
+                item_name=row["item_name"],
+                count=1,
+                quantity=QuantityInfo(
+                    product_quantity=None, product_quantity_unit=None
+                ),
+            )
+        )
+    return res
+
+
+async def getAllItems(
+    con, userIds: list[int], wishList: bool = True
+) -> dict[int, list[str]]:
+    rows = await con.fetch(
+        "select user_id, item_id from inventory where user_id = ANY($1) and is_wish = $2",
+        userIds,
+        wishList,
+    )
+
+    userToItems = {}
+    for row in rows:
+        uid = int(row["user_id"])
+        userToItems.setdefault(uid, []).append(row["item_id"])
+
+    return userToItems
+
+
+async def getAllWishMappings(con, wishIds: list[str]) -> dict[str, str]:
+    """return the (pantry) items mapped to the given list of wished items"""
+    rows = await con.fetch(
+        "select item_id, wish_item_id from wish_mapping where wish_item_id = Any($1)",
+        wishIds,
+    )
+    return {row["item_id"]: row["wish_item_id"] for row in rows}
+
+
+async def computeClassificationNeed(
+    userToPantry: dict[int, list[str]],
+    userToWishes: dict[int, list[str]],
+    pantryWishMap: dict[str, str],
+) -> dict[int, PantryAndWishes]:
+
+    res: dict[int, PantryAndWishes] = {}
+
+    for user in userToPantry.keys():
+        pantry = userToPantry.get(user, [])
+        wishes = userToWishes.get(user, [])
+        # set default
+        res[user] = PantryAndWishes(pantry=[], wishList=wishes)
+
+        for p in pantry:
+            mappedWishes = pantryWishMap.get(p, [])
+            # check if pantry item is at least mapped to one
+            # wish in our wish list
+            if not set(mappedWishes).isdisjoint(wishes):
+                # at least one is mapped -> no need to reclassify
+                pass
+            else:
+                # need to classify
+                res[user].pantry.append(p)
+
+    return res
+
+
+async def mapItemIdToName(con, itemIds: list[str]) -> dict[str, str]:
+    rows = await con.fetch(
+        "select item_id, item_name from items where item_id = ANY($1)", itemIds
+    )
+    return {row["item_id"]: row["item_name"] for row in rows}
+
+
 async def buildWishPantryLists(
-    con, sinkLabel: str | None = None
-) -> tuple[list[str], list[list[str]], dict, list[tuple[str, str]]]:
-    queryMapping = await getStateAwareLists(con)
-    return craftWishItemLists(queryMapping, sinkLabel)
+    con,
+) -> tuple[dict[int, PantryAndWishes], dict[str, str]]:
 
+    userIds: list[int] = await getUserIdsNeedReclassification(con, "wish_mapping")
+    userToWishes: dict[int, list[str]] = await getAllItems(con, userIds, wishList=True)
+    userToPantry: dict[int, list[str]] = await getAllItems(con, userIds, wishList=False)
 
-async def getStateAwareLists(con: asyncpg.pool.PoolConnectionProxy):
-    all_users_items = await getAllUserItems(con)
-    existing_mappings = await getAllExistingMappings(con)
+    wishIds = list(chain.from_iterable(userToWishes.values()))
+    pantryIds = list(chain.from_iterable(userToPantry.values()))
+    allIds = [*wishIds, *pantryIds]
 
-    classifyMap: dict = {}
+    pantryWishMap = await getAllWishMappings(con, wishIds)
 
-    for user_id, user_data in all_users_items.items():
-        currentPantryListDict: dict = user_data["pantry"]
-        currentWishListDict: dict = user_data["wish"]
+    userToPantryAndWishes: dict[int, PantryAndWishes] = await computeClassificationNeed(
+        userToPantry, userToWishes, pantryWishMap
+    )
+    itemIdToName: dict[str, str] = await mapItemIdToName(con, allIds)
 
-        wishHash: str = hashListState(list(currentWishListDict.values()))
-        pantryHash: str = hashListState(list(currentPantryListDict.values()))
-
-        if (wishHash, pantryHash) not in existing_mappings:
-            classifyMap[user_id] = {
-                "pantry": currentPantryListDict,
-                "wish": list(currentWishListDict.values()),
-                "wish_ids": currentWishListDict,
-                "wish_hash": wishHash,
-                "pantry_hash": pantryHash,
-            }
-
-    return classifyMap
-
-
-def craftWishItemLists(
-    queryMapping: dict, sinkLabel: str | None = None
-) -> tuple[list[str], list[list[str]], dict, list[tuple[str, str]]]:
-    item_to_id = {}
-
-    if sinkLabel:
-        item_to_id[sinkLabel] = generateManualItemId(sinkLabel)
-    item_to_id["null"] = generateManualItemId("null")
-
-    item_names = []
-    wished_lists = []
-    hash_per_item = []
-
-    for user_id in queryMapping.keys():
-        userDict = queryMapping.get(user_id, {})
-        pantry_items = userDict.get("pantry", {})
-        wish_list = userDict.get("wish", [])
-        wish_ids = userDict.get("wish_ids", {})
-        wish_hash = userDict.get("wish_hash", "")
-        pantry_hash = userDict.get("pantry_hash", "")
-
-        # Add wish item names -> IDs to the mapping
-        for item_id, item_name in wish_ids.items():
-            item_to_id[item_name] = item_id
-
-        if sinkLabel:
-            wish_list = wish_list + [sinkLabel]
-
-        for item_id, item_name in pantry_items.items():
-            item_names.append(item_name)
-            item_to_id[item_name] = item_id
-            wished_lists.append(wish_list)
-            hash_per_item.append((wish_hash, pantry_hash))
-
-    return item_names, wished_lists, item_to_id, hash_per_item
-
+    return userToPantryAndWishes, itemIdToName
 
 async def addOffersBatch(
     con: asyncpg.pool.PoolConnectionProxy,
@@ -588,7 +648,7 @@ async def addOffersBatch(
 ):
     try:
         offerTuples: list[tuple] = []
-        currentTime: datetime = datetime.now()
+        currentTime: datetime = datetime.now(timezone.utc)
         for offer in offers:
             offerTuples.append(
                 (
@@ -806,7 +866,7 @@ def convertToBerlinTime(
     currentDatetime: dt.datetime | None, tz: ZoneInfo = ZoneInfo("Europe/Berlin")
 ) -> dt.datetime:
     if currentDatetime is None:
-        return dt.datetime.now()
+        return dt.datetime.now(timezone.utc)
     else:
         if currentDatetime.tzinfo is None:
             newDatetime = currentDatetime.replace(tzinfo=tz)
@@ -935,13 +995,16 @@ async def getPlannerSettings(
     con: asyncpg.pool.PoolConnectionProxy, uid: int
 ) -> PlannerSettings:
     row = await con.fetchrow(
-        """select fast_day_meal_minutes as quickMealMinutes, 
-                             normal_day_meal_minutes as normalMealMinutes,
-                             default_servings as defaultServings
+        """select COALESCE(fast_day_meal_minutes, 15) as quickMealMinutes,
+                             COALESCE(normal_day_meal_minutes, 45) as normalMealMinutes,
+                             COALESCE(default_servings, 2) as defaultServings
                              from planner_settings where user_id = $1""",
         uid,
     )
-
+    if row is None:
+        return PlannerSettings(
+            defaultServings=2, quickMealMinutes=15, normalMealMinutes=45
+        )
     return PlannerSettings(**row)
 
 
@@ -1099,47 +1162,108 @@ def hashListState(
     wish_list_str = ",".join(sorted(wish_list))
     h = hashlib.blake2b(wish_list_str.encode(), digest_size=byte_len)
     if encode_b64:
-        return base64.urlsafe_b64encode(h.digest()).decode()  # urlsafe: no +/
+        return base64.urlsafe_b64encode(h.digest()).decode()  # urlsafe: no + or /
     return h.hexdigest()
 
 
-async def insertIngredientAndMap(
-    con: asyncpg.pool.PoolConnectionProxy, recipe_id: int, ing: Ingredient
-) -> None:
-    print(
-        f"inserting this ingredient: {ing.model_dump()} for this recipe id: {recipe_id}"
-    )
-    for i in ing.model_dump().keys():
-        print(f"{i} is of this type: {type(i)}")
+async def insertIngredientsAndMap(con, recipe_id: int, ingredients: list[Ingredient]):
     try:
-        name = ing.name
-        amount = int(float(ing.amount)) if ing.amount else -1
-        unit = ing.unit or "none"
+        print(f"updating for these ingredients: {ingredients}")
+        records = [
+            (
+                ing.name,
+                int(float(ing.amount)) if ing.amount else -1,
+                ing.unit or "none",
+                ing.count,
+            )
+            for ing in ingredients
+        ]
 
-        ing_id = await con.fetchval(
+        rows = await con.fetch(
             """
             INSERT INTO ingredients (name, amount, unit)
-            VALUES ($1, $2, $3)
-            RETURNING ingredient_id
+            SELECT x.name, x.amount, x.unit
+            FROM UNNEST($1::text[], $2::int[], $3::text[]) 
+            AS x(name, amount, unit)
+            ON CONFLICT (name, amount, unit)
+            DO UPDATE SET name = EXCLUDED.name
+            RETURNING ingredient_id, name, amount, unit
             """,
-            name,
-            amount,
-            unit,
+            [r[0] for r in records],
+            [r[1] for r in records],
+            [r[2] for r in records],
         )
-        print(f"ing id returned: {ing_id}")
 
-        await con.execute(
+        id_map = {(r["name"], r["amount"], r["unit"]): r["ingredient_id"] for r in rows}
+
+        await con.executemany(
             """
             INSERT INTO recipe_ingredient_map (recipe_id, ingredient_id, count)
             VALUES ($1, $2, $3)
+            ON CONFLICT(recipe_id, ingredient_id) DO NOTHING
             """,
-            recipe_id,
-            ing_id,
-            ing.count,
+            [
+                (
+                    recipe_id,
+                    id_map[(r[0], r[1], r[2])],
+                    r[3],
+                )
+                for r in records
+            ],
         )
+
     except Exception as e:
-        print(f"insertIngredientAndMap FAILED: {e}")
+        print(f"Batch insert failed: {e}")
         raise
+
+
+async def deleteIngredientsById(con: asyncpg.pool.PoolConnectionProxy, recipeId: int):
+    await con.execute(
+        "delete from ingredients recipe_ingredient_map where recipe_id = $1", recipeId
+    )
+
+
+async def modifyRecipe(
+    con: asyncpg.pool.PoolConnectionProxy,
+    userId: int,
+    recipeId: int,
+    recipe: AddRecipe,
+) -> dict:
+    async with con.transaction():
+        print("modyfing recipe")
+        userOwnsRecipe = await con.fetchval(
+            "select exists (select recipe_id from recipes where user_id = $1 and recipe_id = $2)",
+            userId,
+            recipeId,
+        )
+
+        if userOwnsRecipe is True:
+            print("user owns recipe")
+            await con.fetchval(
+                """
+                update recipes
+                set name = $1,
+                    base_time = $2,
+                    default_portions = $3,
+                    tags = $4,
+                    steps = $5,
+                    emoji = $6
+                where recipe_id = $7
+                """,
+                recipe.name,
+                recipe.baseTime,
+                recipe.baseServings,
+                recipe.tags,
+                recipe.steps,
+                recipe.emoji,
+                recipeId,
+            )
+
+            await deleteIngredientsById(con, recipeId)
+            await insertIngredientsAndMap(con, recipeId, recipe.ingredients)
+            return {"state": "success"}
+        else:
+            return {"state": "error", "detail": "the user doesnt own this recipe"}
 
 
 async def insertRecipe(
@@ -1163,8 +1287,7 @@ async def insertRecipe(
             recipe.emoji,
         )
 
-        for ing in recipe.ingredients:
-            await insertIngredientAndMap(con, recipe_id, ing)
+        await insertIngredientsAndMap(con, recipe_id, recipe.ingredients)
 
         return recipe_id
 
@@ -1319,7 +1442,16 @@ async def handleManualItems(
     logger: logging.Logger,
 ) -> dict:
 
+    awareDate = date if date.tzinfo is not None else convertToBerlinTime(date)
+    utcDate = awareDate.astimezone(dt.timezone.utc).replace(tzinfo=None)
+
     item_id = generateManualItemId(item_name)
+
+    onlyAddingToExisting = await userHasItemInPantry(
+        con, userId, item_id
+    )  # checks if user has it in current pantry)
+    if not onlyAddingToExisting:
+        await setUserReclassificationNeed(con, userId, "wish_mapping")
     try:
         if not quantity or quantity.product_quantity == -1:
             return {
@@ -1352,7 +1484,7 @@ async def handleManualItems(
             item_id,
             userId,
             is_wish,
-            date,
+            utcDate,
             count,
         )
         return {"state": "success", "operation": "add", "mode": "manual adding"}
@@ -1367,6 +1499,14 @@ async def handleManualItems(
         }
 
 
+async def userHasItemInPantry(con, userId: int, itemId: str) -> bool:
+    return await con.fetchval(
+        "select exists ( select item_id from inventory where user_id = $1 and item_id = $2)",
+        userId,
+        itemId,
+    )
+
+
 async def addItemToInventory(
     http_client: httpx.AsyncClient,
     pool: asyncpg.Pool,
@@ -1377,7 +1517,6 @@ async def addItemToInventory(
     is_wish: bool,
     quantity: QuantityInfo | None,
     logger: logging.Logger,
-    date: dt.datetime | None = None,
 ) -> dict[str, Any]:
     """
     Add an item to user's inventory with validation and data enrichment.
@@ -1442,11 +1581,7 @@ async def addItemToInventory(
                 "error": "you need either the ean or the item name to be set",
             }
 
-        dateNormalized = (
-            convertToBerlinTime(date)
-            if date
-            else dt.datetime.now(ZoneInfo("Europe/Berlin"))
-        )
+        dateNormalized = dt.datetime.now()
 
         async with pool.acquire() as con:
             userId: int | None = await con.fetchval(
@@ -1492,7 +1627,17 @@ async def addItemToInventory(
                             logger=logger,
                         )
                     else:
-                        itemKnown = await itemIsKnown(con, ean)
+                        onlyAddingToExisting = await userHasItemInPantry(
+                            con, userId, ean
+                        )  # checks if user has it in current pantry)
+                        if not onlyAddingToExisting:
+                            await setUserReclassificationNeed(
+                                con, userId, "wish_mapping"
+                            )
+
+                        itemKnown = await itemIsKnown(
+                            con, ean
+                        )  # checks if it is was ever added by anyone
                         if not itemKnown and not item_name:
                             itemInfo: ItemInfo | None = await getInfoAsync(
                                 http_client, ean=ean, logger=logger, delay=0.0
@@ -1637,10 +1782,18 @@ async def getInfoAsync(
             timeout=5.0,
         )
         data = res.json()
-        if not data["status_verbose"] == "product found":
+        if not data.get("status_verbose") == "product found":
             logger.error(f"couldnt resolve item name for ean {ean}")
             return None
-        parsed = ItemInfo.model_validate_json(json.dumps(data.get("product")))
+
+        product_dict = data.get("product", {})
+        if not product_dict or not product_dict.get("product_name"):
+            logger.error(
+                f"couldnt resolve item name for ean {ean} (missing product data)"
+            )
+            return None
+
+        parsed = ItemInfo.model_validate(product_dict)
         return parsed
     except Exception as e:
         raise Exception(f"failed with this error: {e}")
@@ -1723,7 +1876,7 @@ async def addWishesToDb(
                     uid,
                     True,
                     quantity=quant_needed,
-                    date=dt.datetime.now(),
+                    date=datetime.now(timezone.utc),
                     logger=logger,
                 )
         await mapWishesToItemDb(con, wishRes)

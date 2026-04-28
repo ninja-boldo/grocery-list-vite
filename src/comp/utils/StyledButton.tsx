@@ -12,16 +12,14 @@ const StyledButton = ({
   onClick,
   disabled = false,
   loading = false,
-}: Props) => {
-  return (
-    <button
-      className="object-contain"
-      onClick={() => onClick(null)}
-      disabled={disabled || loading}
-    >
-      {text}
-    </button>
-  );
-};
+}: Props) => (
+  <button
+    className="styled-btn"
+    onClick={() => onClick(null)}
+    disabled={disabled || loading}
+  >
+    {text}
+  </button>
+);
 
 export default StyledButton;

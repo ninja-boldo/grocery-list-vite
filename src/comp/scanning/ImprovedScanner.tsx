@@ -9,23 +9,6 @@ import { hasStoredJwtToken } from "@/lib/authApi";
 import { apiClient } from "@/lib/api/client";
 import { isAddEanSuccess, needsQuantityDetails } from "@/lib/api/addEanFlow";
 import { useTranslation } from "react-i18next";
-import i18next from "i18next";
-
-// ── Palette ─────────────────────────────────────────────────────────────────
-const P = {
-  bg: "transparent",
-  surface: i18next.t("rgba163846082", "rgba(16, 38, 46, 0.82)"),
-  border: i18next.t("rgba130177188028", "rgba(130, 177, 188, 0.28)"),
-  teal: "#1D9E75",
-  tealD: "#0f2a28",
-  tealB: "#0d948850",
-  text: i18next.t("ecf7f8", "#ecf7f8"),
-  muted: "#9ab4b8",
-  subtle: "#6f8b91",
-  red: "#ef4444",
-  redD: "#2a1111",
-  redB: "#ef444430",
-} as const;
 
 type ScanMode = "auto" | "manual";
 
@@ -505,10 +488,10 @@ export default function ImprovedScanner() {
     width: "100%",
     boxSizing: "border-box",
     padding: "9px 12px",
-    backgroundColor: P.bg,
-    border: t("1pxSolidBorder", "1px solid {{border}}", { border: P.border }),
+    backgroundColor: "var(--bg)",
+    border: `1px solid ${"var(--border)"}`,
     borderRadius: 10,
-    color: P.text,
+    color: "var(--text-main)",
     fontSize: 14,
     outline: "none",
     transition: "border-color 0.15s",
@@ -526,12 +509,12 @@ export default function ImprovedScanner() {
     fontSize: 22,
     fontWeight: 300,
     cursor: "pointer",
-    backgroundColor: isPlus ? P.tealD : P.surface,
+    backgroundColor: isPlus ? "var(--accent-light)" : "var(--surface)",
     border: t("1pxSolidVal", "1px solid {{val}}", {
-      val: isPlus ? P.tealB : P.border,
+      val: isPlus ? "var(--accent-border)" : "var(--border)",
     }),
-    color: isPlus ? "#5eead4" : P.muted,
-    transition: t("all015s", "all 0.15s"),
+    color: isPlus ? "var(--accent)" : "var(--text-muted)",
+    transition: "all 0.15s",
     flexShrink: 0,
   });
 
@@ -543,14 +526,14 @@ export default function ImprovedScanner() {
     textAlign: "center" as const,
     marginTop: 12,
     padding: "10px 0",
-    backgroundColor: P.tealD,
-    border: t("1pxSolidTealb", "1px solid {{tealB}}", { tealB: P.tealB }),
+    backgroundColor: "var(--accent-light)",
+    border: `1px solid ${"var(--accent-border)"}`,
     borderRadius: 10,
-    color: "#5eead4",
+    color: "var(--accent)",
     fontSize: 14,
     fontWeight: 500,
     cursor: "pointer",
-    transition: t("all015s", "all 0.15s"),
+    transition: "all 0.15s",
   };
 
   const username = localStorage.getItem("username") ?? "L";
@@ -559,8 +542,8 @@ export default function ImprovedScanner() {
     <div
       style={{
         minHeight: "100vh",
-        backgroundColor: P.bg,
-        color: P.text,
+        backgroundColor: "var(--bg)",
+        color: "var(--text-main)",
         fontFamily: "var(--font-body)",
         paddingBottom: 90,
       }}
@@ -576,8 +559,8 @@ export default function ImprovedScanner() {
 
       <AppHeader username={username} />
 
-      <div className="p-3 sm:p-4 md:p-6">
-        <div className="max-w-lg mx-auto">
+      <div style={{ padding: 16 }}>
+        <div className="page-max-md">
           {/* Title row */}
           <div
             style={{
@@ -601,22 +584,26 @@ export default function ImprovedScanner() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor: P.surface,
-                border: `1px solid ${P.border}`,
+                backgroundColor: "var(--surface)",
+                border: `1px solid ${"var(--border)"}`,
                 borderRadius: 9,
-                color: P.muted,
+                color: "var(--text-muted)",
                 cursor: "pointer",
                 flexShrink: 0,
                 transition: "all 0.15s",
                 fontSize: 16,
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.color = P.text;
-                (e.currentTarget as HTMLElement).style.borderColor = P.tealB;
+                (e.currentTarget as HTMLElement).style.color =
+                  "var(--text-main)";
+                (e.currentTarget as HTMLElement).style.borderColor =
+                  "var(--accent-border)";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.color = P.muted;
-                (e.currentTarget as HTMLElement).style.borderColor = P.border;
+                (e.currentTarget as HTMLElement).style.color =
+                  "var(--text-muted)";
+                (e.currentTarget as HTMLElement).style.borderColor =
+                  "var(--border)";
               }}
               aria-label={t("back", "Back")}
             >
@@ -627,7 +614,7 @@ export default function ImprovedScanner() {
             <span
               style={{
                 flex: 1,
-                color: P.text,
+                color: "var(--text-main)",
                 fontSize: 14,
                 fontWeight: 600,
                 minWidth: 0,
@@ -642,7 +629,7 @@ export default function ImprovedScanner() {
                   style={{
                     marginLeft: 6,
                     fontSize: 11,
-                    color: P.muted,
+                    color: "var(--text-muted)",
                     fontWeight: 400,
                   }}
                 >
@@ -656,10 +643,10 @@ export default function ImprovedScanner() {
               style={{
                 display: "flex",
                 gap: 2,
-                backgroundColor: P.surface,
+                backgroundColor: "var(--surface)",
                 padding: 3,
                 borderRadius: 10,
-                border: `1px solid ${P.border}`,
+                border: `1px solid ${"var(--border)"}`,
                 flexShrink: 0,
               }}
             >
@@ -676,9 +663,10 @@ export default function ImprovedScanner() {
                     fontWeight: 500,
                     cursor: "pointer",
                     transition: "all 0.15s",
-                    backgroundColor: mode === m ? P.tealD : "transparent",
-                    border: `1px solid ${mode === m ? P.tealB : "transparent"}`,
-                    color: mode === m ? "#5eead4" : P.muted,
+                    backgroundColor:
+                      mode === m ? "var(--accent-light)" : "transparent",
+                    border: `1px solid ${mode === m ? "var(--accent-border)" : "transparent"}`,
+                    color: mode === m ? "var(--accent)" : "var(--text-muted)",
                   }}
                 >
                   {m === "auto" ? "Auto" : "Manual"}
@@ -697,10 +685,12 @@ export default function ImprovedScanner() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                backgroundColor: verbose ? P.tealD : P.surface,
-                border: `1px solid ${verbose ? P.tealB : P.border}`,
+                backgroundColor: verbose
+                  ? "var(--accent-light)"
+                  : "var(--surface)",
+                border: `1px solid ${verbose ? "var(--accent-border)" : "var(--border)"}`,
                 borderRadius: 9,
-                color: verbose ? "#5eead4" : P.muted,
+                color: verbose ? "var(--accent)" : "var(--text-muted)",
                 cursor: "pointer",
                 flexShrink: 0,
                 transition: "all 0.15s",
@@ -724,8 +714,10 @@ export default function ImprovedScanner() {
           {scanResult && (
             <div
               style={{
-                backgroundColor: scanResult.known ? P.tealD : P.redD,
-                border: `1px solid ${scanResult.known ? P.tealB : P.redB}`,
+                backgroundColor: scanResult.known
+                  ? "var(--accent-light)"
+                  : "var(--error-bg)",
+                border: `1px solid ${scanResult.known ? "var(--accent-border)" : "var(--error-border)"}`,
                 borderRadius: 14,
                 padding: "14px 16px",
                 marginBottom: 12,
@@ -740,8 +732,10 @@ export default function ImprovedScanner() {
                   width: 32,
                   height: 32,
                   borderRadius: "50%",
-                  backgroundColor: scanResult.known ? "#0f2a28" : "#3a1010",
-                  border: `1px solid ${scanResult.known ? P.tealB : P.redB}`,
+                  backgroundColor: scanResult.known
+                    ? "var(--accent-light)"
+                    : "var(--error-bg)",
+                  border: `1px solid ${scanResult.known ? "var(--accent-border)" : "var(--error-border)"}`,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -753,7 +747,7 @@ export default function ImprovedScanner() {
                     width="14"
                     height="14"
                     fill="none"
-                    stroke="#5eead4"
+                    stroke="var(--accent)"
                     viewBox="0 0 24 24"
                     strokeWidth="2.5"
                     strokeLinecap="round"
@@ -765,7 +759,7 @@ export default function ImprovedScanner() {
                     width="14"
                     height="14"
                     fill="none"
-                    stroke="#f87171"
+                    stroke="var(--error)"
                     viewBox="0 0 24 24"
                     strokeWidth="2.5"
                     strokeLinecap="round"
@@ -782,7 +776,7 @@ export default function ImprovedScanner() {
                   style={{
                     fontSize: 13,
                     fontWeight: 600,
-                    color: scanResult.known ? "#5eead4" : "#f87171",
+                    color: scanResult.known ? "var(--accent)" : "var(--error)",
                     marginBottom: 4,
                   }}
                 >
@@ -802,7 +796,7 @@ export default function ImprovedScanner() {
                     style={{
                       fontSize: 14,
                       fontWeight: 500,
-                      color: P.text,
+                      color: "var(--text-main)",
                       marginBottom: 3,
                     }}
                   >
@@ -810,7 +804,7 @@ export default function ImprovedScanner() {
                   </div>
                 )}
 
-                <div style={{ fontSize: 12, color: P.muted }}>
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
                   {scanResult.detail}
                 </div>
 
@@ -819,14 +813,14 @@ export default function ImprovedScanner() {
                     <span
                       style={{
                         fontSize: 11,
-                        color: P.subtle,
+                        color: "var(--text-dim)",
                         fontFamily: "monospace",
                       }}
                     >
                       {t("eanEan", "EAN {{ean}}", { ean: scanResult.ean })}
                     </span>
                   )}
-                  <span style={{ fontSize: 11, color: P.subtle }}>
+                  <span style={{ fontSize: 11, color: "var(--text-dim)" }}>
                     {t("count", "× {{count}}", { count: scanResult.count })}
                   </span>
                 </div>
@@ -837,7 +831,7 @@ export default function ImprovedScanner() {
                 onClick={() => setScanResult(null)}
                 style={{
                   all: "unset",
-                  color: P.muted,
+                  color: "var(--text-muted)",
                   cursor: "pointer",
                   fontSize: 18,
                   lineHeight: 1,
@@ -845,10 +839,12 @@ export default function ImprovedScanner() {
                   padding: "0 2px",
                 }}
                 onMouseEnter={(e) =>
-                  ((e.currentTarget as HTMLElement).style.color = P.text)
+                  ((e.currentTarget as HTMLElement).style.color =
+                    "var(--text-main)")
                 }
                 onMouseLeave={(e) =>
-                  ((e.currentTarget as HTMLElement).style.color = P.muted)
+                  ((e.currentTarget as HTMLElement).style.color =
+                    "var(--text-muted)")
                 }
               >
                 ×
@@ -862,8 +858,8 @@ export default function ImprovedScanner() {
               {/* Camera card */}
               <div
                 style={{
-                  backgroundColor: P.surface,
-                  border: `1px solid ${P.border}`,
+                  backgroundColor: "var(--surface)",
+                  border: `1px solid ${"var(--border)"}`,
                   borderRadius: 18,
                   padding: 16,
                   boxShadow: "0 8px 32px #00000060",
@@ -874,7 +870,7 @@ export default function ImprovedScanner() {
                   style={{
                     borderRadius: 12,
                     overflow: "hidden",
-                    border: `2px solid ${P.tealB}`,
+                    border: `2px solid ${"var(--accent-border)"}`,
                     backgroundColor: "#000",
                     minHeight: 280,
                   }}
@@ -884,7 +880,7 @@ export default function ImprovedScanner() {
                   {showSuccess ? (
                     <span
                       style={{
-                        color: "#5eead4",
+                        color: "var(--accent)",
                         fontSize: 13,
                         fontWeight: 500,
                       }}
@@ -892,13 +888,13 @@ export default function ImprovedScanner() {
                       {t("addedSuccessfully", "✓ Added successfully!")}
                     </span>
                   ) : error ? (
-                    <span style={{ color: "#f87171", fontSize: 13 }}>
+                    <span style={{ color: "var(--error)", fontSize: 13 }}>
                       {error}
                     </span>
                   ) : ean ? (
                     <span
                       style={{
-                        color: "#5eead4",
+                        color: "var(--accent)",
                         fontSize: 13,
                         fontFamily: "monospace",
                       }}
@@ -906,11 +902,11 @@ export default function ImprovedScanner() {
                       {t("codeEan", "Code: {{ean}}", { ean })}
                     </span>
                   ) : scanning ? (
-                    <span style={{ color: P.muted, fontSize: 13 }}>
+                    <span style={{ color: "var(--text-muted)", fontSize: 13 }}>
                       {t("scanning", "● Scanning...")}
                     </span>
                   ) : (
-                    <span style={{ color: P.subtle, fontSize: 13 }}>
+                    <span style={{ color: "var(--text-dim)", fontSize: 13 }}>
                       {t("pointAtBarcode", "Point at barcode")}
                     </span>
                   )}
@@ -920,16 +916,16 @@ export default function ImprovedScanner() {
                     style={{
                       marginTop: 10,
                       padding: "7px 10px",
-                      backgroundColor: P.bg,
+                      backgroundColor: "var(--bg)",
                       borderRadius: 8,
-                      border: `1px solid ${P.tealB}`,
+                      border: `1px solid ${"var(--accent-border)"}`,
                     }}
                   >
                     <p
                       style={{
                         margin: 0,
                         fontSize: 11,
-                        color: P.teal,
+                        color: "var(--accent)",
                         fontFamily: "monospace",
                       }}
                     >
@@ -947,8 +943,8 @@ export default function ImprovedScanner() {
               {scannedCode && (
                 <div
                   style={{
-                    backgroundColor: P.surface,
-                    border: `1px solid ${P.tealB}`,
+                    backgroundColor: "var(--surface)",
+                    border: `1px solid ${"var(--accent-border)"}`,
                     borderRadius: 18,
                     padding: 16,
                   }}
@@ -957,7 +953,7 @@ export default function ImprovedScanner() {
                     style={{
                       margin: "0 0 12px",
                       textAlign: "center",
-                      color: "#5eead4",
+                      color: "var(--accent)",
                       fontSize: 12,
                       fontWeight: 500,
                     }}
@@ -991,10 +987,10 @@ export default function ImprovedScanner() {
                       style={{
                         width: 80,
                         padding: "10px 8px",
-                        backgroundColor: P.bg,
-                        border: `2px solid ${P.tealB}`,
+                        backgroundColor: "var(--bg)",
+                        border: `2px solid ${"var(--accent-border)"}`,
                         borderRadius: 10,
-                        color: P.text,
+                        color: "var(--text-main)",
                         fontSize: 26,
                         fontWeight: 700,
                         textAlign: "center",
@@ -1023,7 +1019,13 @@ export default function ImprovedScanner() {
                 </div>
               )}
 
-              <p style={{ textAlign: "center", color: P.subtle, fontSize: 12 }}>
+              <p
+                style={{
+                  textAlign: "center",
+                  color: "var(--text-dim)",
+                  fontSize: 12,
+                }}
+              >
                 {t(
                   "positionBarcodeInTheCenterOfTheFrame",
                   "Position barcode in the center of the frame",
@@ -1034,8 +1036,8 @@ export default function ImprovedScanner() {
             /* ── Manual entry ── */
             <div
               style={{
-                backgroundColor: P.surface,
-                border: `1px solid ${P.border}`,
+                backgroundColor: "var(--surface)",
+                border: `1px solid ${"var(--border)"}`,
                 borderRadius: 18,
                 padding: "20px 16px",
                 boxShadow: "0 8px 32px #00000060",
@@ -1046,10 +1048,10 @@ export default function ImprovedScanner() {
                 style={{
                   display: "flex",
                   gap: 2,
-                  backgroundColor: P.bg,
+                  backgroundColor: "var(--bg)",
                   padding: 3,
                   borderRadius: 10,
-                  border: `1px solid ${P.border}`,
+                  border: `1px solid ${"var(--border)"}`,
                   marginBottom: 16,
                 }}
               >
@@ -1069,9 +1071,10 @@ export default function ImprovedScanner() {
                       cursor: "pointer",
                       transition: "all 0.15s",
                       backgroundColor:
-                        inputMode === m ? P.tealD : "transparent",
-                      border: `1px solid ${inputMode === m ? P.tealB : "transparent"}`,
-                      color: inputMode === m ? "#5eead4" : P.muted,
+                        inputMode === m ? "var(--accent-light)" : "transparent",
+                      border: `1px solid ${inputMode === m ? "var(--accent-border)" : "transparent"}`,
+                      color:
+                        inputMode === m ? "var(--accent)" : "var(--text-muted)",
                     }}
                   >
                     {m === "name" ? "By Name" : "By Barcode"}
@@ -1089,7 +1092,7 @@ export default function ImprovedScanner() {
                       style={{
                         display: "block",
                         fontSize: 12,
-                        color: P.muted,
+                        color: "var(--text-muted)",
                         marginBottom: 6,
                       }}
                     >
@@ -1106,10 +1109,10 @@ export default function ImprovedScanner() {
                       autoFocus
                       style={inputStyle}
                       onFocus={(e) =>
-                        (e.currentTarget.style.borderColor = P.teal)
+                        (e.currentTarget.style.borderColor = "var(--accent)")
                       }
                       onBlur={(e) =>
-                        (e.currentTarget.style.borderColor = P.border)
+                        (e.currentTarget.style.borderColor = "var(--border)")
                       }
                     />
                   </div>
@@ -1119,7 +1122,7 @@ export default function ImprovedScanner() {
                       style={{
                         display: "block",
                         fontSize: 12,
-                        color: P.muted,
+                        color: "var(--text-muted)",
                         marginBottom: 6,
                       }}
                     >
@@ -1136,17 +1139,17 @@ export default function ImprovedScanner() {
                       autoFocus
                       style={{ ...inputStyle, fontFamily: "monospace" }}
                       onFocus={(e) =>
-                        (e.currentTarget.style.borderColor = P.teal)
+                        (e.currentTarget.style.borderColor = "var(--accent)")
                       }
                       onBlur={(e) =>
-                        (e.currentTarget.style.borderColor = P.border)
+                        (e.currentTarget.style.borderColor = "var(--border)")
                       }
                     />
                     <p
                       style={{
                         margin: "4px 0 0",
                         fontSize: 11,
-                        color: P.subtle,
+                        color: "var(--text-dim)",
                         textAlign: "center",
                       }}
                     >
@@ -1162,7 +1165,7 @@ export default function ImprovedScanner() {
                     style={{
                       display: "block",
                       fontSize: 12,
-                      color: P.muted,
+                      color: "var(--text-muted)",
                       marginBottom: 8,
                     }}
                   >
@@ -1195,10 +1198,10 @@ export default function ImprovedScanner() {
                       style={{
                         width: 80,
                         padding: "10px 8px",
-                        backgroundColor: P.bg,
-                        border: `2px solid ${P.tealB}`,
+                        backgroundColor: "var(--bg)",
+                        border: `2px solid ${"var(--accent-border)"}`,
                         borderRadius: 10,
-                        color: P.text,
+                        color: "var(--text-main)",
                         fontSize: 26,
                         fontWeight: 700,
                         textAlign: "center",
@@ -1219,11 +1222,11 @@ export default function ImprovedScanner() {
                   <div
                     style={{
                       padding: "8px 12px",
-                      backgroundColor: P.redD,
-                      border: `1px solid ${P.redB}`,
+                      backgroundColor: "var(--error-bg)",
+                      border: `1px solid ${"var(--error-border)"}`,
                       borderRadius: 10,
                       fontSize: 13,
-                      color: "#f87171",
+                      color: "var(--error)",
                     }}
                   >
                     {error}
@@ -1266,16 +1269,16 @@ export default function ImprovedScanner() {
                   style={{
                     marginTop: 12,
                     padding: "7px 10px",
-                    backgroundColor: P.bg,
+                    backgroundColor: "var(--bg)",
                     borderRadius: 8,
-                    border: `1px solid ${P.tealB}`,
+                    border: `1px solid ${"var(--accent-border)"}`,
                   }}
                 >
                   <p
                     style={{
                       margin: 0,
                       fontSize: 11,
-                      color: P.teal,
+                      color: "var(--accent)",
                       fontFamily: "monospace",
                     }}
                   >

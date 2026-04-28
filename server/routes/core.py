@@ -8,7 +8,6 @@ from fastapi import APIRouter, Query, Request, HTTPException, status
 
 from utils.api_helpers import (
     getCurrentPantryListUserPydantic,
-    getCurrentWishHashForUser,
     getUsernameFromReq,
     getIdFromUsername,
     cleanupStaleWishMappings,
@@ -20,6 +19,7 @@ from utils.query_builder import build_fetch_query
 from utils.types_custom import (
     AddEanRequest,
     AddFetchedItems,
+    LogModelUsage,
     FetchItemsResponse,
     Item,
     ClassificationWishListVsPantryInternal,
@@ -43,20 +43,18 @@ async def fetch_items(
 
     logger = logging.getLogger("fastapi-logger")
     logger.info(
-        "fetch_items: only_wish_list=%s, sortOrder=%s, searchQuery=%s, skip=%s, limit=%s",
+        "fetch_items: only_wish_list=%s, sortOrder=%s, skip=%s, limit=%s, searchQuery=%s",
         only_wish_list,
         sortOrder,
-        searchQuery,
         skip,
         limit,
+        searchQuery,
     )
 
     skip = max(skip, 0) if skip is not None else None
     limit = max(limit, 0) if limit is not None else None
 
     try:
-        wish_hash: Optional[str] = None
-
         async with request.app.state.db.pool.acquire() as con:
             if only_wish_list == "true":
                 user_id = await getIdFromUsername(con, username)
@@ -64,7 +62,6 @@ async def fetch_items(
                     asyncio.ensure_future(
                         cleanupStaleWishMappings(request.app.state.db.pool, user_id)
                     )
-                    wish_hash = await getCurrentWishHashForUser(con, user_id)
 
             query, params = build_fetch_query(
                 username,
@@ -73,7 +70,6 @@ async def fetch_items(
                 skip=skip,
                 limit=limit,
                 searchQuery=searchQuery,
-                wish_hash=wish_hash,
             )
 
             rows = await con.fetch(query, *params)
@@ -82,7 +78,7 @@ async def fetch_items(
             {
                 "ean": row["ean"],
                 "text": row["item_name"],
-                "shortened_name": row["shortend_name"],
+                "shortened_name": row["shortend_name"] or "",
                 "count": row["count"],
                 "perish_dates": [
                     reformatTimeStamp(ts) for ts in (row["perish_dates"] or [])
@@ -95,19 +91,18 @@ async def fetch_items(
                     else []
                 )
                 or [],
-                "quantity": 
-                    {
-                        "product_quantity": row["amount"],
-                        "product_quantity_unit": row["unit"],
-                    }
-                
+                "quantity": {
+                    "product_quantity": row["amount"],
+                    "product_quantity_unit": row["unit"],
+                }
                 or None,
                 "tags": row["class"] or "",
+                "expiryDays": int(row.get("expiryDays", -1)),
             }
             for row in rows
         ]
 
-        return FetchItemsResponse.model_validate(
+        res = FetchItemsResponse.model_validate(
             {
                 "status": status.HTTP_200_OK,
                 "items": items,
@@ -115,10 +110,58 @@ async def fetch_items(
                 "accumulated_count": sum(item["count"] for item in items),
             }
         )
+        return res
 
     except Exception as e:
         logger.error("fetch_items error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch items")
+
+
+@router.get("/model_usage")
+async def get_model_usage(request: Request) -> dict:
+    try:
+        logger = logging.getLogger("fastapi-logger")
+        async with request.app.state.db.pool.acquire() as con:
+            rows = await con.fetch(
+                "select model, usage_stats, timestamp, user_id, provider_url, process_name from model_usage"
+            )
+
+        stats = {
+            row["timestamp"]: {
+                "model_name": row["model"],
+                "usage_stats": row["usage_stats"],
+                "user_id": row["user_id"],
+                "provider_url": row["provider_url"],
+                "process_name": row["process_name"]
+            }
+            for row in rows
+        }
+        return {"status": status.HTTP_200_OK, "stats": stats}
+
+    except Exception as e:
+        logger.error(f"log_model_usage_endpoint failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add item")
+
+
+@router.post("/log_model_usage")
+async def log_model_usage_endpoint(request: Request, body: LogModelUsage):
+    try:
+        logger = logging.getLogger("fastapi-logger")
+        async with request.app.state.db.pool.acquire() as con:
+            await con.execute(
+                "insert into model_usage(model, usage_stats, timestamp, user_id, provider_url, process_name) Values($1, $2, $3, $4, $5, $6)",
+                body.model_name,
+                json.dumps(body.usage_stats),
+                body.timestamp,
+                body.user_id,
+                body.provider_url,
+                body.process_name,
+            )
+        return {"status": status.HTTP_200_OK, "detail": "added usage to db"}
+
+    except Exception as e:
+        logger.error(f"log_model_usage_endpoint failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add item")
 
 
 @router.post("/add_ean_to_list/")
@@ -186,7 +229,6 @@ async def add_ean_to_list(request: Request, body: AddEanRequest):
 
 @router.post("/add_fetched_items")
 async def add_fetched_items(request: Request, body: AddFetchedItems):
-    from dateutil import parser
 
     username = getUsernameFromReq(request)
     logger = logging.getLogger("fastapi-logger")
@@ -203,7 +245,6 @@ async def add_fetched_items(request: Request, body: AddFetchedItems):
                     count=count,
                     quantity=None,
                     is_wish=validate_wish_list(item.isWished),
-                    date=parser.parse(date),
                     logger=logger,
                 )
 

@@ -218,7 +218,9 @@ const AuthPopup = ({ onAuthenticated }: AuthPopupProps) => {
               fontFamily: "var(--font-body)",
             }}
           >
-            {isSubmitting ? t("signingIn", "Signing in…") : "Continue"}
+            {isSubmitting
+              ? t("signingIn", "Signing in…")
+              : t("continue", "Continue")}
           </button>
 
           <p

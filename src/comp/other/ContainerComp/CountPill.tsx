@@ -30,49 +30,40 @@ const CountPill = ({
   const hasWishTarget = wishedNumber !== null;
   const hasPositiveWishTarget = hasWishTarget && wishedNumber > 0;
 
-  // Missing ratio in [0,1]: 0 means fully covered (or over-covered), 1 means nothing covered.
   const missingRatio = hasPositiveWishTarget
     ? clamp((wishedNumber - instockNumber) / wishedNumber, 0, 1)
     : 0;
 
   const hasNoMappedPantryItems = hasPositiveWishTarget && instockNumber === 0;
-
-  // Teal -> warning-red severity gradient as the missing percentage rises.
   const gradientHue = lerp(168, 4, missingRatio);
 
   const ratioBgColor = hasNoMappedPantryItems
-    ? t("hsl1864614", "hsl(186, 46%, 14%)")
-    : t("hslagradienthue64141", "hsla({{gradientHue}}, 64%, 14%, 1)", {
-        gradientHue,
-      });
+    ? "hsl(186, 46%, 14%)"
+    : `hsla(${gradientHue}, 64%, 14%, 1)`;
 
   const ratioTextColor = hasNoMappedPantryItems
-    ? t("hsl1828673", "hsl(182, 86%, 73%)")
-    : t("hslgradienthue7872", "hsl({{gradientHue}}, 78%, 72%)", {
-        gradientHue,
-      });
+    ? "hsl(182, 86%, 73%)"
+    : `hsla(${gradientHue}, 78%, 72%)`;
 
   const ratioBorderColor = hasNoMappedPantryItems
-    ? t("hsla1847244045", "hsla(184, 72%, 44%, 0.45)")
-    : t("hslagradienthue6244045", "hsla({{gradientHue}}, 62%, 44%, 0.45)", {
-        gradientHue,
-      });
+    ? "hsla(184, 72%, 44%, 0.45)"
+    : `hsla(${gradientHue}, 62%, 44%, 0.45)`;
 
   const bgColor = isIncreasing
-    ? "#0d4a3f"
+    ? "var(--accent-light)"
     : isDecreasing
-      ? "#4a1020"
+      ? "var(--error-bg)"
       : hasWishTarget
         ? ratioBgColor
         : TEAL_D;
 
   const textColor = isIncreasing
-    ? "#2dd4bf"
+    ? "var(--accent)"
     : isDecreasing
-      ? "#f87171"
+      ? "var(--error)"
       : hasWishTarget
         ? ratioTextColor
-        : "#5eead4";
+        : "var(--accent)";
 
   const borderColor = isIncreasing
     ? TEAL
@@ -81,6 +72,7 @@ const CountPill = ({
       : hasWishTarget
         ? ratioBorderColor
         : TEAL_B;
+
   const scale = isIncreasing
     ? "scale(1.08)"
     : isDecreasing
@@ -99,12 +91,10 @@ const CountPill = ({
     height: 24,
     minWidth: 36,
     fontVariantNumeric: "tabular-nums",
-    transition: t("all018s", "all 0.18s"),
+    transition: "all 0.18s",
     backgroundColor: bgColor,
     color: textColor,
-    border: t("1pxSolidBordercolor", "1px solid {{borderColor}}", {
-      borderColor,
-    }),
+    border: `1px solid ${borderColor}`,
     transform: scale,
   };
 
@@ -115,7 +105,9 @@ const CountPill = ({
             instocknumber: instockNumber,
             wishednumber: wishedNumber,
           })
-        : t("instocknumberx", "unknown", { instocknumber: instockNumber })}
+        : t("instocknumberx", "{{instocknumber}}×", {
+            instocknumber: instockNumber,
+          })}
     </span>
   );
 };

@@ -1,7 +1,7 @@
 # groceryClassifierCustom.py – Embedding-based grocery category classifier.
 # Uses bi-encoder (sentence-transformers) for fast batch classification and an
 # optional cross-encoder reranker for ambiguous / short items.
-
+'''
 import logging
 from functools import lru_cache
 from typing import Any, Optional
@@ -338,3 +338,4 @@ class GroceryClassifier:
         except Exception as exc:
             log.warning("Wish mapping failed: %s", exc)
             return items.copy()
+'''

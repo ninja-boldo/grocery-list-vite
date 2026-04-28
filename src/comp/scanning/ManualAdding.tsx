@@ -9,19 +9,6 @@ import { apiClient } from "@/lib/api/client";
 import { isAddEanSuccess, needsQuantityDetails } from "@/lib/api/addEanFlow";
 import type { AddEanRequest, QuantityInfo } from "@/lib/api/openapi";
 import { useTranslation } from "react-i18next";
-import i18next from "i18next";
-
-const P = {
-  bg: "#18181b",
-  surface: "#161b22",
-  border: "#21262d",
-  teal: "#0d9488",
-  tealD: "#0f2a28",
-  tealB: "#0d948850",
-  text: i18next.t("e6edf3", "#e6edf3"),
-  muted: "#6e7681",
-  subtle: "#4d5566",
-} as const;
 
 type Stage = "input" | "loading" | "success";
 
@@ -199,7 +186,7 @@ const ManualAdd = () => {
 
   return (
     <div
-      className="h-screen"
+      style={{ height: "100vh" }}
       style={{
         background:
           "radial-gradient(circle at 12% 14%, rgba(212, 165, 116, 0.16), transparent 24%), radial-gradient(circle at 88% 18%, rgba(124, 170, 124, 0.2), transparent 26%), linear-gradient(180deg, #0f1416 0%, #101a1a 100%)",
@@ -219,8 +206,8 @@ const ManualAdd = () => {
         mode={PageModes.GeoPage}
       />
 
-      <div className="flex-1 p-3 sm:p-4 md:p-6">
-        <div className="max-w-4xl mx-auto">
+      <div style={{ flex: 1, padding: 16 }}>
+        <div className="page-max-lg">
           {showErrorBox && <ErrorContainer text={errorMessage} />}
 
           <div
@@ -240,7 +227,7 @@ const ManualAdd = () => {
                 margin: "0 0 20px",
                 fontSize: 17,
                 fontWeight: 700,
-                color: showSuccess ? "#c9f4d4" : P.text,
+                color: showSuccess ? "var(--success)" : "var(--text-main)",
                 borderBottom: "1px solid rgba(124,170,124,0.22)",
                 paddingBottom: 14,
                 transition: "color 0.2s",
@@ -254,7 +241,13 @@ const ManualAdd = () => {
             </p>
 
             <>
-              <p style={{ fontSize: 13, color: P.muted, margin: "0 0 14px" }}>
+              <p
+                style={{
+                  fontSize: 13,
+                  color: "var(--text-muted)",
+                  margin: "0 0 14px",
+                }}
+              >
                 {isWishList
                   ? t(
                       "saveANewWishlistEntryWithOptionalBarcodeAndCount",
@@ -284,13 +277,15 @@ const ManualAdd = () => {
                   backgroundColor: "rgba(10,16,20,0.9)",
                   border: "1px solid rgba(124,170,124,0.28)",
                   borderRadius: 12,
-                  color: P.text,
+                  color: "var(--text-main)",
                   fontSize: 14,
                   outline: "none",
                   transition: "border-color 0.15s",
                   opacity: isLoading || showSuccess ? 0.5 : 1,
                 }}
-                onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
+                onFocus={(e) =>
+                  (e.currentTarget.style.borderColor = "var(--accent)")
+                }
                 onBlur={(e) =>
                   (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")
                 }
@@ -311,14 +306,16 @@ const ManualAdd = () => {
                   backgroundColor: "rgba(10,16,20,0.9)",
                   border: "1px solid rgba(124,170,124,0.28)",
                   borderRadius: 12,
-                  color: P.text,
+                  color: "var(--text-main)",
                   fontSize: 14,
                   fontFamily: "monospace",
                   outline: "none",
                   transition: "border-color 0.15s",
                   opacity: isLoading || showSuccess ? 0.5 : 1,
                 }}
-                onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
+                onFocus={(e) =>
+                  (e.currentTarget.style.borderColor = "var(--accent)")
+                }
                 onBlur={(e) =>
                   (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")
                 }
@@ -340,13 +337,15 @@ const ManualAdd = () => {
                   backgroundColor: "rgba(10,16,20,0.9)",
                   border: "1px solid rgba(124,170,124,0.28)",
                   borderRadius: 12,
-                  color: P.text,
+                  color: "var(--text-main)",
                   fontSize: 14,
                   outline: "none",
                   transition: "border-color 0.15s",
                   opacity: isLoading || showSuccess ? 0.5 : 1,
                 }}
-                onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
+                onFocus={(e) =>
+                  (e.currentTarget.style.borderColor = "var(--accent)")
+                }
                 onBlur={(e) =>
                   (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")
                 }
@@ -368,7 +367,7 @@ const ManualAdd = () => {
                     "linear-gradient(135deg, rgba(124,170,124,0.92) 0%, rgba(86,130,103,0.95) 100%)",
                   border: "1px solid rgba(124,170,124,0.5)",
                   borderRadius: 12,
-                  color: "#101d13",
+                  color: "var(--bg)",
                   fontSize: 14,
                   fontWeight: 700,
                   cursor:

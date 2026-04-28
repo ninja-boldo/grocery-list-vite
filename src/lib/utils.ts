@@ -58,6 +58,8 @@ export const transformItems = (data: ApiResponse): Item[] => {
       tags: parsedTags,
 
       mapped_items: item.mapped_items ?? item.mappedItems ?? [],
+
+      expiryDays: item.expiryDays ?? null,
     };
   });
 };
@@ -83,6 +85,8 @@ export interface ApiItem {
   tags: string | null;
   mapped_items?: MappedItem[];
   mappedItems?: MappedItem[];
+  /** Days until expiry, or -1 if unknown/unavailable */
+  expiryDays?: number | null;
 }
 
 export interface ApiResponse {
