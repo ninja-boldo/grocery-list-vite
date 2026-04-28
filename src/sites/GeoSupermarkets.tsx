@@ -14,29 +14,32 @@ import { authApiCall } from "@/lib/authApi";
 import { API_PATHS } from "@/lib/api/openapi";
 import FeedbackToast, { useFeedbackToast } from "@/comp/utils/FeedbackToast";
 import { useTranslation } from "react-i18next";
-import i18next from "i18next";
 
-// ── Palette ────────────────────────────────────────────────────────────────
+// ── Palette — uses CSS variables for full theme support ────────────────────
 const P = {
-  bg: "#0D1117",
-  surface: "#161b22",
-  border: "#21262d",
-  teal: "#1D9E75",
-  tealD: "#0f2a28",
-  tealB: "#0d948850",
-  text: i18next.t("e6edf3", "#e6edf3"),
-  muted: "#6e7681",
-  subtle: "#4d5566",
+  bg: "var(--bg)",
+  surface: "var(--surface)",
+  border: "var(--border)",
+  teal: "var(--accent)",
+  tealD: "var(--accent-light)",
+  tealB: "var(--accent-border)",
+  text: "var(--text-main)",
+  muted: "var(--text-muted)",
+  subtle: "var(--text-dim)",
 } as const;
 
-const formatMeters = (meters: number) => {
-  if (meters >= 1000) {
-    return i18next.t("valKm", "{{val}} km", {
-      val: (meters / 1000).toFixed(meters % 1000 === 0 ? 0 : 1),
-    });
-  }
-  return i18next.t("metersM", "{{meters}} m", { meters });
-};
+// formatMeters is used inside the component where t() is available via hook
+// It's passed as a helper; we define a factory that takes t
+const makeFormatMeters =
+  (t: (key: string, def: string, opts?: object) => string) =>
+  (meters: number) => {
+    if (meters >= 1000) {
+      return t("valKm", "{{val}} km", {
+        val: (meters / 1000).toFixed(meters % 1000 === 0 ? 0 : 1),
+      });
+    }
+    return t("metersM", "{{meters}} m", { meters });
+  };
 
 type AddMarketResponse = {
   status?: string;
@@ -46,6 +49,7 @@ type AddMarketResponse = {
 
 const GeoSupermarketSite = () => {
   const { t } = useTranslation();
+  const formatMeters = makeFormatMeters(t);
   const [userPos, setUserPos] = useState<Position>({
     lon: 1,
     lat: 1,
@@ -174,11 +178,11 @@ const GeoSupermarketSite = () => {
             style={{
               marginBottom: 10,
               padding: "10px 14px",
-              backgroundColor: "#2a1111",
+              backgroundColor: "var(--error-bg)",
               border: "1px solid #ef444430",
               borderRadius: 12,
               fontSize: 13,
-              color: "#fca5a5",
+              color: "var(--error)",
             }}
           >
             {error}
@@ -203,7 +207,7 @@ const GeoSupermarketSite = () => {
                   width: 24,
                   height: 24,
                   borderRadius: "50%",
-                  border: `2px solid ${P.teal}`,
+                  border: `2px solid var(--accent)`,
                   borderRightColor: "transparent",
                   animation: "spin 0.8s linear infinite",
                 }}
@@ -290,7 +294,8 @@ const GeoSupermarketSite = () => {
                   onMouseEnter={(e) => {
                     (e.currentTarget as HTMLElement).style.borderColor =
                       P.tealB;
-                    (e.currentTarget as HTMLElement).style.color = "#5eead4";
+                    (e.currentTarget as HTMLElement).style.color =
+                      "var(--accent)";
                   }}
                   onMouseLeave={(e) => {
                     (e.currentTarget as HTMLElement).style.borderColor =
@@ -354,7 +359,7 @@ const GeoSupermarketSite = () => {
                 borderRadius: 12,
                 backgroundColor: P.tealD,
                 border: `1px solid ${P.tealB}`,
-                color: "#5eead4",
+                color: "var(--accent)",
                 fontSize: 13,
                 fontWeight: 600,
                 cursor: "pointer",
@@ -362,9 +367,9 @@ const GeoSupermarketSite = () => {
               }}
               onMouseEnter={(e) => {
                 (e.currentTarget as HTMLElement).style.backgroundColor =
-                  "#152e28";
+                  "var(--accent-light)";
                 (e.currentTarget as HTMLElement).style.borderColor =
-                  `${P.teal}80`;
+                  `var(--accent)80`;
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLElement).style.backgroundColor =
@@ -400,13 +405,7 @@ const GeoSupermarketSite = () => {
 
       <BottomTabBar />
 
-      {/* Spinner keyframe */}
-      <style>
-        {t(
-          "keyframesSpinToTransformRotate360deg",
-          "@keyframes spin { to { transform: rotate(360deg); } }",
-        )}
-      </style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 };

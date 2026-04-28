@@ -424,10 +424,10 @@ export default function RecipesPage() {
               flex: "1 1 320px",
               minWidth: 220,
               maxWidth: 460,
-              border: "1px solid #30363D",
+              border: "1px solid var(--border)",
               borderRadius: 12,
-              background: "#161B22",
-              color: "#E6EDF3",
+              background: "var(--surface-2)",
+              color: "var(--text-main)",
               padding: "10px 12px",
               fontSize: 14,
             }}
@@ -438,10 +438,10 @@ export default function RecipesPage() {
             onClick={() => void loadRecipes()}
             disabled={isLoading}
             style={{
-              border: "1px solid #1D9E75",
+              border: "1px solid var(--accent-border)",
               borderRadius: 12,
-              background: isLoading ? "#0F2A28" : "#1D9E75",
-              color: "#FFFFFF",
+              background: isLoading ? "var(--accent-light)" : "var(--accent)",
+              color: "#fff",
               padding: "9px 14px",
               fontSize: 13,
               fontWeight: 600,
@@ -457,9 +457,9 @@ export default function RecipesPage() {
         {error && (
           <section
             style={{
-              border: "1px solid #7F1D1D",
-              background: "#2B1111",
-              color: "#FCA5A5",
+              border: "1px solid var(--error-border)",
+              background: "var(--error-bg)",
+              color: "var(--error)",
               borderRadius: 12,
               padding: "10px 12px",
               fontSize: 13,
@@ -470,13 +470,13 @@ export default function RecipesPage() {
         )}
 
         {isLoading && recipes.length === 0 && (
-          <section style={{ color: "#93A4B5", fontSize: 14 }}>
+          <section style={{ color: "var(--text-muted)", fontSize: 14 }}>
             {t("loading_recipes", "Loading recipes...")}
           </section>
         )}
 
         {!isLoading && filteredRecipes.length === 0 && error && (
-          <section style={{ color: "#FCA5A5", fontSize: 13 }}>
+          <section style={{ color: "var(--error)", fontSize: 13 }}>
             {t("error_loading_recipes", "Error: {{error}}", { error })}
           </section>
         )}
@@ -517,7 +517,7 @@ export default function RecipesPage() {
         >
           <div
             style={{
-              background: "#161b22",
+              background: "var(--surface)",
               borderRadius: "24px 24px 0 0",
               padding: "20px 20px 44px",
               width: "100%",
@@ -532,7 +532,7 @@ export default function RecipesPage() {
                 width: 36,
                 height: 4,
                 borderRadius: 2,
-                background: "#21262d",
+                background: "var(--surface-2)",
                 margin: "0 auto 18px",
               }}
             />
@@ -540,15 +540,21 @@ export default function RecipesPage() {
               style={{
                 fontSize: 17,
                 fontWeight: 800,
-                color: "#e6edf3",
+                color: "var(--text-main)",
                 marginBottom: 8,
               }}
             >
               {t("add_quantity_title", "Quantity")}
             </div>
-            <div style={{ fontSize: 14, color: "#8b949e", marginBottom: 18 }}>
+            <div
+              style={{
+                fontSize: 14,
+                color: "var(--text-muted)",
+                marginBottom: 18,
+              }}
+            >
               {t("quantity_for_item_prompt", "How much")}{" "}
-              <strong style={{ color: "#5eead4" }}>
+              <strong style={{ color: "var(--accent)" }}>
                 {quantityPrompt.displayName}
               </strong>{" "}
               {t("quantity_needed", "do you need?")}
@@ -565,11 +571,11 @@ export default function RecipesPage() {
                 autoFocus
                 style={{
                   flex: 1,
-                  background: "#0d1117",
-                  border: "1.5px solid #21262d",
+                  background: "var(--surface-3)",
+                  border: "1.5px solid var(--border)",
                   borderRadius: 10,
                   padding: "10px 12px",
-                  color: "#e6edf3",
+                  color: "var(--text-main)",
                   fontSize: 14,
                   outline: "none",
                   fontFamily: "inherit",
@@ -580,11 +586,11 @@ export default function RecipesPage() {
                 onChange={(e) => setUnitInput(e.target.value)}
                 style={{
                   width: 110,
-                  background: "#0d1117",
-                  border: "1.5px solid #21262d",
+                  background: "var(--surface-3)",
+                  border: "1.5px solid var(--border)",
                   borderRadius: 10,
                   padding: "10px 8px",
-                  color: "#e6edf3",
+                  color: "var(--text-main)",
                   fontSize: 14,
                   outline: "none",
                   fontFamily: "inherit",
@@ -618,8 +624,8 @@ export default function RecipesPage() {
                   flex: 1,
                   padding: 12,
                   borderRadius: 13,
-                  background: "#21262d",
-                  color: "#8b949e",
+                  background: "var(--surface-2)",
+                  color: "var(--text-muted)",
                   fontSize: 14,
                   fontWeight: 700,
                   border: "none",
@@ -639,12 +645,12 @@ export default function RecipesPage() {
                   borderRadius: 13,
                   background:
                     quantityInput && parseFloat(quantityInput) > 0
-                      ? "#1D9E75"
-                      : "#0F2A28",
+                      ? "var(--accent)"
+                      : "var(--accent-light)",
                   color:
                     quantityInput && parseFloat(quantityInput) > 0
-                      ? "#FFFFFF"
-                      : "#5eead480",
+                      ? "#fff"
+                      : "var(--text-subtle)",
                   fontSize: 14,
                   fontWeight: 700,
                   border: "none",

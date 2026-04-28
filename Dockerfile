@@ -12,8 +12,8 @@ RUN pip install -U pip uv && \
 COPY server /app/server
 
 # copy start script
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+COPY start_server.sh /app/start_server.sh
+RUN chmod +x /app/start_server.sh
 
 EXPOSE 3030 4040
-CMD ["python", "server/server.py"]
+CMD ["./start_server.sh"]

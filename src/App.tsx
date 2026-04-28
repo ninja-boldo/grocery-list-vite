@@ -520,7 +520,7 @@ function App() {
                 endReached={() => {
                   if (hasMoreData && !isLoading && !isSearchActive) {
                     loadMoreItems();
-                  } 
+                  }
                 }}
                 itemContent={(idx, item) => (
                   <Container

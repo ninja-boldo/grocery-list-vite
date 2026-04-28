@@ -1,8 +1,31 @@
+/**
+ * Web.tsx — WebView wrapper
+ *
+ * Intercepts /scanner navigation from the web app and redirects
+ * to the native Scanner screen, forwarding query params:
+ *   wishlist, count, text → navigation params { wishList, count, text }
+ */
+
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import React from "react";
 import { WebView } from "react-native-webview";
 import { useAuthSession } from "../../lib/AuthSession";
 import { MOBILE_WEB_BASE_URL } from "../../lib/config";
+
+// Parse query string into a plain object
+function parseQS(search: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!search) return out;
+  const qs = search.startsWith("?") ? search.slice(1) : search;
+  for (const pair of qs.split("&")) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) continue;
+    const key = decodeURIComponent(pair.slice(0, eq));
+    const val = decodeURIComponent(pair.slice(eq + 1));
+    out[key] = val;
+  }
+  return out;
+}
 
 const buildInjectedBridgeScript = (
   jwtToken: string | null,
@@ -176,20 +199,44 @@ export default function WebComp() {
     [jwtToken, username],
   );
 
+  /**
+   * Extracts scanner params from a URL and navigates to the native scanner.
+   * Forwards: wishlist → wishList, count, text
+   * Returns true if the URL was a scanner URL (caller should block load).
+   */
   const openNativeScannerIfNeeded = React.useCallback(
     (url: string) => {
-      if (url.includes("/scanner")) {
-        if (lastHandledUrlRef.current === url) {
-          return true;
-        }
-
-        lastHandledUrlRef.current = url;
-        console.log("now going to the native scanner component");
-        navigation.navigate("scanner");
-        return true;
+      if (!url.includes("/scanner")) {
+        return false;
       }
 
-      return false;
+      // Deduplicate — same URL twice in a row should not re-navigate
+      if (lastHandledUrlRef.current === url) {
+        return true;
+      }
+      lastHandledUrlRef.current = url;
+
+      // Parse query params
+      let params: Record<string, string> = {};
+      try {
+        const parsed = new URL(url);
+        params = parseQS(parsed.search);
+      } catch {
+        // If URL() fails (e.g. relative), try splitting on "?"
+        const qIndex = url.indexOf("?");
+        if (qIndex !== -1) {
+          params = parseQS(url.slice(qIndex));
+        }
+      }
+
+      const navParams: Record<string, string | boolean> = {};
+      if (params.wishlist) navParams.wishList = params.wishlist; // "true" | "false"
+      if (params.count) navParams.count = params.count;
+      if (params.text) navParams.text = params.text;
+
+      console.log("Navigating to native scanner with params:", navParams);
+      navigation.navigate("scanner", navParams);
+      return true;
     },
     [navigation],
   );
@@ -229,6 +276,8 @@ export default function WebComp() {
       if (!isRestored) {
         return;
       }
+      // Reset the last-handled URL so re-focusing after scanner go-back works
+      lastHandledUrlRef.current = null;
       setFocusNonce((prev) => prev + 1);
     }, [isRestored]),
   );
@@ -243,9 +292,12 @@ export default function WebComp() {
     <WebView
       key={webViewAuthKey}
       source={{ uri: MOBILE_WEB_BASE_URL }}
+      cacheEnabled={false}
+      cacheMode="LOAD_NO_CACHE"
+      incognito={true}
       onShouldStartLoadWithRequest={(request) => {
         if (openNativeScannerIfNeeded(request.url)) {
-          return false;
+          return false; // block the WebView from loading /scanner
         }
         return true;
       }}

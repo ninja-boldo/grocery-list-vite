@@ -2,7 +2,6 @@
 const RAW_API_BASE_URL =
   process.env.EXPO_PUBLIC_API_BASE_URL ??
   process.env.EXPO_PUBLIC_SERVER_BASE_URL ??
-  //"http://192.168.1.163:3030";
   "https://boldo.ddns.net/api";
 
 const RAW_WEB_BASE_URL = "https://boldo.ddns.net";

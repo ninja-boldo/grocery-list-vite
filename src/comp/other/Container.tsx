@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import Badge, { BadgeType } from "./Badge";
 import CountPill from "./ContainerComp/CountPill";
 import AttributionNotice from "../utils/AttributionNotice";
 import { useTranslation } from "react-i18next";
+import { useTheme } from "../../ctx/ThemeContext";
 
 export interface ContainerProps {
   text: string | null;
@@ -19,6 +20,8 @@ export interface ContainerProps {
   isWishedNumber: number | null;
   /** Wish-list only: inventory items matched to this entry */
   mapped_items?: { count: number; item_name: string }[];
+  /** Days until expiry, or null/-1 if unknown */
+  expiryDays?: number | null;
   onClickIncrease: (clickedNode: ContainerProps) => Promise<void>;
   onClickDecrease: (clickedNode: ContainerProps) => Promise<void>;
 }
@@ -35,7 +38,7 @@ const parseArr = (value: string | string[] | null): string[] => {
     return t
       .replace(/^\[|\]$/g, "")
       .split(",")
-      .map((s) => s.trim().replace(/^"|"$/g, ""))
+      .map((s) => s.trim().replace(/^"/, "").replace(/"$/, ""))
       .filter(Boolean);
   }
 };
@@ -52,10 +55,12 @@ const Container = ({
   ean,
   isWishedNumber,
   mapped_items,
+  expiryDays,
   onClickIncrease,
   onClickDecrease,
 }: ContainerProps) => {
   const { t } = useTranslation();
+  const { theme } = useTheme();
   const checkedTags: string[] = parseArr(tags);
 
   const [open, setOpen] = useState(false);
@@ -94,11 +99,12 @@ const Container = ({
         classname,
         perish_dates,
         imageUrl,
+        tags: checkedTags,
+        ean,
+        isWishedNumber,
+        mapped_items,
         onClickIncrease,
         onClickDecrease,
-        ean,
-        tags: checkedTags,
-        isWishedNumber,
       });
     } finally {
       setTimeout(() => setIsIncreasing(false), 300);
@@ -116,77 +122,60 @@ const Container = ({
         classname,
         perish_dates,
         imageUrl,
+        tags: checkedTags,
+        ean,
+        isWishedNumber,
+        mapped_items,
         onClickIncrease,
         onClickDecrease,
-        ean,
-        tags: checkedTags,
-        isWishedNumber,
       });
     } finally {
       setTimeout(() => setIsDecreasing(false), 300);
     }
   };
 
-  const ACCENT = "var(--accent-primary)";
-  const ACCENT_D = t("rgba44665208", "rgba(44, 66, 52, 0.8)");
-  const ACCENT_B = "var(--accent-glow)";
-  const ACCENT_C = "var(--border-strong)";
-  const SURFACE = "var(--surface-0)";
-  const CARD = "var(--surface-1)";
-  const BORDER = "var(--border-soft)";
-
-  // Keep legacy naming used by child props/styles.
-  const TEAL = ACCENT;
-  const TEAL_D = ACCENT_D;
-  const TEAL_B = ACCENT_B;
-
-  // Shared inline button style factory
-  const btnStyle = (
-    active: boolean,
-    activeColor: "accent" | "red",
-  ): React.CSSProperties => ({
-    width: 28,
-    height: 28,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    border: t("1pxSolidVal", "1px solid {{val}}", {
-      val: active
+  // Memoize button style per theme to prevent recreation
+  const btnStyle = useMemo(() => {
+    return (
+      active: boolean,
+      activeColor: "accent" | "red",
+    ): React.CSSProperties => ({
+      width: 28,
+      height: 28,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flexShrink: 0,
+      border: `1px solid ${active ? (activeColor === "accent" ? "var(--accent-glow)" : "var(--error-bg)") : "var(--border-soft)"}`,
+      borderRadius: 8,
+      cursor: "pointer",
+      fontSize: 16,
+      lineHeight: "1",
+      fontWeight: 300,
+      backgroundColor: active
         ? activeColor === "accent"
-          ? ACCENT_B
-          : "rgba(229, 115, 115, 0.3)"
-        : BORDER,
-    }),
-    borderRadius: 8,
-    cursor: "pointer",
-    fontSize: 16,
-    lineHeight: "1",
-    fontWeight: 300,
-    backgroundColor: active
-      ? activeColor === "accent"
-        ? ACCENT_D
-        : "#3D2020"
-      : CARD,
-    color: active
-      ? activeColor === "accent"
-        ? "#9FCF9F"
-        : "#E57373"
-      : "#6B7280",
-    transition: t("all015s", "all 0.15s"),
-  });
+          ? "var(--accent-light)"
+          : "var(--error-bg)"
+        : "var(--surface-1)",
+      color: active
+        ? activeColor === "accent"
+          ? "var(--success)"
+          : "var(--error)"
+        : "var(--text-muted)",
+      transition: "all 0.15s",
+    });
+  }, [theme]);
 
   return (
     <div className={cn("px-3 m-2", style)}>
       <div
         ref={divRef}
         style={{
-          background:
-            "linear-gradient(160deg, rgba(21, 27, 30, 0.95) 0%, rgba(18, 24, 23, 0.95) 100%)",
-          border: `1px solid ${open ? ACCENT_C : BORDER}`,
+          background: "var(--surface)",
+          border: `1px solid ${open ? "var(--accent-border)" : "var(--border-soft)"}`,
           borderRadius: 18,
           boxShadow: open
-            ? `0 0 0 1px ${ACCENT_B}, 0 12px 34px rgba(0, 0, 0, 0.32)`
+            ? `0 0 0 1px var(--accent-glow), 0 12px 34px rgba(0, 0, 0, 0.32)`
             : "0 8px 20px rgba(0, 0, 0, 0.2)",
           transition: "border-color 0.2s, box-shadow 0.2s, transform 0.2s",
           overflow: "hidden",
@@ -214,7 +203,9 @@ const Container = ({
               alignSelf: "stretch",
               borderRadius: 4,
               flexShrink: 0,
-              backgroundColor: open ? TEAL : BORDER,
+              backgroundColor: open
+                ? "var(--accent-primary)"
+                : "var(--border-soft)",
               transition: "background-color 0.2s",
             }}
           />
@@ -227,7 +218,7 @@ const Container = ({
               marginLeft: 4,
               fontSize: 14,
               fontWeight: 500,
-              color: "#e6edf3",
+              color: "var(--text-main)",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
@@ -243,9 +234,11 @@ const Container = ({
             wishedNumber={isWishedNumber}
             isIncreasing={isIncreasing}
             isDecreasing={isDecreasing}
-            TEAL={TEAL}
-            TEAL_B={TEAL_B}
-            TEAL_D={TEAL_D}
+            TEAL="var(--accent-primary)"
+            TEAL_B="var(--accent-glow)"
+            TEAL_D={
+              theme === "dark" ? "var(--accent-light)" : "rgba(44,66,52,0.8)"
+            }
           />
 
           {/* Buttons */}
@@ -257,23 +250,7 @@ const Container = ({
               onClick={handleDec}
               disabled={isDecreasing}
               aria-label={t("Decrease", "Decrease")}
-              style={btnStyle(isDecreasing, "red")}
-              onMouseEnter={(e) => {
-                if (!isDecreasing) {
-                  const b = e.currentTarget as HTMLElement;
-                  b.style.backgroundColor = "#1c2128";
-                  b.style.borderColor = "#f43f5e30";
-                  b.style.color = "#fb7185";
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isDecreasing) {
-                  const b = e.currentTarget as HTMLElement;
-                  b.style.backgroundColor = CARD;
-                  b.style.borderColor = BORDER;
-                  b.style.color = "#6e7681";
-                }
-              }}
+              style={btnStyle(!!isDecreasing, "red")}
             >
               -
             </button>
@@ -281,23 +258,7 @@ const Container = ({
               onClick={handleInc}
               disabled={isIncreasing}
               aria-label={t("Increase", "Increase")}
-              style={btnStyle(isIncreasing, "accent")}
-              onMouseEnter={(e) => {
-                if (!isIncreasing) {
-                  const b = e.currentTarget as HTMLElement;
-                  b.style.backgroundColor = "#1c2128";
-                  b.style.borderColor = TEAL_B;
-                  b.style.color = "#2dd4bf";
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!isIncreasing) {
-                  const b = e.currentTarget as HTMLElement;
-                  b.style.backgroundColor = CARD;
-                  b.style.borderColor = BORDER;
-                  b.style.color = "#6e7681";
-                }
-              }}
+              style={btnStyle(!!isIncreasing, "accent")}
             >
               +
             </button>
@@ -314,7 +275,7 @@ const Container = ({
               justifyContent: "center",
               transform: open ? "rotate(180deg)" : "rotate(0deg)",
               transition: "transform 0.25s",
-              color: open ? TEAL : "#4d5566",
+              color: open ? "var(--accent-primary)" : "var(--text-dim)",
             }}
           >
             <svg
@@ -342,7 +303,11 @@ const Container = ({
         >
           <div style={{ overflow: "hidden" }}>
             <div
-              style={{ margin: "0 12px", height: 1, backgroundColor: BORDER }}
+              style={{
+                margin: "0 12px",
+                height: 1,
+                backgroundColor: "var(--border-soft)",
+              }}
             />
 
             {hasValidDates ? (
@@ -363,8 +328,8 @@ const Container = ({
                       width: 80,
                       height: 80,
                       borderRadius: 12,
-                      backgroundColor: SURFACE,
-                      border: `1px solid ${BORDER}`,
+                      backgroundColor: "var(--surface-0)",
+                      border: `1px solid var(--border-soft)`,
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -386,7 +351,7 @@ const Container = ({
                           width: "100%",
                           height: "100%",
                           objectFit: "cover",
-                          borderRadius: "8px",
+                          borderRadius: 8,
                         }}
                       />
                     )}
@@ -410,7 +375,7 @@ const Container = ({
                       style={{
                         fontSize: 13,
                         fontWeight: 600,
-                        color: "#e6edf3",
+                        color: "var(--text-main)",
                         lineHeight: 1.35,
                         margin: 0,
                       }}
@@ -434,11 +399,11 @@ const Container = ({
                             fontWeight: 700,
                             letterSpacing: "0.07em",
                             textTransform: "uppercase",
-                            color: "#4d5566",
+                            color: "var(--text-muted)",
                             padding: "1px 5px",
-                            border: `1px solid ${BORDER}`,
+                            border: `1px solid var(--border-soft)`,
                             borderRadius: 4,
-                            backgroundColor: CARD,
+                            backgroundColor: "var(--surface-1)",
                             lineHeight: "16px",
                             whiteSpace: "nowrap",
                           }}
@@ -449,7 +414,7 @@ const Container = ({
                           style={{
                             fontSize: 12,
                             fontFamily: "monospace",
-                            color: "#8b949e",
+                            color: "var(--text-subtle)",
                             letterSpacing: "0.02em",
                             lineHeight: "16px", // match badge height exactly
                           }}
@@ -464,21 +429,35 @@ const Container = ({
                 </div>
 
                 {/* badge row */}
-                <div className="flex flex-wrap mt-3 mb-2">
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    marginTop: 12,
+                    marginBottom: 8,
+                  }}
+                >
                   {/* date count badge */}
                   <Badge
                     text_or_dates={dates}
                     type={BadgeType.DateBadge}
-                    Color_1={"#2dd4bf"}
-                    Color_2={TEAL_D}
+                    Color_1={"var(--accent)"}
+                    Color_2={
+                      theme === "dark" ? "var(--accent-glow)" : "var(--accent)"
+                    }
+                    expiryDaysOverride={expiryDays}
                   />
                   {checkedTags.map((text, idx) => (
                     <Badge
                       key={idx}
                       text_or_dates={text}
                       type={BadgeType.TextBadge}
-                      Color_1={"#2dd4bf"}
-                      Color_2={TEAL_D}
+                      Color_1={"var(--accent)"}
+                      Color_2={
+                        theme === "dark"
+                          ? "var(--accent-glow)"
+                          : "var(--accent)"
+                      }
                     />
                   ))}
                 </div>
@@ -492,7 +471,7 @@ const Container = ({
                     maxHeight: 220,
                     overflowY: "auto",
                     scrollbarWidth: "thin",
-                    scrollbarColor: `${BORDER} transparent`,
+                    scrollbarColor: `var(--border-soft) transparent`,
                   }}
                 >
                   {dates.map((d, i) => (
@@ -504,25 +483,25 @@ const Container = ({
                         gap: 10,
                         padding: "9px 12px",
                         borderRadius: 10,
-                        backgroundColor: CARD,
-                        border: `1px solid ${BORDER}`,
+                        backgroundColor: "var(--surface-1)",
+                        border: `1px solid var(--border-soft)`,
                         transition: "border-color 0.15s",
                       }}
                       onMouseEnter={(e) =>
                         ((e.currentTarget as HTMLElement).style.borderColor =
-                          TEAL_B)
+                          "var(--accent-glow)")
                       }
                       onMouseLeave={(e) =>
                         ((e.currentTarget as HTMLElement).style.borderColor =
-                          BORDER)
+                          "var(--border-soft)")
                       }
                     >
                       <div
                         style={{
                           width: 6,
                           height: 6,
-                          borderRadius: 999,
-                          backgroundColor: TEAL,
+                          borderRadius: "50%",
+                          backgroundColor: "var(--accent)",
                           flexShrink: 0,
                         }}
                       />
@@ -530,7 +509,7 @@ const Container = ({
                         style={{
                           fontSize: 13,
                           fontFamily: "monospace",
-                          color: "#c9d1d9",
+                          color: "var(--text-dim)",
                           fontWeight: 500,
                         }}
                       >
@@ -553,8 +532,8 @@ const Container = ({
                   style={{
                     width: 6,
                     height: 6,
-                    borderRadius: 999,
-                    backgroundColor: "#fb7185",
+                    borderRadius: "50%",
+                    backgroundColor: "var(--error)",
                     flexShrink: 0,
                   }}
                 />
@@ -562,7 +541,7 @@ const Container = ({
                   style={{
                     fontSize: 11,
                     fontFamily: "monospace",
-                    color: "#4d5566",
+                    color: "var(--text-muted)",
                   }}
                 >
                   {t("noValidDatesCode42", "No valid dates (code 42)")}
@@ -576,8 +555,11 @@ const Container = ({
                 style={{
                   margin: "0 12px 12px",
                   padding: "9px 11px",
-                  backgroundColor: TEAL_D,
-                  border: `1px solid ${TEAL_B}`,
+                  backgroundColor:
+                    theme === "dark"
+                      ? "var(--accent-light)"
+                      : "var(--accent-glow)",
+                  border: `1px solid ${theme === "dark" ? "var(--accent-glow)" : "var(--accent-border)"}`,
                   borderRadius: 10,
                 }}
               >
@@ -595,7 +577,9 @@ const Container = ({
                     height="10"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke={TEAL}
+                    stroke={
+                      theme === "dark" ? "var(--accent)" : "var(--surface)"
+                    }
                     strokeWidth="2.5"
                     strokeLinecap="round"
                   >
@@ -607,7 +591,7 @@ const Container = ({
                       fontWeight: 700,
                       letterSpacing: "0.08em",
                       textTransform: "uppercase",
-                      color: "#2dd4bf",
+                      color: "var(--accent-text)",
                     }}
                   >
                     {t("inInventory", "In Inventory")}
@@ -616,7 +600,7 @@ const Container = ({
                     style={{
                       marginLeft: "auto",
                       fontSize: 10,
-                      color: "#4d5566",
+                      color: "var(--text-muted)",
                     }}
                   >
                     {mapped_items.reduce((s, m) => s + m.count, 0)}{" "}
@@ -635,10 +619,10 @@ const Container = ({
                         gap: 4,
                         padding: "3px 8px",
                         borderRadius: 20,
-                        backgroundColor: CARD,
-                        border: `1px solid ${TEAL_B}`,
+                        backgroundColor: "var(--surface-1)",
+                        border: `1px solid ${theme === "dark" ? "var(--accent-glow)" : "var(--accent-border)"}`,
                         fontSize: 12,
-                        color: "#c9d1d9",
+                        color: "var(--text-dim)",
                         whiteSpace: "nowrap",
                       }}
                     >
@@ -646,7 +630,7 @@ const Container = ({
                       <span
                         style={{
                           fontSize: 11,
-                          color: "#2dd4bf",
+                          color: "var(--accent)",
                           fontWeight: 600,
                         }}
                       >

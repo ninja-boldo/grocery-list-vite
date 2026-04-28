@@ -15,6 +15,7 @@ const ImprovedScanner = React.lazy(
 const SettingsPage = React.lazy(() => import("./sites/Settings"));
 const MealPlanner = React.lazy(() => import("./sites/MealPlanner"));
 const RecipesPage = React.lazy(() => import("./sites/Recipes"));
+const ModelUsagePage = React.lazy(() => import("./sites/ModelUsageInfo"));
 
 const PageLoader = ({ t }: { t: TFunction }) => (
   <div
@@ -22,8 +23,8 @@ const PageLoader = ({ t }: { t: TFunction }) => (
       minHeight: "100dvh",
       display: "grid",
       placeItems: "center",
-      background: "#0D1117",
-      color: "#d9f8f0",
+      background: "var(--bg)",
+      color: "var(--text-main)",
       fontSize: "14px",
       letterSpacing: "0.08em",
       textTransform: "uppercase",
@@ -38,7 +39,7 @@ const PageLoader = ({ t }: { t: TFunction }) => (
         padding: "12px 16px",
         borderRadius: 14,
         border: "1px solid #21262D",
-        background: "#161B22",
+        background: "var(--surface)",
       }}
     >
       <span
@@ -46,7 +47,7 @@ const PageLoader = ({ t }: { t: TFunction }) => (
           width: 10,
           height: 10,
           borderRadius: 999,
-          background: "#1D9E75",
+          background: "var(--accent)",
           boxShadow: "0 0 0 6px rgba(29, 158, 117, 0.2)",
         }}
       />
@@ -72,6 +73,7 @@ export default function AppRouter() {
         <Route path="/planner" element={<MealPlanner />} />
         <Route path="/recipes" element={<RecipesPage />} />
         <Route path="/attribution" element={<AttributionPage />} />
+        <Route path="/stats/model_usage" element={<ModelUsagePage />} />
       </Routes>
     </Suspense>
   );

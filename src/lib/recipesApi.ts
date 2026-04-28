@@ -1,6 +1,5 @@
 import { authApiCall } from "./authApi";
 import { API_PATHS } from "./api/openapi";
-import i18next from 'i18next'
 
 export type RecipeIngredient = {
   amount: number | null;
@@ -47,7 +46,7 @@ const normalizeIngredients = (value: unknown): RecipeIngredient[] => {
     .map((ingredient) => ({
       amount: toNullableNumber(ingredient.amount),
       unit: toNullableString(ingredient.unit),
-      name: typeof ingredient.name === "string" ? ingredient.name : i18next.t('unknown', 'Unknown'),
+      name: typeof ingredient.name === "string" ? ingredient.name : "Unknown",
       count: toNullableNumber(ingredient.count),
     }));
 };

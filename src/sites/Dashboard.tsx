@@ -7,7 +7,7 @@ import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
 import { buildFetchItemsUrl } from "@/lib/api/openapi";
 import type { ApiResponse } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
-import i18next from "i18next";
+import i18n from "@/i18n";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type Stats = {
@@ -27,42 +27,10 @@ type RecentItem = {
   low: boolean;
 };
 
-// ── Palette ──────────────────────────────────────────────────────────────────
-const teal = "#1D9E75";
-const red = "#E24B4A";
-const amber = "#BA7517";
-const P = {
-  bg: "#0D1117",
-  surface: "#161B22",
-  border: "#21262D",
-  text: i18next.t("e8edf2", "#E8EDF2"),
-  muted: "#6B7A8A",
-  subtle: "#4A5568",
-};
-
-const categoryColors: Record<string, { bg: string; text: string }> = {
-  Dairy: { bg: "#E6F1FB", text: i18next.t("378add", "#378ADD") },
-  Bakery: { bg: "#FAEEDA", text: i18next.t("ba7517", "#BA7517") },
-  Produce: { bg: "#E1F5EE", text: i18next.t("0f6e56", "#0F6E56") },
-  Pantry: { bg: "#F1EFE8", text: i18next.t("5f5e5a", "#5F5E5A") },
-  Condiments: { bg: "#FBEAF0", text: i18next.t("993556", "#993556") },
-};
-
-function getCatStyle(cat: string | null) {
-  const c = cat
-    ? (categoryColors[cat] ?? {
-        bg: "#F1EFE8",
-        text: i18next.t("5f5e5a", "#5F5E5A"),
-      })
-    : { bg: "#F1EFE8", text: i18next.t("5f5e5a", "#5F5E5A") };
-  return c;
-}
-
 function daysUntil(dateStr: string): number {
   return Math.ceil((new Date(dateStr).getTime() - Date.now()) / 86_400_000);
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 function parseStats(
   response: ApiResponse,
   isWish: boolean,
@@ -135,6 +103,44 @@ const ClockIcon = () => (
   </svg>
 );
 
+const ChevronRight = () => (
+  <svg
+    width="12"
+    height="12"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="var(--accent)"
+    strokeWidth="2.5"
+    strokeLinecap="round"
+  >
+    <polyline points="9 18 15 12 9 6" />
+  </svg>
+);
+
+// ── Stat card accent colours ──────────────────────────────────────────────────
+const CARD_COLORS = {
+  inventory: {
+    value: "var(--accent)",
+    badge: "var(--accent-light)",
+    badgeText: "var(--accent-text)",
+  },
+  wish: {
+    value: "var(--info)",
+    badge: "var(--info-bg)",
+    badgeText: "var(--info)",
+  },
+  lowStock: {
+    value: "var(--error)",
+    badge: "var(--error-bg)",
+    badgeText: "var(--error)",
+  },
+  expiringSoon: {
+    value: "var(--warning)",
+    badge: "var(--warning-bg)",
+    badgeText: "var(--warning)",
+  },
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 const Dashboard = () => {
   const { t } = useTranslation();
@@ -149,7 +155,6 @@ const Dashboard = () => {
     expiringSoon: 0,
   });
   const [recentItems, setRecentItems] = useState<RecentItem[]>([]);
-
   const username = localStorage.getItem("username") ?? "L";
 
   const fetchData = useCallback(async () => {
@@ -187,45 +192,51 @@ const Dashboard = () => {
         wishCount: wishResp.items.length,
       });
     } catch {
-      // silently fail – stats stay at 0
+      // silently fail
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    const currentLang = localStorage.getItem("lang") ?? "en";
+    i18n.changeLanguage(currentLang);
     void fetchData();
   }, [fetchData]);
 
   const statCards = [
     {
+      key: "inventory",
       value: stats.totalItems,
-      label: t("inventory", "Inventory"),
-      sub: t("categoriesCategories", "{{categories}} categories", {
+      label: t("inventory", "Inventur"),
+      sub: t("categoriesCategories", "{{categories}} Kategorien", {
         categories: stats.categories,
       }),
-      color: teal,
+      colors: CARD_COLORS.inventory,
       onClick: () => navigate("/items"),
     },
     {
+      key: "wish",
       value: stats.wishCount,
-      label: t("wishList", "Wish List"),
-      sub: "Items saved",
-      color: P.text,
+      label: t("wishList", "Einkaufsliste"),
+      sub: t("itemsSaved", "items saved"),
+      colors: CARD_COLORS.wish,
       onClick: () => navigate("/wish_list"),
     },
     {
+      key: "lowStock",
       value: stats.lowStock,
-      label: t("lowStock", "Low Stock"),
-      sub: t("count1", "Count ≤ 1"),
-      color: red,
+      label: t("lowStock", "Knapper Bestand"),
+      sub: t("count1", "Anzahl ≤ 1"),
+      colors: CARD_COLORS.lowStock,
       onClick: undefined,
     },
     {
+      key: "expiringSoon",
       value: stats.expiringSoon,
-      label: t("expiringSoon", "Expiring Soon"),
-      sub: t("next3Days", "Next 3 days"),
-      color: amber,
+      label: t("expiringSoon", "Läuft bald ab"),
+      sub: t("next3Days", "Nächste 3 Tage"),
+      colors: CARD_COLORS.expiringSoon,
       onClick: undefined,
     },
   ];
@@ -234,9 +245,9 @@ const Dashboard = () => {
     <div
       style={{
         minHeight: "100vh",
-        background: P.bg,
-        color: P.text,
-        fontFamily: "'DM Sans', system-ui, sans-serif",
+        background: "var(--bg)",
+        color: "var(--text-main)",
+        fontFamily: "var(--font-body)",
         paddingBottom: 90,
       }}
     >
@@ -251,21 +262,22 @@ const Dashboard = () => {
 
       <AppHeader username={username} />
 
-      <div style={{ padding: "0 16px" }}>
-        {/* ── OVERVIEW ── */}
+      <div style={{ padding: "0 14px" }}>
+        {/* ── OVERVIEW LABEL ── */}
         <div
           style={{
             fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: "0.08em",
-            color: P.subtle,
+            fontWeight: 700,
+            letterSpacing: "0.1em",
+            color: "var(--text-dim)",
             textTransform: "uppercase",
             marginBottom: 10,
           }}
         >
-          {t("overview", "Overview")}
+          {t("overview", "Übersicht")}
         </div>
 
+        {/* ── STAT CARDS ── */}
         <div
           style={{
             display: "grid",
@@ -276,77 +288,86 @@ const Dashboard = () => {
         >
           {statCards.map((card) => (
             <div
-              key={card.label}
+              key={card.key}
               onClick={card.onClick}
+              role={card.onClick ? "button" : undefined}
+              tabIndex={card.onClick ? 0 : undefined}
               style={{
-                background: P.surface,
-                borderRadius: 14,
+                background: "var(--surface)",
+                borderRadius: "var(--radius-lg)",
                 padding: "14px 16px",
-                border: `1px solid ${P.border}`,
+                border: "1px solid var(--border)",
                 cursor: card.onClick ? "pointer" : "default",
-                transition: card.onClick
-                  ? "border-color 0.15s, background 0.15s"
-                  : undefined,
+                transition: "box-shadow 0.15s, border-color 0.15s",
+                boxShadow: "var(--shadow-sm)",
               }}
               onMouseEnter={(e) => {
-                if (card.onClick) {
-                  (e.currentTarget as HTMLElement).style.borderColor =
-                    teal + "60";
-                  (e.currentTarget as HTMLElement).style.background = "#1a2332";
-                }
+                if (!card.onClick) return;
+                (e.currentTarget as HTMLElement).style.boxShadow =
+                  "var(--shadow-md)";
+                (e.currentTarget as HTMLElement).style.borderColor =
+                  "var(--accent-border)";
               }}
               onMouseLeave={(e) => {
-                if (card.onClick) {
-                  (e.currentTarget as HTMLElement).style.borderColor = P.border;
-                  (e.currentTarget as HTMLElement).style.background = P.surface;
-                }
+                (e.currentTarget as HTMLElement).style.boxShadow =
+                  "var(--shadow-sm)";
+                (e.currentTarget as HTMLElement).style.borderColor =
+                  "var(--border)";
               }}
             >
+              {/* coloured value pill */}
               <div
                 style={{
-                  fontSize: 28,
-                  fontWeight: 700,
-                  color: isLoading ? P.subtle : card.color,
-                  lineHeight: 1,
-                  marginBottom: 4,
-                  transition: "color 0.2s",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  minWidth: 40,
+                  padding: "2px 10px",
+                  borderRadius: "var(--radius-full)",
+                  background: card.colors.badge,
+                  marginBottom: 10,
                 }}
               >
-                {isLoading ? "—" : card.value}
+                <span
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 800,
+                    color: isLoading ? "var(--text-subtle)" : card.colors.value,
+                    lineHeight: 1.3,
+                    transition: "color 0.2s",
+                  }}
+                >
+                  {isLoading ? "–" : card.value}
+                </span>
               </div>
-              <div style={{ fontSize: 12, color: P.muted, fontWeight: 500 }}>
+
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "var(--text-main)",
+                  marginBottom: 2,
+                }}
+              >
                 {card.label}
               </div>
               <div
                 style={{
                   fontSize: 11,
-                  color: P.subtle,
-                  marginTop: 2,
+                  color: "var(--text-muted)",
                   display: "flex",
                   alignItems: "center",
                   gap: 4,
                 }}
               >
                 {card.sub}
-                {card.onClick && (
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke={teal}
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  >
-                    <polyline points="9 18 15 12 9 6" />
-                  </svg>
-                )}
+                {card.onClick && <ChevronRight />}
               </div>
             </div>
           ))}
         </div>
 
-        {/* ── RECENT ITEMS ── */}
+        {/* ── RECENT ITEMS LABEL ── */}
         <div
           style={{
             display: "flex",
@@ -358,39 +379,38 @@ const Dashboard = () => {
           <div
             style={{
               fontSize: 11,
-              fontWeight: 600,
-              letterSpacing: "0.08em",
-              color: P.subtle,
+              fontWeight: 700,
+              letterSpacing: "0.1em",
+              color: "var(--text-dim)",
               textTransform: "uppercase",
             }}
           >
-            {t("recentItems", "Recent Items")}
+            {t("recentItems", "Zuletzt hinzugefügt")}
           </div>
           <span
             onClick={() => navigate("/items")}
             style={{
               fontSize: 12,
-              color: teal,
+              color: "var(--accent)",
               cursor: "pointer",
-              fontWeight: 500,
+              fontWeight: 600,
             }}
           >
-            {t("seeAll", "See all")}
+            {t("seeAll", "Alle anzeigen")}
           </span>
         </div>
 
+        {/* ── RECENT ITEMS LIST ── */}
         {isLoading ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {[1, 2, 3].map((i) => (
               <div
                 key={i}
+                className="skeleton"
                 style={{
-                  background: P.surface,
-                  borderRadius: 12,
-                  padding: "12px 14px",
-                  border: `1px solid ${P.border}`,
-                  height: 56,
-                  opacity: 0.5,
+                  borderRadius: "var(--radius-md)",
+                  height: 58,
+                  opacity: 0.7,
                 }}
               />
             ))}
@@ -398,106 +418,125 @@ const Dashboard = () => {
         ) : recentItems.length === 0 ? (
           <div
             style={{
-              background: P.surface,
-              borderRadius: 12,
-              padding: "20px 16px",
-              border: `1px solid ${P.border}`,
+              background: "var(--surface)",
+              borderRadius: "var(--radius-md)",
+              padding: "24px 16px",
+              border: "1px solid var(--border)",
               textAlign: "center",
-              color: P.subtle,
+              color: "var(--text-muted)",
               fontSize: 13,
             }}
           >
-            {t("noItemsYetAddSomething", "No items yet — add something!")}
+            {t(
+              "noItemsYetAddSomething",
+              "Noch keine Artikel – füge etwas hinzu!",
+            )}
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {recentItems.map((item) => {
-              const catStyle = getCatStyle(item.category);
-              return (
+            {recentItems.map((item) => (
+              <div
+                key={item.ean}
+                style={{
+                  background: "var(--surface)",
+                  borderRadius: "var(--radius-md)",
+                  padding: "12px 14px",
+                  border: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  boxShadow: "var(--shadow-sm)",
+                }}
+              >
+                {/* status dot */}
                 <div
-                  key={item.ean}
                   style={{
-                    background: P.surface,
-                    borderRadius: 12,
-                    padding: "12px 14px",
-                    border: `1px solid ${P.border}`,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: item.low ? "var(--error)" : "var(--accent)",
+                    flexShrink: 0,
                   }}
-                >
+                />
+
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div
                     style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: item.low ? red : teal,
-                      flexShrink: 0,
-                      marginTop: 1,
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: "var(--text-main)",
+                      marginBottom: 3,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
                     }}
-                  />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 500,
-                        color: P.text,
-                        marginBottom: 3,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {item.name}
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      {item.category && (
-                        <span
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 600,
-                            padding: "2px 7px",
-                            borderRadius: 20,
-                            background: catStyle.bg,
-                            color: catStyle.text,
-                          }}
-                        >
-                          {item.category}
-                        </span>
-                      )}
-                      {item.expiryDays !== null && (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            color: item.expiryDays <= 3 ? red : P.subtle,
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 3,
-                          }}
-                        >
-                          <ClockIcon />
-                          {item.expiryDays <= 0
-                            ? "Expired"
-                            : t("expirydaysd", "{{expiryDays}}d", {
-                                expiryDays: item.expiryDays,
-                              })}
-                        </span>
-                      )}
-                    </div>
+                  >
+                    {item.name}
                   </div>
-                  <span style={{ fontSize: 12, color: P.muted, flexShrink: 0 }}>
-                    {t("qty", "×{{qty}}", { qty: item.qty })}
-                  </span>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    {item.category && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: "2px 7px",
+                          borderRadius: "var(--radius-full)",
+                          background: "var(--surface-3)",
+                          color: "var(--text-muted)",
+                          letterSpacing: "0.04em",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {item.category}
+                      </span>
+                    )}
+                    {item.expiryDays !== null && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color:
+                            item.expiryDays <= 3
+                              ? "var(--error)"
+                              : "var(--text-dim)",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 3,
+                        }}
+                      >
+                        <ClockIcon />
+                        {item.expiryDays <= 0
+                          ? t("expired", "Abgelaufen")
+                          : t("expirydaysd", "{{expiryDays}}d", {
+                              expiryDays: item.expiryDays,
+                            })}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              );
-            })}
+
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "var(--accent-text)",
+                    background: "var(--accent-light)",
+                    padding: "2px 8px",
+                    borderRadius: "var(--radius-full)",
+                    flexShrink: 0,
+                  }}
+                >
+                  {t("qty", "×{{qty}}", { qty: item.qty })}
+                </span>
+              </div>
+            ))}
           </div>
         )}
       </div>

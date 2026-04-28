@@ -25,7 +25,6 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from Config import Config
 from utils.db.schema import DATABASE_SCHEMA, DATABASE_TABLES
 from utils.db.dbManager import DatabaseManager
-from utils.daemons import classificationDaemon, rescanImageUrlsDaemon
 from utils.api_helpers import generateManualItemId
 from utils.password_helper import verify_token
 
@@ -240,13 +239,9 @@ async def lifespan(app: FastAPI):
         logger.info("✓ CatalogueClassifier loaded")
 
         # --- daemons ---
-        daemon_tasks.append(
-            asyncio.create_task(classificationDaemon(app.state.pool, logger))
-        )
-        logger.info("✓ Started classification daemon")
 
-        daemon_tasks.append(asyncio.create_task(rescanImageUrlsDaemon(app.state.pool)))
-        logger.info("✓ Started image url rescanning daemon")
+        # daemon_tasks.append(asyncio.create_task(rescanImageUrlsDaemon(app.state.pool)))
+        # logger.info("✓ Started image url rescanning daemon")
 
         yield
 
@@ -389,7 +384,7 @@ if __name__ == "__main__":
         port=3030,
         reload=False,
         log_level="info",
-        workers=1,
+        workers=workerNumber,
         loop="uvloop",
         http="httptools",
         access_log=True,

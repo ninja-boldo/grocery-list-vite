@@ -830,12 +830,32 @@ class TestWeekPlan:
         if recipe_id is None:
             return  # can't proceed without an ID
 
+        from utils.types_custom import DayPlan, MealSlot as MealSlotType, WeekPlan
+
+        meal_slot = MealSlotType(
+            recipe_id=recipe_id,
+            servings=2,
+            meal_type="dinner",
+            day="mo",
+            day_time="dinner",
+        )
+        day_plan = DayPlan()
+        day_plan.dinner = meal_slot
+        week_plan = WeekPlan(mo=day_plan)
+
+        from utils.types_custom import DaySettings, WeekSettings
+
+        day_settings = DaySettings(day="mo", day_meal_time_type="normal")
+
         payload = {
-            "recipe_id": recipe_id,
-            "servings": 2,
-            "meal_type": "dinner",
-            "day": "mo",
-            "day_time": "dinner",
+            "week": week_plan.model_dump(),
+            "DaySettings": {
+                "day": "mo",
+                "day_meal_time_type": "normal",
+                "breakfast_blocked": False,
+                "lunch_blocked": False,
+                "dinner_blocked": False,
+            },
         }
         r = requests.post(f"{BASE_URL}/week_plan", json=payload, headers=JSON_HEADER)
         assert r.ok, f"POST /week_plan failed: {r.status_code} {r.text}"

@@ -1,3 +1,10 @@
+import json
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 import asyncio
 import logging
 import traceback
@@ -5,8 +12,17 @@ import traceback
 import asyncpg
 import httpx
 
-from Config import Config
-from utils.api_helpers import buildWishPantryLists, getImageUrlAsync
+from server.Config import Config
+from server.utils.types_custom import (
+    ExpiryDateEstimationResponse,
+    Item,
+    WishMapResponse,
+)
+from server.utils.api_helpers import (
+    buildWishPantryLists,
+    deleteReclassificationNeedBatch,
+    getImageUrlAsync,
+)
 
 
 async def rescanImageUrls(
@@ -92,80 +108,59 @@ async def _fetch_categories(client: httpx.AsyncClient, ean: str) -> list:
 
 async def mapItemToWishDaemon(pool: asyncpg.Pool, logger: logging.Logger | None = None):
     try:
-        from transcript_classify import classifier 
+        from transcript_classify import classifier
 
         async with pool.acquire() as con:
-            (
-                item_names,
-                wished_lists,
-                itemIdMapping,
-                hashPerItem,
-            ) = await buildWishPantryLists(
-                con, sinkLabel=Config.SINK_LABEL_WISH_MAPPING
-            )
+            (userToPantryAndWishes, itemIdNameMapping) = await buildWishPantryLists(con)
 
-        if not item_names or not wished_lists:
-            if logger:
-                logger.info("mapItemToWishDaemon: nothing to map")
-            return
-
-        mapped_results: dict[str, dict] = await asyncio.to_thread(
-            classifier.mapWishItemBatch,
-            item_names,
-            wished_lists,
+        mapped_results: WishMapResponse = await asyncio.to_thread(
+            classifier.mapWishItemBatch, userToPantryAndWishes, itemIdNameMapping
         )
+        async with pool.acquire() as con:
+            await deleteReclassificationNeedBatch(
+                con, "*", "wish_mapping"
+            )  # mark that all pantries have been classified
 
         updates = []
-        items = mapped_results["items"]
-        wishListToIdx: dict[str, int] = mapped_results["wish_list_to_idx"]
-        idxToWishList: dict[int, str] = {v: k for k, v in wishListToIdx.items()}
+        for map in mapped_results.items:
+            pantry: Item = map.item
+            wish: Item = map.mapped_wish
+            conf: float = map.confidence
 
-        if logger:
-            logger.warning(
-                f"item id mapping: {itemIdMapping},\nitems: {items}\nidx to wish list: {idxToWishList}"
-            )
-        for idx, item_name in enumerate(items.keys()):
-            mappedItemDict: dict = items[item_name]
-            mapped_wish = mappedItemDict["mapped_wish"]
-            wish_hash, pantry_hash = hashPerItem[idx]
-            updates.append(
-                (
-                    itemIdMapping[item_name],
-                    itemIdMapping[mapped_wish],
-                    wish_hash,
-                    pantry_hash,
-                )
-            )
+            updates.append((pantry.item_id, wish.item_id, conf))
+
         if logger:
             logger.info(f"these are the updates: {updates}")
-
-        if not updates:
-            if logger:
-                logger.info("mapItemToWishDaemon: no wish matches produced")
-            return
+        else:
+            print(f"these are the updates: {updates}")
 
         async with pool.acquire() as con:
             await con.executemany(
                 """
-                    INSERT INTO wish_mapping (item_id, wish_item_id, wish_list_hash, pantry_list_hash)
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (item_id, wish_list_hash)
-                    DO UPDATE SET wish_item_id = EXCLUDED.wish_item_id
+                    INSERT INTO wish_mapping (item_id, wish_item_id, confidence)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (item_id, wish_item_id)
+                    DO Nothing
                 """,
                 updates,
             )
         if logger:
             logger.info(
-                "Updated %d item mappings out of %d candidate items using %d wished items",
+                "Updated %d item mappings",
                 len(updates),
-                len(item_names),
-                len(wished_lists),
             )
-
+        else:
+            print(
+                "Updated %d item mappings",
+                len(updates),
+            )
     except Exception as e:
         if logger:
             logger.error(f"Daemon for item wish mapping failed: {e}")
             logger.error(traceback.format_exc())
+        else:
+            print(f"Daemon for item wish mapping failed: {e}")
+            print(traceback.format_exc())
 
 
 async def rescanImageUrlsDaemon(
@@ -196,6 +191,7 @@ async def classificationDaemon(
             await shortenItemNamesDaemon(pool, logger=logger)
             await assignTagsTask(pool, logger=logger)
             await mapItemToWishDaemon(pool, logger=logger)
+            await estimateExpiryDatesProcess(pool, logger)
 
             if logger:
                 logger.info("classificationDaemon: pass complete")
@@ -215,7 +211,7 @@ async def shortenItemNamesDaemon(
 ):
     try:
         from transcript_classify import classifier
- 
+
         # Fetch phase: acquire, query, release immediately
         async with pool.acquire() as con:
             rows = await con.fetch(
@@ -270,6 +266,35 @@ async def shortenItemNamesDaemon(
         if logger:
             logger.error(f"Daemon for item name shortening failed: {e}")
             logger.error(traceback.format_exc())
+
+
+async def estimateExpiryDatesProcess(
+    pool: asyncpg.Pool, logger: logging.Logger | None = None
+):
+    from transcript_classify import classifier
+
+    if logger:
+        logger.info("started the estimate expiry process")
+    else:
+        print("started the estimate expiry process")
+
+    async with pool.acquire() as con:
+        rows = await con.fetch(
+            "select item_id, item_name from items where days_to_expire is null"
+        )
+        items: list[Item] = [
+            Item(item_name=row["item_name"], item_id=row["item_id"]) for row in rows
+        ]
+    res: ExpiryDateEstimationResponse = classifier.estimateExpiryDays(items)
+
+    updates = []
+    for r in res.mappings:
+        updates.append((r.expiryDays or -1, r.item.item_id))
+
+    async with pool.acquire() as con:
+        await con.executemany(
+            "update items set days_to_expire = $1 where item_id = $2", updates
+        )
 
 
 async def assignTagsTask(pool: asyncpg.Pool, logger: logging.Logger | None = None):
@@ -408,3 +433,50 @@ async def rescanCategoriesProcess(
             )
             logger.error(traceback.format_exc())
         return {"done": False, "error": str(e)}
+
+
+async def create_pool():
+    return await asyncpg.create_pool(
+        Config.get_database_url(),
+        min_size=1,
+        max_size=1,
+        command_timeout=Config.DB_COMMAND_TIMEOUT,
+        server_settings={"jit": "off"},
+        init=lambda conn: conn.set_type_codec(
+            "jsonb",
+            encoder=json.dumps,
+            decoder=json.loads,
+            schema="pg_catalog",
+        ),
+    )
+
+async def main():
+    logger = logging.getLogger("daemon_logger")
+    pool = await create_pool()
+
+    daemon_tasks = []
+
+    try:
+        daemon_tasks.append(asyncio.create_task(rescanImageUrlsDaemon(pool, logger)))
+        daemon_tasks.append(asyncio.create_task(classificationDaemon(pool, logger)))
+
+        # Run forever
+        await asyncio.gather(*daemon_tasks)
+
+    except asyncio.CancelledError:
+        logger.info("main cancelled")
+
+    finally:
+        logger.info("shutting down daemons")
+
+        for task in daemon_tasks:
+            task.cancel()
+
+        await asyncio.gather(*daemon_tasks, return_exceptions=True)
+
+        await pool.close()
+        
+        
+if __name__ == "__main__":
+    asyncio.run(main())
+ 

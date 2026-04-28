@@ -54,12 +54,9 @@ function WishList() {
   const [toast, showToast, clearToast] = useFeedbackToast(3500);
 
   useEffect(() => {
-    if (!hasStoredJwtToken()) {
-      setNeedReauth(true);
-    }
-    const lang = "de";
-    console.log("changed language to ", lang);
-    i18n.changeLanguage(lang);
+    if (!hasStoredJwtToken()) setNeedReauth(true);
+    const currentLang = localStorage.getItem("lang") ?? "en";
+    i18n.changeLanguage(currentLang);
   }, []);
 
   const handleNeedReauth = useCallback(() => {
@@ -98,9 +95,7 @@ function WishList() {
   const increaseItemCount = useCallback(
     async (item: ContainerProps) => {
       if (!item.text) return;
-
       let previousData: Item[] = [];
-
       setData((prev) => {
         previousData = prev;
         return prev.map((i) =>
@@ -109,29 +104,16 @@ function WishList() {
             : i,
         );
       });
-
       try {
         const response = await apiClient.addEanToList(
-          {
-            ean: item.ean,
-            item_name: item.text,
-            count: 1,
-            wish_list: "true",
-          },
-          {
-            retries: 1,
-            retryDelayMs: 300,
-            onUnauthorized: handleNeedReauth,
-          },
+          { ean: item.ean, item_name: item.text, count: 1, wish_list: "true" },
+          { retries: 1, retryDelayMs: 300, onUnauthorized: handleNeedReauth },
         );
-
-        if (!isAddEanSuccess(response)) {
+        if (!isAddEanSuccess(response))
           throw new Error("Failed to update item count");
-        }
       } catch {
         setData(previousData);
         setError("Failed to update item count");
-        console.error("Error sending item");
       }
     },
     [handleNeedReauth],
@@ -140,46 +122,30 @@ function WishList() {
   const decreaseItemCount = useCallback(
     async (item: ContainerProps) => {
       if (!item.text) return;
-
       const willDelete = item.count <= 1;
       let previousData: Item[] = [];
-
       setData((prev) => {
         previousData = prev;
-        if (willDelete) {
+        if (willDelete)
           return prev.filter(
             (i) => !(i.ean === item.ean && i.text === item.text),
           );
-        }
         return prev.map((i) =>
           i.ean === item.ean && i.text === item.text
             ? { ...i, count: i.count - 1 }
             : i,
         );
       });
-
       try {
         const response = await apiClient.addEanToList(
-          {
-            ean: item.ean,
-            item_name: item.text,
-            count: -1,
-            wish_list: "true",
-          },
-          {
-            retries: 1,
-            retryDelayMs: 300,
-            onUnauthorized: handleNeedReauth,
-          },
+          { ean: item.ean, item_name: item.text, count: -1, wish_list: "true" },
+          { retries: 1, retryDelayMs: 300, onUnauthorized: handleNeedReauth },
         );
-
-        if (!isAddEanSuccess(response)) {
+        if (!isAddEanSuccess(response))
           throw new Error("Failed to update item count");
-        }
       } catch {
         setData(previousData);
         setError("Failed to update item count");
-        console.error("Error sending item");
       }
     },
     [handleNeedReauth],
@@ -190,10 +156,8 @@ function WishList() {
       handleNeedReauth();
       return;
     }
-
     setIsLoading(true);
     setError(null);
-
     try {
       const response = await apiCall<ApiResponse>(
         buildFetchItemsUrl({ onlyWishList: true }),
@@ -210,7 +174,6 @@ function WishList() {
           ? error.message
           : t("failedToFetchWishList", "Failed to fetch wish list");
       setError(message);
-      console.error("WishList fetch failed:", error);
     } finally {
       setIsLoading(false);
     }
@@ -222,7 +185,6 @@ function WishList() {
       return;
     }
     if (data.length === 0) return;
-
     setIsCheckingPantry(true);
     try {
       const wishlistItems: PantryClassificationWishItem[] = data.map(
@@ -231,7 +193,7 @@ function WishList() {
           item_id: `wish-${idx}`,
           count: item.count,
           quantity: {
-            product_quantity: null,
+            product_quantity: item.count > 0 ? item.count : 1,
             product_quantity_unit: null,
           },
         }),
@@ -240,6 +202,7 @@ function WishList() {
       const result = await apiClient.classifyItemsAgainstPantry(wishlistItems, {
         retries: 1,
         onUnauthorized: handleNeedReauth,
+        autoAddItems: true,
       });
 
       const foundNames = new Set<string>();
@@ -252,31 +215,42 @@ function WishList() {
           const normalizedMapped = normalizeItemName(
             entry.mappedWishItem.item_name,
           );
-          if (normalizedWishlistTexts.has(normalizedMapped)) {
+          if (normalizedWishlistTexts.has(normalizedMapped))
             foundNames.add(normalizedMapped);
-          }
         }
       }
 
       setPantryItemNames(foundNames);
-
       const matchedCount = data.filter((item) =>
         foundNames.has(normalizeItemName(item.text ?? "")),
       ).length;
 
       if (matchedCount > 0) {
         showToast(
-          `${matchedCount} of ${data.length} wishlist item${matchedCount === 1 ? " is" : "s"} already in your pantry.`,
+          t(
+            "matchedCountOfTotalInPantry",
+            "{{matchedCount}} von {{total}} Wunschlistenartikeln bereits im Vorrat.",
+            { matchedCount, total: data.length },
+          ),
           "success",
         );
       } else {
         showToast(
-          "None of your wishlist items are currently in your pantry.",
+          t(
+            "noPantryMatches",
+            "Kein Wunschlistenartikel ist derzeit im Vorrat.",
+          ),
           "info",
         );
       }
     } catch {
-      showToast("Could not check pantry. Please try again.", "error");
+      showToast(
+        t(
+          "pantryCheckFailed",
+          "Vorrat konnte nicht überprüft werden. Bitte erneut versuchen.",
+        ),
+        "error",
+      );
     } finally {
       setIsCheckingPantry(false);
     }
@@ -312,6 +286,7 @@ function WishList() {
           tags={item.tags}
           isWishedNumber={item.count}
           mapped_items={item.mapped_items ?? []}
+          expiryDays={item.expiryDays}
           style=""
         />
       )),
@@ -324,9 +299,22 @@ function WishList() {
 
   if (isLoading && data.length === 0 && !needReauth) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="text-cyan-400 text-lg">
-          {t("Loading", "Loading")}...
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          minHeight: "100vh",
+        }}
+      >
+        <div
+          style={{
+            color: "var(--accent)",
+            fontSize: 14,
+            fontFamily: "var(--font-body)",
+          }}
+        >
+          {t("Loading", "Laden")}…
         </div>
       </div>
     );
@@ -334,21 +322,15 @@ function WishList() {
 
   const displayError = (() => {
     if (!error) return null;
-
     const normalized = error.toLowerCase();
-    const excludedFragments = [
+    const excluded = [
       "http 401",
       t(
         "authenticationRequiredPleaseSignInAgain",
         "authentication required. please sign in again.",
-      ),
+      ).toLowerCase(),
     ];
-
-    const isExcluded = excludedFragments.some((fragment) =>
-      normalized.includes(fragment),
-    );
-
-    return isExcluded ? null : error;
+    return excluded.some((f) => normalized.includes(f)) ? null : error;
   })();
 
   const noItemsAvailable = filteredData.length === 0 && !error && !isLoading;
@@ -360,6 +342,7 @@ function WishList() {
         minHeight: "100vh",
         color: "var(--text-main)",
         fontFamily: "var(--font-body)",
+        background: "var(--bg)",
       }}
     >
       {needReauth && (
@@ -397,6 +380,7 @@ function WishList() {
             floating={false}
           />
 
+          {/* ── Category chips ── */}
           {availableClasses.length > 0 && (
             <div
               style={{
@@ -412,16 +396,21 @@ function WishList() {
                 style={{
                   flexShrink: 0,
                   padding: "4px 12px",
-                  borderRadius: 20,
-                  border: `1px solid ${selectedClass === null ? "#0d948880" : "#21262d"}`,
+                  borderRadius: "var(--radius-full)",
+                  border: `1px solid ${selectedClass === null ? "var(--accent-border)" : "var(--border)"}`,
                   backgroundColor:
-                    selectedClass === null ? "#0f2a28" : "#161b22",
-                  color: selectedClass === null ? "#2dd4bf" : "#8b949e",
+                    selectedClass === null
+                      ? "var(--accent-light)"
+                      : "var(--surface)",
+                  color:
+                    selectedClass === null
+                      ? "var(--accent-text)"
+                      : "var(--text-muted)",
                   fontSize: 12,
                   fontWeight: 600,
                   cursor: "pointer",
                   transition: "all 0.15s",
-                  fontFamily: "'DM Sans', system-ui, sans-serif",
+                  fontFamily: "var(--font-body)",
                 }}
               >
                 {t("alle", "Alle")}
@@ -435,17 +424,22 @@ function WishList() {
                   style={{
                     flexShrink: 0,
                     padding: "4px 12px",
-                    borderRadius: 20,
-                    border: `1px solid ${selectedClass === cls ? "#0d948880" : "#21262d"}`,
+                    borderRadius: "var(--radius-full)",
+                    border: `1px solid ${selectedClass === cls ? "var(--accent-border)" : "var(--border)"}`,
                     backgroundColor:
-                      selectedClass === cls ? "#0f2a28" : "#161b22",
-                    color: selectedClass === cls ? "#2dd4bf" : "#8b949e",
+                      selectedClass === cls
+                        ? "var(--accent-light)"
+                        : "var(--surface)",
+                    color:
+                      selectedClass === cls
+                        ? "var(--accent-text)"
+                        : "var(--text-muted)",
                     fontSize: 12,
                     fontWeight: 600,
                     cursor: "pointer",
                     transition: "all 0.15s",
                     whiteSpace: "nowrap",
-                    fontFamily: "'DM Sans', system-ui, sans-serif",
+                    fontFamily: "var(--font-body)",
                   }}
                 >
                   {cls}
@@ -454,6 +448,7 @@ function WishList() {
             </div>
           )}
 
+          {/* ── Item count summary ── */}
           {(distinctItems !== null || accumulatedCount !== null) &&
             !noItemsAvailable && (
               <div
@@ -463,36 +458,40 @@ function WishList() {
                   gap: 8,
                   margin: "4px 12px 2px",
                   padding: "6px 12px",
-                  borderRadius: 10,
-                  backgroundColor: "#161b22",
-                  border: "1px solid #21262d",
+                  borderRadius: "var(--radius-sm)",
+                  backgroundColor: "var(--surface-2)",
+                  border: "1px solid var(--border)",
                 }}
               >
                 {distinctItems !== null && (
-                  <span style={{ fontSize: 12, color: "#8b949e" }}>
-                    <span style={{ fontWeight: 600, color: "#c9d1d9" }}>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    <span
+                      style={{ fontWeight: 700, color: "var(--text-main)" }}
+                    >
                       {distinctItems}
                     </span>{" "}
                     {distinctItems !== 1
-                      ? t("items", "items")
-                      : t("item", "item")}
+                      ? t("items", "Artikel")
+                      : t("item", "Artikel")}
                   </span>
                 )}
                 {distinctItems !== null && accumulatedCount !== null && (
-                  <span style={{ color: "#21262d", fontSize: 14 }}>·</span>
+                  <span style={{ color: "var(--border-strong)", fontSize: 14 }}>
+                    ·
+                  </span>
                 )}
                 {accumulatedCount !== null && (
-                  <span style={{ fontSize: 12, color: "#8b949e" }}>
-                    <span style={{ fontWeight: 600, color: "#2dd4bf" }}>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    <span style={{ fontWeight: 700, color: "var(--accent)" }}>
                       {accumulatedCount}
                     </span>{" "}
-                    {t("totalQty", "total qty")}
+                    {t("totalQty", "Gesamt")}
                   </span>
                 )}
               </div>
             )}
 
-          {/* Check Pantry button */}
+          {/* ── Check Pantry button ── */}
           {data.length > 0 && (
             <div style={{ padding: "6px 12px 0" }}>
               <button
@@ -502,15 +501,19 @@ function WishList() {
                 style={{
                   width: "100%",
                   padding: "10px 14px",
-                  borderRadius: 12,
-                  border: "1px solid #0d948880",
-                  background: isCheckingPantry ? "#0f2a28" : "#161b22",
-                  color: isCheckingPantry ? "#5eead460" : "#5eead4",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--accent-border)",
+                  background: isCheckingPantry
+                    ? "var(--accent-light)"
+                    : "var(--surface)",
+                  color: isCheckingPantry
+                    ? "var(--text-subtle)"
+                    : "var(--accent)",
                   fontSize: 13,
                   fontWeight: 600,
                   cursor: isCheckingPantry ? "not-allowed" : "pointer",
                   transition: "all 0.15s",
-                  fontFamily: "'DM Sans', system-ui, sans-serif",
+                  fontFamily: "var(--font-body)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -532,42 +535,43 @@ function WishList() {
                   <path d="M9 14l2 2 4-4" />
                 </svg>
                 {isCheckingPantry
-                  ? `${t("checkingPantry", "Checking pantry")}...`
-                  : t("checkPantry", "Check pantry")}
+                  ? `${t("checkingPantry", "Vorrat wird überprüft")}…`
+                  : t("checkPantry", "Vorrat überprüfen")}
               </button>
             </div>
           )}
 
-          {/* Items already in pantry indicator */}
+          {/* ── Pantry match result ── */}
           {pantryItemNames.size > 0 && (
             <div
               style={{
                 margin: "6px 12px 0",
                 padding: "8px 12px",
-                borderRadius: 10,
-                backgroundColor: "#0f2a28",
-                border: "1px solid #0d948840",
+                borderRadius: "var(--radius-sm)",
+                backgroundColor: "var(--success-bg)",
+                border: "1px solid var(--success-border)",
                 fontSize: 12,
-                color: "#5eead4",
+                color: "var(--accent-text)",
                 lineHeight: 1.5,
               }}
             >
-              <strong>{t("alreadyInPantry", "Already in pantry:")}</strong>{" "}
+              <strong>{t("alreadyInPantry", "Bereits im Vorrat:")}</strong>{" "}
               {[...pantryItemNames].slice(0, 5).join(", ")}
               {pantryItemNames.size > 5
-                ? t("andValMore", "and {{val}} more", {
+                ? t("andValMore", "und {{val}} weitere", {
                     val: pantryItemNames.size - 5,
                   })
                 : ""}
             </div>
           )}
 
+          {/* ── Item list ── */}
           <div style={{ padding: "0 4px 90px" }}>
             {noItemsAvailable ? (
               <InfoContainer
                 text={t(
                   "noItemsOnYourWishListAddSomethingYoudLikeToBuy",
-                  "No items on your wish list.\nAdd something you'd like to buy!",
+                  "Keine Artikel auf der Einkaufsliste.\nFüge etwas hinzu!",
                 )}
               />
             ) : (
@@ -577,6 +581,7 @@ function WishList() {
         </>
       )}
 
+      {/* ── FAB ── */}
       <button
         onClick={() => navigateScanner(1)}
         aria-label={t("artikelHinzufgen", "Artikel hinzufügen")}
@@ -587,27 +592,31 @@ function WishList() {
           width: 52,
           height: 52,
           borderRadius: "50%",
-          backgroundColor: "#0f2a28",
-          border: "1px solid #0d948880",
-          color: "#2dd4bf",
+          backgroundColor: "var(--accent)",
+          border: "none",
+          color: "#fff",
           fontSize: 26,
           fontWeight: 300,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
           cursor: "pointer",
-          boxShadow: "0 4px 20px #00000080, 0 0 0 1px #0d948830",
+          boxShadow: "0 4px 20px rgba(46,125,82,0.35)",
           zIndex: 90,
           transition: "all 0.15s",
-          fontFamily: "'DM Sans', system-ui, sans-serif",
+          fontFamily: "var(--font-body)",
         }}
         onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.backgroundColor = "#0d9488";
-          (e.currentTarget as HTMLElement).style.color = "#fff";
+          (e.currentTarget as HTMLElement).style.backgroundColor =
+            "var(--accent-hover)";
+          (e.currentTarget as HTMLElement).style.boxShadow =
+            "0 6px 24px rgba(46,125,82,0.45)";
         }}
         onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.backgroundColor = "#0f2a28";
-          (e.currentTarget as HTMLElement).style.color = "#2dd4bf";
+          (e.currentTarget as HTMLElement).style.backgroundColor =
+            "var(--accent)";
+          (e.currentTarget as HTMLElement).style.boxShadow =
+            "0 4px 20px rgba(46,125,82,0.35)";
         }}
       >
         +

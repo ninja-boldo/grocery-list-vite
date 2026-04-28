@@ -48,6 +48,7 @@ export async function authApiCall<T>(
 
     try {
       const headers = buildAuthHeaders(options.headers);
+      console.log("fetching for this url:", url)
       const response = await fetch(url, {
         ...options,
         headers,

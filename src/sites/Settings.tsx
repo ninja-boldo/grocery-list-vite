@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 // ── Shared tokens ──────────────────────────────────────────────────────────
 const card: React.CSSProperties = {
   background: "var(--surface)",
-  border: "1pxSolidVarborder",
+  border: "1px solid var(--border)",
   borderRadius: 16,
   padding: 18,
   boxShadow: "var(--shadow-sm)",
@@ -20,12 +20,12 @@ const sectionTitle: React.CSSProperties = {
   fontSize: 17,
   fontWeight: 600,
   color: "var(--text-main)",
-  margin: "004px",
+  margin: "0 0 4px",
 };
 const sectionSub: React.CSSProperties = {
   fontSize: 12,
   color: "var(--text-muted)",
-  margin: "0016px",
+  margin: "0 0 16px",
 };
 const fieldLabel: React.CSSProperties = {
   fontSize: 12,
@@ -37,8 +37,8 @@ const fieldLabel: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   width: "100%",
   borderRadius: 10,
-  border: "1pxSolidVarborder",
-  background: "var(--bg-alt)",
+  border: "1px solid var(--border)",
+  background: "var(--surface-2)",
   color: "var(--text-main)",
   padding: "10px 12px",
   outline: "none",
@@ -133,7 +133,7 @@ const readPlannerSettings = (): PlannerSettings => {
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 const Settings = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [planner, setPlanner] = useState<PlannerSettings>(readPlannerSettings);
   const saveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [needReauth, setNeedReauth] = useState(false);
@@ -142,15 +142,30 @@ const Settings = () => {
   const [confirmPw, setConfirmPw] = useState("");
   const [pwSubmitting, setPwSubmitting] = useState(false);
   const [toast, showToast, clearToast] = useFeedbackToast(4000);
+  const [inpLang, setInpLang] = useState(localStorage.getItem("lang") ?? "en");
+  const allowedLanguages = ["en", "de", "fr", "es", "pt", "tr"];
 
   const username = useMemo(
     () => localStorage.getItem("username") ?? "unknown",
     [],
   );
 
+  const setNewLanguage = () => {
+    if (allowedLanguages.includes(inpLang.toLocaleLowerCase())) {
+      localStorage.setItem("lang", inpLang.toLowerCase());
+      window.location.reload();
+    } else {
+      console.warn(`the language ${inpLang.toLocaleLowerCase()} 
+      isnt one of the valid languages(${allowedLanguages})`);
+    }
+  };
+
   const handleNeedReauth = useCallback(() => setNeedReauth(true), []);
 
   useEffect(() => {
+    const currentLang = localStorage.getItem("lang");
+    i18n.changeLanguage(currentLang);
+
     if (!hasStoredJwtToken()) {
       setNeedReauth(true);
       return;
@@ -344,6 +359,57 @@ const Settings = () => {
                 }}
               >
                 {t("reauthenticate", "Re-authenticate")}
+              </button>
+            </div>
+          </section>
+
+          <section style={card}>
+            <h2 style={sectionTitle}>{t("lang", "Language")}</h2>
+            <p style={sectionSub}>
+              {t("currentLang", "Current language")}:{" "}
+              <strong style={{ color: "var(--text-main)" }}>
+                {t(localStorage.getItem("lang") ?? "en", "English")}
+              </strong>
+            </p>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
+              <select
+                value={inpLang}
+                onChange={(e) => setInpLang(e.currentTarget.value)}
+                style={{
+                  ...inputStyle,
+                  width: "auto",
+                  flex: "1 1 140px",
+                  cursor: "pointer",
+                }}
+              >
+                {allowedLanguages.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {t(lang, lang.toUpperCase())}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => setNewLanguage()}
+                style={{
+                  padding: "10px 16px",
+                  borderRadius: 10,
+                  border: "1px solid var(--accent-border)",
+                  background: "var(--accent-light)",
+                  color: "var(--accent-text)",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                {t("submit", "Apply")}
               </button>
             </div>
           </section>

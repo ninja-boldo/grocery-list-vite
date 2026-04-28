@@ -84,7 +84,7 @@ const QuantityRequiredModal = ({
             borderRadius: 999,
             border: "1px solid rgba(229, 165, 92, 0.35)",
             background: "rgba(125, 83, 36, 0.2)",
-            color: "#f5cf9d",
+            color: "var(--accent-text)",
             fontSize: 11,
             fontWeight: 700,
             letterSpacing: "0.08em",
@@ -99,19 +99,28 @@ const QuantityRequiredModal = ({
             margin: "12px 0 6px",
             fontSize: 20,
             lineHeight: 1.25,
-            color: "#f8f5ee",
+            color: "var(--text-main)",
             fontFamily: "var(--font-display)",
           }}
         >
           {t("addQuantityAndUnit", "Add quantity and unit")}
         </h3>
 
-        <p style={{ margin: "0 0 14px", fontSize: 13, color: "#b4bfbe" }}>
+        <p
+          style={{
+            margin: "0 0 14px",
+            fontSize: 13,
+            color: "var(--text-muted)",
+          }}
+        >
           {t(
             "theServerNeedsQuantityDetailsFor",
             "The server needs quantity details for",
           )}
-          <span style={{ color: "#e8f4d3", fontWeight: 700 }}> {itemName}</span>{" "}
+          <span style={{ color: "var(--accent-text)", fontWeight: 700 }}>
+            {" "}
+            {itemName}
+          </span>{" "}
           {t("beforeItCanSaveThisItem", "before it can save this item.")}
         </p>
 
@@ -122,7 +131,7 @@ const QuantityRequiredModal = ({
                 display: "block",
                 fontSize: 11,
                 marginBottom: 6,
-                color: "#95a6a4",
+                color: "var(--text-dim)",
                 textTransform: "uppercase",
                 letterSpacing: "0.07em",
               }}
@@ -142,7 +151,7 @@ const QuantityRequiredModal = ({
                 borderRadius: 12,
                 border: "1px solid rgba(124, 170, 124, 0.45)",
                 background: "rgba(12, 16, 23, 0.86)",
-                color: "#f2f5f7",
+                color: "var(--text-main)",
                 padding: "11px 12px",
                 fontSize: 16,
                 fontWeight: 700,
@@ -157,7 +166,7 @@ const QuantityRequiredModal = ({
                 display: "block",
                 fontSize: 11,
                 marginBottom: 6,
-                color: "#95a6a4",
+                color: "var(--text-dim)",
                 textTransform: "uppercase",
                 letterSpacing: "0.07em",
               }}
@@ -173,7 +182,7 @@ const QuantityRequiredModal = ({
                 borderRadius: 12,
                 border: "1px solid rgba(124, 170, 124, 0.35)",
                 background: "rgba(12, 16, 23, 0.86)",
-                color: "#f2f5f7",
+                color: "var(--text-main)",
                 padding: "11px 10px",
                 fontSize: 14,
                 outline: "none",
@@ -200,7 +209,7 @@ const QuantityRequiredModal = ({
             background: canSubmit
               ? "linear-gradient(135deg, rgba(124, 170, 124, 0.95) 0%, rgba(80, 121, 92, 0.95) 100%)"
               : "rgba(44, 56, 58, 0.8)",
-            color: canSubmit ? "#101c12" : "#7f8d8a",
+            color: canSubmit ? "var(--bg)" : "var(--text-dim)",
             fontWeight: 800,
             fontSize: 14,
             padding: "12px 14px",
@@ -222,7 +231,7 @@ const QuantityRequiredModal = ({
             borderRadius: 13,
             border: "1px solid rgba(95, 111, 115, 0.5)",
             background: "rgba(20, 26, 34, 0.8)",
-            color: "#94a3b8",
+            color: "var(--text-muted)",
             fontWeight: 700,
             fontSize: 13,
             padding: "11px 12px",

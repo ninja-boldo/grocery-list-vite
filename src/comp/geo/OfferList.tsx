@@ -1,6 +1,5 @@
 import OfferCard, { type OfferCardProps } from "./OfferCard";
 import { useTranslation } from "react-i18next";
-import i18next from "i18next";
 
 type OfferListProps = {
   offers: OfferCardProps[];
@@ -8,11 +7,7 @@ type OfferListProps = {
   emptyMessage?: string;
 };
 
-const OfferList = ({
-  offers,
-  className,
-  emptyMessage = i18next.t("keineAngeboteGefunden", "Keine Angebote gefunden."),
-}: OfferListProps) => {
+const OfferList = ({ offers, className, emptyMessage }: OfferListProps) => {
   const { t } = useTranslation();
   if (!offers.length) {
     return (
@@ -26,11 +21,42 @@ const OfferList = ({
           .filter(Boolean)
           .join(" ")}
       >
-        <div className="pointer-events-none absolute -top-10 left-1/2 h-24 w-24 -translate-x-1/2 rounded-full bg-[#48d7c533] blur-2xl" />
-        <p className="relative text-[11px] uppercase tracking-[0.16em] font-semibold text-[#8ec9bf]">
+        <div
+          style={{
+            pointerEvents: "none",
+            position: "absolute",
+            top: -40,
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 96,
+            height: 96,
+            borderRadius: "50%",
+            background: "var(--accent-glow)",
+            filter: "blur(24px)",
+          }}
+        />
+        <p
+          style={{
+            position: "relative",
+            fontSize: 11,
+            textTransform: "uppercase",
+            letterSpacing: "0.16em",
+            fontWeight: 600,
+            color: "var(--text-dim)",
+          }}
+        >
           {t("angebotsvorschau", "Angebotsvorschau")}
         </p>
-        <p className="relative mt-2 text-sm text-[#c6ebe3]">{emptyMessage}</p>
+        <p
+          style={{
+            position: "relative",
+            marginTop: 8,
+            fontSize: 14,
+            color: "var(--accent-text)",
+          }}
+        >
+          {emptyMessage}
+        </p>
       </section>
     );
   }
@@ -42,11 +68,11 @@ const OfferList = ({
         .join(" ")}
       aria-label={t("angebotsliste", "Angebotsliste")}
     >
-      <div className="grid grid-cols-1 gap-2.5 sm:gap-3 lg:grid-cols-2 xl:grid-cols-3">
+      <div className="card-grid">
         {offers.map((offer, index) => (
           <div
             key={`${offer.name}-${offer.shortened_name}-${offer.normal_price}-${offer.discount_price}-${index}`}
-            className="mx-0.5 transform-gpu"
+            style={{ margin: "0 2px" }}
             style={{ animationDelay: `${index * 60}ms` }}
           >
             <OfferCard {...offer} />

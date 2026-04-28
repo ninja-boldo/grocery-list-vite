@@ -1,10 +1,18 @@
-from google import genai
-from google.genai import types
+import base64
+import sys
+from pathlib import Path
+from typing import Optional, cast
 
-from utils.types_custom import CatalogueResponse
-from typing import Optional
 import dotenv
-import os
+from openai import OpenAI
+
+from utils.helpers_other import logModel
+
+try:
+    from utils.types_custom import CatalogueResponse
+except ModuleNotFoundError:
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from utils.types_custom import CatalogueResponse
 
 
 prompt = """
@@ -32,6 +40,27 @@ Return a JSON array of offer objects.
 """
 
 
+def _get_model_config() -> tuple[str, str]:
+    model = dotenv.get_key(".env", "MODEL_CATALOGUE")
+    if model is None:
+        model = dotenv.get_key(".env", "MODEL_CATALOGUE") or "openai/gpt-oss-20b"
+    base_url = dotenv.get_key(".env", "OPENAI_API_BASE_URL_CATALOGUE")
+    if model is None:
+        model = dotenv.get_key(".env", "OPENAI_API_BASE_URL")
+        
+    if not model or not base_url:
+        raise ValueError(
+            f"You need to set both MODEL and OPENAI_API_BASE_URL in .env\n"
+            f"MODEL={model}\nOPENAI_API_BASE_URL={base_url}"
+        )
+    return model, base_url
+
+
+def getApiKeyCatalogue():
+    key = dotenv.get_key(".env", "API_KEY_CATALOGUE")
+    if not key:
+        key = dotenv.get_key(".env", "API_KEY")
+    return key
 class CatalogueClassifier:
     def __init__(
         self, env_file_path: str = ".env", throw_exception_on_error: bool = True
@@ -39,25 +68,24 @@ class CatalogueClassifier:
         self.error: Optional[str] = None
         self.env_file_path: str = env_file_path
         dotenv.load_dotenv(self.env_file_path)
-        self.api_key: Optional[str] = os.getenv("google_api_key_ml")
 
-        if not self.api_key:
-            error_msg = (
-                f"Variable 'google_api_key_ml' not found in {self.env_file_path}"
-            )
+        try:
+            self._model, self._base_url = _get_model_config()
+        except ValueError as e:
             if throw_exception_on_error:
-                raise KeyError(error_msg)
-            else:
-                self.error = error_msg
+                raise
+            self.error = str(e)
+            return
 
-        self.model_name: str = "gemini-3-flash-preview"
-        self.google_client = genai.Client(api_key=self.api_key)
+        self._client = OpenAI(
+            base_url=self._base_url,
+            api_key=getApiKeyCatalogue(),
+        )
 
-    def _load_image(self, img_path: str) -> bytes:
-        """Load image file and return bytes."""
+    def _load_image_b64(self, img_path: str) -> str:
         try:
             with open(img_path, "rb") as f:
-                return f.read()
+                return base64.standard_b64encode(f.read()).decode("utf-8")
         except Exception as e:
             raise Exception(f"Failed to load image at {img_path}: {e}") from e
 
@@ -68,30 +96,35 @@ class CatalogueClassifier:
         if verbose:
             print("Sending request to inference API...")
 
-        response = self.google_client.models.generate_content(
-            model=self.model_name,
-            contents=[
-                types.Part.from_bytes(
-                    data=self._load_image(img_path),
-                    mime_type="image/jpeg",
-                ),
-                prompt,
+        image_b64 = self._load_image_b64(img_path)
+
+        response = self._client.beta.chat.completions.parse(
+            model=self._model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_b64}",
+                                "detail": "high",
+                            },
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
             ],
-            config={
-                "response_mime_type": "application/json",
-                "response_schema": CatalogueResponse,
-            },
+            response_format=cast(type[CatalogueResponse], CatalogueResponse),
         )
+        logModel(response, "catalogue_classifier", self._base_url)
 
         if verbose:
             print("Received response from inference API")
 
-        if not response.text:
+        catalogue_data = response.choices[0].message.parsed
+        if catalogue_data is None:
             raise Exception(f"No valid response received for image: {img_path}")
-
-        catalogue_data: CatalogueResponse = CatalogueResponse.model_validate_json(
-            response.text
-        )
 
         if verbose:
             print(f"\nExtracted {len(catalogue_data.offers)} offers:")
@@ -105,7 +138,7 @@ class CatalogueClassifier:
 
 if __name__ == "__main__":
     classifier = CatalogueClassifier()
-
     content: CatalogueResponse = classifier.classify_catalogue(
-        "other/catalogue.png", verbose=True
+        "/Users/bennetjollenbeck/Desktop/programming/web/react/family_projects/grocery-list2/server/server/supermarkets/uploads/20260427_180115_605e4bed-f214-46a3-89a7-245e982c3fba.png",
+        verbose=True,
     )
