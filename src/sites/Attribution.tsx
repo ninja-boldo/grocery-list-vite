@@ -1,49 +1,73 @@
 import { memo } from "react";
 import AppHeader from "@/comp/other/AppHeader";
 import BottomTabBar from "@/comp/other/BottomTabBar";
+import { useTranslation } from "react-i18next";
+import i18next from "i18next";
 
 const sources = [
   {
-    name: "OpenStreetMap",
+    name: i18next.t("openstreetmap", "OpenStreetMap"),
     url: "https://www.openstreetmap.org/copyright",
-    description:
+    description: i18next.t(
+      "mapAndSupermarketLocationDataIsDerivedFromOpenstreetmapACollaborativeProjectToCreateAFreeEditableMapOfTheWorld",
       "Map and supermarket location data is derived from OpenStreetMap, a collaborative project to create a free editable map of the world.",
-    license: "Open Database License (ODbL) 1.0",
+    ),
+    license: i18next.t(
+      "openDatabaseLicenseOdbl10",
+      "Open Database License (ODbL) 1.0",
+    ),
     licenseUrl: "https://opendatacommons.org/licenses/odbl/1-0/",
-    note: "© OpenStreetMap contributors",
+    note: i18next.t(
+      "openstreetmapContributors",
+      "© OpenStreetMap contributors",
+    ),
   },
   {
-    name: "Photon",
+    name: i18next.t("photon", "Photon"),
     url: "https://photon.komoot.io",
-    description:
+    description: i18next.t(
+      "geocodingAddressCoordinatesIsPoweredByPhotonAnOpensourceGeocoderBuiltOnOpenstreetmapDataOperatedByKomoot",
       "Geocoding (address → coordinates) is powered by Photon, an open-source geocoder built on OpenStreetMap data, operated by Komoot.",
-    license: "Open Database License (ODbL) 1.0",
+    ),
+    license: i18next.t(
+      "openDatabaseLicenseOdbl10",
+      "Open Database License (ODbL) 1.0",
+    ),
     licenseUrl: "https://opendatacommons.org/licenses/odbl/1-0/",
-    note: "Geocoding by Photon / Komoot",
+    note: i18next.t("geocodingByPhotonKomoot", "Geocoding by Photon / Komoot"),
   },
   {
-    name: "Open Food Facts",
+    name: i18next.t("openFoodFacts", "Open Food Facts"),
     url: "https://world.openfoodfacts.org",
-    description:
+    description: i18next.t(
+      "productInformationEanBarcodesNutritionalDataAndProductImagesAreSourcedFromOpenFoodFactsAFreeAndOpenDatabaseOfFoodProducts",
       "Product information, EAN barcodes, nutritional data, and product images are sourced from Open Food Facts, a free and open database of food products.",
-    license: "Open Database License (ODbL) 1.0",
+    ),
+    license: i18next.t(
+      "openDatabaseLicenseOdbl10",
+      "Open Database License (ODbL) 1.0",
+    ),
     licenseUrl: "https://opendatacommons.org/licenses/odbl/1-0/",
-    note: "Product data from Open Food Facts",
+    note: i18next.t(
+      "productDataFromOpenFoodFacts",
+      "Product data from Open Food Facts",
+    ),
   },
 ];
 
 const P = {
   bg: "transparent",
-  surface: "rgba(16, 38, 46, 0.82)",
-  border: "rgba(130, 177, 188, 0.28)",
+  surface: i18next.t("rgba163846082", "rgba(16, 38, 46, 0.82)"),
+  border: i18next.t("rgba130177188028", "rgba(130, 177, 188, 0.28)"),
   teal: "#1D9E75",
   tealB: "#0d948850",
-  text: "#ecf7f8",
+  text: i18next.t("ecf7f8", "#ecf7f8"),
   muted: "#9ab4b8",
   subtle: "#6f8b91",
 };
 
 function AttributionPage() {
+  const { t } = useTranslation();
   const username = localStorage.getItem("username") ?? "L";
 
   return (
@@ -69,11 +93,15 @@ function AttributionPage() {
               margin: "0 0 6px",
             }}
           >
-            Attributions
+            {t("attributions", "Attributions")}
           </h1>
-          <p style={{ fontSize: 13, color: P.muted, margin: 0, lineHeight: 1.6 }}>
-            This app is built on open data. We're grateful to the communities
-            that make these resources freely available.
+          <p
+            style={{ fontSize: 13, color: P.muted, margin: 0, lineHeight: 1.6 }}
+          >
+            {t(
+              "thisAppIsBuiltOnOpenDataWereGratefulToTheCommunitiesThatMakeTheseResourcesFreelyAvailable",
+              "This app is built on open data. We're grateful to the communities\n            that make these resources freely available.",
+            )}
           </p>
         </div>
 
@@ -108,7 +136,9 @@ function AttributionPage() {
                     gap: 12,
                   }}
                 >
-                  <span style={{ fontSize: 14, fontWeight: 600, color: P.text }}>
+                  <span
+                    style={{ fontSize: 14, fontWeight: 600, color: P.text }}
+                  >
                     {src.name}
                   </span>
                   <a
@@ -126,7 +156,7 @@ function AttributionPage() {
                       fontWeight: 500,
                     }}
                   >
-                    Visit ↗
+                    {t("visit", "Visit ↗")}
                   </a>
                 </div>
 
@@ -153,7 +183,9 @@ function AttributionPage() {
                     gap: 12,
                   }}
                 >
-                  <span style={{ fontSize: 11, color: P.subtle }}>{src.note}</span>
+                  <span style={{ fontSize: 11, color: P.subtle }}>
+                    {src.note}
+                  </span>
                   <a
                     href={src.licenseUrl}
                     target="_blank"
@@ -184,15 +216,17 @@ function AttributionPage() {
             textAlign: "center",
           }}
         >
-          All third-party data is used in accordance with their respective
-          licenses.{" "}
+          {t(
+            "allThirdpartyDataIsUsedInAccordanceWithTheirRespectiveLicenses",
+            "All third-party data is used in accordance with their respective\n          licenses.",
+          )}{" "}
           <a
             href="https://opendatacommons.org/licenses/odbl/1-0/"
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: P.muted, textDecoration: "underline" }}
           >
-            ODbL 1.0
+            {t("odbl10", "ODbL 1.0")}
           </a>
         </p>
       </div>

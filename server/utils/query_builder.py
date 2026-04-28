@@ -185,6 +185,4 @@ def build_fetch_query(
         wish_hash_param_idx=wish_hash_param_idx,
     )
 
-    print(f"running this query: {query}\nwith these params: {params}")
-
     return query, params

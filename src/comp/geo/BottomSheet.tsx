@@ -1,4 +1,5 @@
 import type { Position } from "./Map";
+import i18next from "i18next";
 
 const mapsUrl = ({ lat, lon }: Position) =>
   /iPhone|iPad|MacIntel/.test(navigator.platform)
@@ -61,7 +62,7 @@ export const BottomSheet = ({
               d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"
             />
           </svg>
-          Direction
+          {i18next.t("direction", "Direction")}
         </a>
       </div>
       <div className="mt-4">
@@ -70,12 +71,12 @@ export const BottomSheet = ({
           onClick={() => onSubmitCatalogue(pos)}
           className="geo-sheet__btn geo-sheet__btn--ghost"
         >
-          Submit
+          {i18next.t("submit", "Submit")}
         </button>
 
         {/* View Offers */}
         <button onClick={() => onViewOffers(pos)} className="geo-sheet__btn">
-          View Offers
+          {i18next.t("viewOffers", "View Offers")}
         </button>
       </div>
     </div>

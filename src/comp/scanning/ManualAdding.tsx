@@ -8,6 +8,8 @@ import { PageModes } from "@/lib/utils";
 import { apiClient } from "@/lib/api/client";
 import { isAddEanSuccess, needsQuantityDetails } from "@/lib/api/addEanFlow";
 import type { AddEanRequest, QuantityInfo } from "@/lib/api/openapi";
+import { useTranslation } from "react-i18next";
+import i18next from "i18next";
 
 const P = {
   bg: "#18181b",
@@ -16,14 +18,28 @@ const P = {
   teal: "#0d9488",
   tealD: "#0f2a28",
   tealB: "#0d948850",
-  text: "#e6edf3",
+  text: i18next.t("e6edf3", "#e6edf3"),
   muted: "#6e7681",
   subtle: "#4d5566",
 } as const;
 
 type Stage = "input" | "loading" | "success";
 
-const UNITS = ["Stück", "g", "kg", "ml", "L", "EL", "TL", "Prise", "Bund", "Scheiben", "Zehe", "Dose", "Paket"];
+const UNITS = [
+  "Stück",
+  "g",
+  "kg",
+  "ml",
+  "L",
+  "EL",
+  "TL",
+  "Prise",
+  "Bund",
+  "Scheiben",
+  "Zehe",
+  "Dose",
+  "Paket",
+];
 
 type PendingAddPayload = {
   ean: string | null;
@@ -33,6 +49,7 @@ type PendingAddPayload = {
 };
 
 const ManualAdd = () => {
+  const { t } = useTranslation();
   const navhook = useNavigate();
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
@@ -50,7 +67,8 @@ const ManualAdd = () => {
 
   const [quantityInput, setQuantityInput] = useState("");
   const [unitInput, setUnitInput] = useState("Stück");
-  const [pendingPayload, setPendingPayload] = useState<PendingAddPayload | null>(null);
+  const [pendingPayload, setPendingPayload] =
+    useState<PendingAddPayload | null>(null);
 
   const showError = useCallback((msg: string) => {
     setErrorMessage(msg);
@@ -83,7 +101,10 @@ const ManualAdd = () => {
           const message =
             typeof response.detail === "string" && response.detail.trim()
               ? response.detail
-              : "Failed to add item. Please try again.";
+              : t(
+                  "failedToAddItemPleaseTryAgain",
+                  "Failed to add item. Please try again.",
+                );
           showError(message);
           return;
         }
@@ -98,7 +119,7 @@ const ManualAdd = () => {
         setQuantitySubmitting(false);
       }
     },
-    [pendingPayload, navhook, showError],
+    [pendingPayload, showError, t, navhook],
   );
 
   const handleQuantitySubmit = useCallback(() => {
@@ -156,7 +177,10 @@ const ManualAdd = () => {
         const message =
           typeof response.detail === "string" && response.detail.trim()
             ? response.detail
-            : "Failed to add item. Please try again.";
+            : t(
+                "failedToAddItemPleaseTryAgain",
+                "Failed to add item. Please try again.",
+              );
         showError(message);
         setStage("input");
       } else {
@@ -186,7 +210,6 @@ const ManualAdd = () => {
       <TopBar
         sidebarOpen={sidebarOpen}
         onSidebarToggle={() => setSidebarOpen(!sidebarOpen)}
-        subgroups={[]}
         onFilter={null}
         onReset={() => null}
         onScanIncrease={() => null}
@@ -224,17 +247,23 @@ const ManualAdd = () => {
               }}
             >
               {showSuccess
-                ? "✓ Added successfully!"
+                ? t("addedSuccessfully", "✓ Added successfully!")
                 : isWishList
-                  ? "Add to Wish List"
-                  : "Add Item Manually"}
+                  ? t("addToWishList", "Add to Wish List")
+                  : t("addItemManually", "Add Item Manually")}
             </p>
 
             <>
               <p style={{ fontSize: 13, color: P.muted, margin: "0 0 14px" }}>
                 {isWishList
-                  ? "Save a new wish-list entry with optional barcode and count."
-                  : "Save a new inventory item with optional barcode and count."}
+                  ? t(
+                      "saveANewWishlistEntryWithOptionalBarcodeAndCount",
+                      "Save a new wish-list entry with optional barcode and count.",
+                    )
+                  : t(
+                      "saveANewInventoryItemWithOptionalBarcodeAndCount",
+                      "Save a new inventory item with optional barcode and count.",
+                    )}
               </p>
 
               <input
@@ -244,7 +273,7 @@ const ManualAdd = () => {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && stage === "input") void sendRes();
                 }}
-                placeholder="Item name *"
+                placeholder={t("itemName", "Item name *")}
                 disabled={isLoading || showSuccess}
                 style={{
                   display: "block",
@@ -262,14 +291,16 @@ const ManualAdd = () => {
                   opacity: isLoading || showSuccess ? 0.5 : 1,
                 }}
                 onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
-                onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")}
+                onBlur={(e) =>
+                  (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")
+                }
               />
 
               <input
                 type="text"
                 value={ean}
                 onChange={(e) => setEan(e.target.value.replace(/\D/g, ""))}
-                placeholder="EAN barcode (optional)"
+                placeholder={t("eanBarcodeOptional", "EAN barcode (optional)")}
                 disabled={isLoading || showSuccess}
                 style={{
                   display: "block",
@@ -288,7 +319,9 @@ const ManualAdd = () => {
                   opacity: isLoading || showSuccess ? 0.5 : 1,
                 }}
                 onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
-                onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")}
+                onBlur={(e) =>
+                  (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")
+                }
               />
 
               <input
@@ -296,7 +329,7 @@ const ManualAdd = () => {
                 value={count}
                 min={1}
                 onChange={(e) => setCount(e.target.value)}
-                placeholder="Count (default = 1)"
+                placeholder={t("countDefault1", "Count (default = 1)")}
                 disabled={isLoading || showSuccess}
                 style={{
                   display: "block",
@@ -314,7 +347,9 @@ const ManualAdd = () => {
                   opacity: isLoading || showSuccess ? 0.5 : 1,
                 }}
                 onFocus={(e) => (e.currentTarget.style.borderColor = P.teal)}
-                onBlur={(e) => (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")}
+                onBlur={(e) =>
+                  (e.currentTarget.style.borderColor = "rgba(124,170,124,0.28)")
+                }
               />
 
               <button
@@ -369,7 +404,7 @@ const ManualAdd = () => {
                         d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                       />
                     </svg>
-                    Adding...
+                    {t("Adding...", "Adding...")}
                   </>
                 ) : (
                   "Submit"

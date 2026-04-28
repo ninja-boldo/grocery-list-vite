@@ -1,3 +1,5 @@
+import { useTranslation } from "react-i18next";
+import i18next from "i18next";
 interface Props {
   text: string;
   variant: "error" | "success";
@@ -7,20 +9,27 @@ const styles = {
   error: {
     bg: "bg-rose-50/90 dark:bg-rose-950/40",
     border: "border-rose-200/60 dark:border-rose-500/30",
-    text: "text-rose-900 dark:text-rose-100",
+    text: i18next.t(
+      "textrose900Darktextrose100",
+      "text-rose-900 dark:text-rose-100",
+    ),
     sub: "text-rose-700/80 dark:text-rose-300/70",
     dot: "bg-rose-500",
   },
   success: {
     bg: "bg-green-50/90 dark:bg-green-950/40",
     border: "border-green-200/60 dark:border-green-500/30",
-    text: "text-green-900 dark:text-green-100",
+    text: i18next.t(
+      "textgreen900Darktextgreen100",
+      "text-green-900 dark:text-green-100",
+    ),
     sub: "text-green-700/80 dark:text-green-300/70",
     dot: "bg-green-500",
   },
 };
 
 const ShortPopup = ({ text, variant }: Props) => {
+  const { t } = useTranslation();
   const s = styles[variant];
 
   return (
@@ -38,7 +47,9 @@ const ShortPopup = ({ text, variant }: Props) => {
         <div className="flex flex-col">
           <p className={`${s.text} text-sm font-semibold`}>{text}</p>
           <p className={`${s.sub} text-xs font-medium`}>
-            {variant === "error" ? "Something went wrong" : "Success"}
+            {variant === "error"
+              ? t("somethingWentWrong", "Something went wrong")
+              : "Success"}
           </p>
         </div>
       </div>

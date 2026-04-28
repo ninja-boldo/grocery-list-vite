@@ -9,10 +9,14 @@
 }
 
 .glass-card {
-  background: linear-gradient(165deg, var(--surface-1) 0%, var(--surface-0) 100%);
+  background: linear-gradient(
+    165deg,
+    var(--surface-1) 0%,
+    var(--surface-0) 100%
+  );
   border: 1px solid var(--border-soft);
   border-radius: 20px;
-  box-shadow: 
+  box-shadow:
     0 20px 50px rgba(0, 0, 0, 0.4),
     0 0 0 1px rgba(255, 255, 255, 0.02) inset;
   backdrop-filter: blur(12px);
@@ -51,7 +55,8 @@
 }
 
 @keyframes pulse-soft {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {

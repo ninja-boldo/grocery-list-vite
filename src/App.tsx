@@ -21,10 +21,9 @@ import { transformItems, PageModes, type ApiResponse } from "./lib/utils";
 import { authApiCall, hasStoredJwtToken } from "./lib/authApi";
 import { apiClient } from "./lib/api/client";
 import { isAddEanSuccess } from "./lib/api/addEanFlow";
-import {
-  buildFetchItemsUrl,
-} from "./lib/api/openapi";
+import { buildFetchItemsUrl } from "./lib/api/openapi";
 import AuthPopup from "./comp/other/AuthPopup";
+import { useTranslation } from "react-i18next";
 
 // ============================================================================
 // Types
@@ -40,6 +39,8 @@ export interface Item {
   tags: string[];
   /** Wish-list only: inventory items matched to this entry */
   mapped_items?: { count: number; item_name: string }[];
+  /** Days until expiry, or -1 if unknown/unavailable */
+  expiryDays?: number | null;
 }
 
 // ============================================================================
@@ -56,7 +57,7 @@ const NEW_ITEMS_PER_FETCH = 20;
 const buildPlaceholderItems = (): Item[] =>
   Array.from({ length: PLACEHOLDER_ITEM_COUNT }, (_, index) => ({
     ean: `loading-${index}`,
-    text: "Loading...",
+    text: "Loading...", // only visible for a short time -> no translation needed
     shortened_name: null,
     classname: null,
     count: 0,
@@ -106,6 +107,7 @@ type GroceryItemsHookResult = {
 // Main Component
 // ============================================================================
 function App() {
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
 
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +119,10 @@ function App() {
     if (!hasStoredJwtToken()) {
       setNeedReauth(true);
     }
+
+    const lang = "de";
+    console.log("changed language to ", lang);
+    i18n.changeLanguage(lang);
   }, []);
 
   const handleNeedReauth = useCallback(() => {
@@ -230,8 +236,12 @@ function App() {
         });
 
         try {
-          const response = await apiCall<ApiResponse>(requestUrl, undefined, RETRY_ATTEMPTS, onNeedReauth);
-
+          const response = await apiCall<ApiResponse>(
+            requestUrl,
+            undefined,
+            RETRY_ATTEMPTS,
+            onNeedReauth,
+          );
           if (!response.items.length) {
             handleEmptyResponse();
             return;
@@ -240,8 +250,11 @@ function App() {
           skipRef.current += response.items.length;
           appendItems(transformItems(response));
         } catch (err) {
+          console.warn("failed in line 245");
           const errorMessage =
-            err instanceof Error ? err.message : "Failed to fetch items";
+            err instanceof Error
+              ? err.message
+              : t("failedToFetchItems", "Failed to fetch items");
           setError(errorMessage);
         } finally {
           setIsLoading(false);
@@ -335,7 +348,6 @@ function App() {
     }
   }, [needReauth]);
 
-
   const availableClasses = useMemo(() => {
     const result = new Set<string>();
     data.forEach((item) => {
@@ -378,6 +390,7 @@ function App() {
             item_name: item.text,
             count: delta,
             wish_list: "false",
+            quantity_data: null,
           },
           {
             retries: 1,
@@ -415,7 +428,6 @@ function App() {
     [updateItemCount],
   );
 
-
   const navigateScanner = useCallback(
     (count: number) => {
       navigate(`/scanner?text=&count=${encodeURIComponent(count)}`);
@@ -428,9 +440,12 @@ function App() {
 
     const normalized = error.toLowerCase();
     const excludedFragments = [
-      "there are no items in the database",
+      t("thereAreNoItemsInTheDatabase", "there are no items in the database"),
       "http 401",
-      "authentication required. please sign in again.",
+      t(
+        "authenticationRequiredPleaseSignInAgain",
+        "authentication required. please sign in again.",
+      ),
     ];
 
     const isExcluded = excludedFragments.some((fragment) =>
@@ -442,8 +457,8 @@ function App() {
 
   if (isLoading && data.length === 0) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
-        <div className="text-cyan-400 text-lg">Loading...</div>
+      <div className="page-center">
+        <div style={{ color: "var(--accent)", fontSize: 18 }}>Loading...</div>
       </div>
     );
   }
@@ -452,7 +467,6 @@ function App() {
 
   return (
     <div
-      className="app-atmosphere"
       style={{
         minHeight: "100vh",
         color: "var(--text-main)",
@@ -494,7 +508,10 @@ function App() {
           <div style={{ padding: "0 4px 90px" }}>
             {noItemsAvailable ? (
               <InfoContainer
-                text={"No items available in the database.\nSo perhaps add one."}
+                text={t(
+                  "noItemsAvailableInTheDatabaseSoPerhapsAddOne",
+                  "No items available in the database.\nSo perhaps add one.",
+                )}
               />
             ) : (
               <Virtuoso
@@ -503,7 +520,7 @@ function App() {
                 endReached={() => {
                   if (hasMoreData && !isLoading && !isSearchActive) {
                     loadMoreItems();
-                  }
+                  } 
                 }}
                 itemContent={(idx, item) => (
                   <Container
@@ -513,6 +530,7 @@ function App() {
                     count={item.count}
                     classname={item.classname}
                     perish_dates={item.perish_dates}
+                    expiryDays={item.expiryDays}
                     imageUrl={item.imageUrl}
                     ean={item.ean}
                     onClickIncrease={increaseItem}
@@ -531,7 +549,7 @@ function App() {
       {/* ── Add item FAB ── */}
       <button
         onClick={() => navigate("/scanner")}
-        aria-label="Artikel hinzufügen"
+        aria-label={t("artikelHinzufgen", "Artikel hinzufügen")}
         style={{
           position: "fixed",
           bottom: 80,
@@ -539,9 +557,9 @@ function App() {
           width: 52,
           height: 52,
           borderRadius: "50%",
-          backgroundColor: "#0f2a28",
+          backgroundColor: "var(--accent-light)",
           border: "1px solid #0d948880",
-          color: "#2dd4bf",
+          color: "var(--accent)",
           fontSize: 26,
           fontWeight: 300,
           display: "flex",
@@ -554,12 +572,14 @@ function App() {
           fontFamily: "'DM Sans', system-ui, sans-serif",
         }}
         onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.backgroundColor = "#0d9488";
+          (e.currentTarget as HTMLElement).style.backgroundColor =
+            "var(--accent)";
           (e.currentTarget as HTMLElement).style.color = "#fff";
         }}
         onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.backgroundColor = "#0f2a28";
-          (e.currentTarget as HTMLElement).style.color = "#2dd4bf";
+          (e.currentTarget as HTMLElement).style.backgroundColor =
+            "var(--accent-light)";
+          (e.currentTarget as HTMLElement).style.color = "var(--accent)";
         }}
       >
         +

@@ -16,7 +16,11 @@ import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
 import FeedbackToast, { useFeedbackToast } from "@/comp/utils/FeedbackToast";
 import { PageModes } from "../lib/utils";
-import { buildFetchItemsUrl, PantryClassificationWishItem } from "@/lib/api/openapi";
+import {
+  buildFetchItemsUrl,
+  PantryClassificationWishItem,
+} from "@/lib/api/openapi";
+import { useTranslation } from "react-i18next";
 
 const API_CONFIG = {
   retries: 3,
@@ -33,6 +37,7 @@ const normalizeItemName = (value: string) =>
     .trim();
 
 function WishList() {
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
 
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +47,9 @@ function WishList() {
   const [accumulatedCount, setAccumulatedCount] = useState<number | null>(null);
   const [distinctItems, setDistinctItems] = useState<number | null>(null);
   const [selectedClass, setSelectedClass] = useState<string | null>(null);
-  const [pantryItemNames, setPantryItemNames] = useState<Set<string>>(new Set());
+  const [pantryItemNames, setPantryItemNames] = useState<Set<string>>(
+    new Set(),
+  );
   const [isCheckingPantry, setIsCheckingPantry] = useState(false);
   const [toast, showToast, clearToast] = useFeedbackToast(3500);
 
@@ -50,6 +57,9 @@ function WishList() {
     if (!hasStoredJwtToken()) {
       setNeedReauth(true);
     }
+    const lang = "de";
+    console.log("changed language to ", lang);
+    i18n.changeLanguage(lang);
   }, []);
 
   const handleNeedReauth = useCallback(() => {
@@ -196,7 +206,9 @@ function WishList() {
       setDistinctItems(response.distinct_items ?? null);
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Failed to fetch wish list";
+        error instanceof Error
+          ? error.message
+          : t("failedToFetchWishList", "Failed to fetch wish list");
       setError(message);
       console.error("WishList fetch failed:", error);
     } finally {
@@ -213,15 +225,17 @@ function WishList() {
 
     setIsCheckingPantry(true);
     try {
-      const wishlistItems: PantryClassificationWishItem[] = data.map((item, idx) => ({
-        item_name: item.text ?? "",
-        item_id: `wish-${idx}`,
-        count: item.count,
-        quantity: {
-          product_quantity: null,
-          product_quantity_unit: null,
-        },
-      }));
+      const wishlistItems: PantryClassificationWishItem[] = data.map(
+        (item, idx) => ({
+          item_name: item.text ?? "",
+          item_id: `wish-${idx}`,
+          count: item.count,
+          quantity: {
+            product_quantity: null,
+            product_quantity_unit: null,
+          },
+        }),
+      );
 
       const result = await apiClient.classifyItemsAgainstPantry(wishlistItems, {
         retries: 1,
@@ -235,7 +249,9 @@ function WishList() {
 
       for (const entry of result.mapping ?? []) {
         if (entry.foundMappingWish && entry.mappedWishItem?.item_name) {
-          const normalizedMapped = normalizeItemName(entry.mappedWishItem.item_name);
+          const normalizedMapped = normalizeItemName(
+            entry.mappedWishItem.item_name,
+          );
           if (normalizedWishlistTexts.has(normalizedMapped)) {
             foundNames.add(normalizedMapped);
           }
@@ -244,8 +260,8 @@ function WishList() {
 
       setPantryItemNames(foundNames);
 
-      const matchedCount = data.filter(
-        (item) => foundNames.has(normalizeItemName(item.text ?? "")),
+      const matchedCount = data.filter((item) =>
+        foundNames.has(normalizeItemName(item.text ?? "")),
       ).length;
 
       if (matchedCount > 0) {
@@ -254,7 +270,10 @@ function WishList() {
           "success",
         );
       } else {
-        showToast("None of your wishlist items are currently in your pantry.", "info");
+        showToast(
+          "None of your wishlist items are currently in your pantry.",
+          "info",
+        );
       }
     } catch {
       showToast("Could not check pantry. Please try again.", "error");
@@ -306,7 +325,9 @@ function WishList() {
   if (isLoading && data.length === 0 && !needReauth) {
     return (
       <div className="flex justify-center items-center min-h-screen">
-        <div className="text-cyan-400 text-lg">Loading...</div>
+        <div className="text-cyan-400 text-lg">
+          {t("Loading", "Loading")}...
+        </div>
       </div>
     );
   }
@@ -317,7 +338,10 @@ function WishList() {
     const normalized = error.toLowerCase();
     const excludedFragments = [
       "http 401",
-      "authentication required. please sign in again.",
+      t(
+        "authenticationRequiredPleaseSignInAgain",
+        "authentication required. please sign in again.",
+      ),
     ];
 
     const isExcluded = excludedFragments.some((fragment) =>
@@ -360,7 +384,10 @@ function WishList() {
             classNames={availableClasses}
             selectedClass={selectedClass}
             onFilter={(cls) => setSelectedClass(cls)}
-            onReset={() => { setSelectedClass(null); void fetchItems(); }}
+            onReset={() => {
+              setSelectedClass(null);
+              void fetchItems();
+            }}
             onScanIncrease={() => navigateScanner(1)}
             onScanDecrease={() => navigateScanner(-1)}
             items={data}
@@ -371,13 +398,15 @@ function WishList() {
           />
 
           {availableClasses.length > 0 && (
-            <div style={{
-              display: "flex",
-              gap: 6,
-              overflowX: "auto",
-              padding: "0 12px 6px",
-              scrollbarWidth: "none",
-            }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                overflowX: "auto",
+                padding: "0 12px 6px",
+                scrollbarWidth: "none",
+              }}
+            >
               <button
                 onClick={() => setSelectedClass(null)}
                 style={{
@@ -385,7 +414,8 @@ function WishList() {
                   padding: "4px 12px",
                   borderRadius: 20,
                   border: `1px solid ${selectedClass === null ? "#0d948880" : "#21262d"}`,
-                  backgroundColor: selectedClass === null ? "#0f2a28" : "#161b22",
+                  backgroundColor:
+                    selectedClass === null ? "#0f2a28" : "#161b22",
                   color: selectedClass === null ? "#2dd4bf" : "#8b949e",
                   fontSize: 12,
                   fontWeight: 600,
@@ -394,18 +424,21 @@ function WishList() {
                   fontFamily: "'DM Sans', system-ui, sans-serif",
                 }}
               >
-                Alle
+                {t("alle", "Alle")}
               </button>
               {availableClasses.map((cls) => (
                 <button
                   key={cls}
-                  onClick={() => setSelectedClass(cls === selectedClass ? null : cls)}
+                  onClick={() =>
+                    setSelectedClass(cls === selectedClass ? null : cls)
+                  }
                   style={{
                     flexShrink: 0,
                     padding: "4px 12px",
                     borderRadius: 20,
                     border: `1px solid ${selectedClass === cls ? "#0d948880" : "#21262d"}`,
-                    backgroundColor: selectedClass === cls ? "#0f2a28" : "#161b22",
+                    backgroundColor:
+                      selectedClass === cls ? "#0f2a28" : "#161b22",
                     color: selectedClass === cls ? "#2dd4bf" : "#8b949e",
                     fontSize: 12,
                     fontWeight: 600,
@@ -421,34 +454,43 @@ function WishList() {
             </div>
           )}
 
-          {(distinctItems !== null || accumulatedCount !== null) && !noItemsAvailable && (
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              margin: "4px 12px 2px",
-              padding: "6px 12px",
-              borderRadius: 10,
-              backgroundColor: "#161b22",
-              border: "1px solid #21262d",
-            }}>
-              {distinctItems !== null && (
-                <span style={{ fontSize: 12, color: "#8b949e" }}>
-                  <span style={{ fontWeight: 600, color: "#c9d1d9" }}>{distinctItems}</span>
-                  {" "}item{distinctItems !== 1 ? "s" : ""}
-                </span>
-              )}
-              {distinctItems !== null && accumulatedCount !== null && (
-                <span style={{ color: "#21262d", fontSize: 14 }}>·</span>
-              )}
-              {accumulatedCount !== null && (
-                <span style={{ fontSize: 12, color: "#8b949e" }}>
-                  <span style={{ fontWeight: 600, color: "#2dd4bf" }}>{accumulatedCount}</span>
-                  {" "}total qty
-                </span>
-              )}
-            </div>
-          )}
+          {(distinctItems !== null || accumulatedCount !== null) &&
+            !noItemsAvailable && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  margin: "4px 12px 2px",
+                  padding: "6px 12px",
+                  borderRadius: 10,
+                  backgroundColor: "#161b22",
+                  border: "1px solid #21262d",
+                }}
+              >
+                {distinctItems !== null && (
+                  <span style={{ fontSize: 12, color: "#8b949e" }}>
+                    <span style={{ fontWeight: 600, color: "#c9d1d9" }}>
+                      {distinctItems}
+                    </span>{" "}
+                    {distinctItems !== 1
+                      ? t("items", "items")
+                      : t("item", "item")}
+                  </span>
+                )}
+                {distinctItems !== null && accumulatedCount !== null && (
+                  <span style={{ color: "#21262d", fontSize: 14 }}>·</span>
+                )}
+                {accumulatedCount !== null && (
+                  <span style={{ fontSize: 12, color: "#8b949e" }}>
+                    <span style={{ fontWeight: 600, color: "#2dd4bf" }}>
+                      {accumulatedCount}
+                    </span>{" "}
+                    {t("totalQty", "total qty")}
+                  </span>
+                )}
+              </div>
+            )}
 
           {/* Check Pantry button */}
           {data.length > 0 && (
@@ -475,38 +517,58 @@ function WishList() {
                   gap: 8,
                 }}
               >
-                <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
                   <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
                   <rect x="9" y="3" width="6" height="4" rx="1" />
                   <path d="M9 14l2 2 4-4" />
                 </svg>
-                {isCheckingPantry ? "Checking pantry..." : "Check Pantry"}
+                {isCheckingPantry
+                  ? `${t("checkingPantry", "Checking pantry")}...`
+                  : t("checkPantry", "Check pantry")}
               </button>
             </div>
           )}
 
           {/* Items already in pantry indicator */}
           {pantryItemNames.size > 0 && (
-            <div style={{
-              margin: "6px 12px 0",
-              padding: "8px 12px",
-              borderRadius: 10,
-              backgroundColor: "#0f2a28",
-              border: "1px solid #0d948840",
-              fontSize: 12,
-              color: "#5eead4",
-              lineHeight: 1.5,
-            }}>
-              <strong>Already in pantry:</strong>{" "}
+            <div
+              style={{
+                margin: "6px 12px 0",
+                padding: "8px 12px",
+                borderRadius: 10,
+                backgroundColor: "#0f2a28",
+                border: "1px solid #0d948840",
+                fontSize: 12,
+                color: "#5eead4",
+                lineHeight: 1.5,
+              }}
+            >
+              <strong>{t("alreadyInPantry", "Already in pantry:")}</strong>{" "}
               {[...pantryItemNames].slice(0, 5).join(", ")}
-              {pantryItemNames.size > 5 ? ` and ${pantryItemNames.size - 5} more` : ""}
+              {pantryItemNames.size > 5
+                ? t("andValMore", "and {{val}} more", {
+                    val: pantryItemNames.size - 5,
+                  })
+                : ""}
             </div>
           )}
 
           <div style={{ padding: "0 4px 90px" }}>
             {noItemsAvailable ? (
               <InfoContainer
-                text={"No items on your wish list.\nAdd something you'd like to buy!"}
+                text={t(
+                  "noItemsOnYourWishListAddSomethingYoudLikeToBuy",
+                  "No items on your wish list.\nAdd something you'd like to buy!",
+                )}
               />
             ) : (
               containerComponents
@@ -517,7 +579,7 @@ function WishList() {
 
       <button
         onClick={() => navigateScanner(1)}
-        aria-label="Artikel hinzufügen"
+        aria-label={t("artikelHinzufgen", "Artikel hinzufügen")}
         style={{
           position: "fixed",
           bottom: 80,

@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import { useTranslation, Trans } from "react-i18next";
+import i18next from "i18next";
 
 const P = {
   bg: "#0d1117",
@@ -7,7 +9,7 @@ const P = {
   teal: "#0d9488",
   tealB: "#0d948850",
   tealD: "#0f2a28",
-  text: "#e6edf3",
+  text: i18next.t("e6edf3", "#e6edf3"),
   muted: "#6e7681",
   subtle: "#4d5566",
 } as const;
@@ -21,6 +23,7 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
   compact = false,
   floating = false,
 }) => {
+  const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (floating) {
@@ -61,7 +64,7 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
               e.currentTarget.style.borderColor = P.border;
               e.currentTarget.style.color = "#8b949e";
             }}
-            title="Data Attribution"
+            title={t("dataAttribution", "Data Attribution")}
           >
             ⓘ
           </button>
@@ -98,7 +101,7 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
                   letterSpacing: "0.02em",
                 }}
               >
-                Data Attribution
+                {t("dataAttribution", "Data Attribution")}
               </span>
               <button
                 onClick={() => setIsExpanded(false)}
@@ -116,43 +119,45 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
                 onMouseLeave={(e) => {
                   e.currentTarget.style.color = P.subtle;
                 }}
-                title="Close"
+                title={t("close", "Close")}
               >
                 ×
               </button>
             </div>
             <p style={{ margin: "0 0 0.4rem", color: P.muted }}>
-              Uses data from{" "}
+              {t("usesDataFrom", "Uses data from")}{" "}
               <a
                 href="https://world.openfoodfacts.org"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: "#5eead4", textDecoration: "none" }}
               >
-                Open Food Facts
+                {t("openFoodFacts", "Open Food Facts")}
               </a>{" "}
-              (database dump &amp; API).
+              {t("databaseDumpAmpApi", "(database dump &amp; API).")}
             </p>
             <p style={{ margin: "0 0 0.4rem", color: P.subtle }}>
-              Licensed under{" "}
+              {t("licensedUnder", "Licensed under")}{" "}
               <a
                 href="https://opendatacommons.org/licenses/odbl/1.0/"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: P.muted, textDecoration: "underline" }}
               >
-                ODbL
+                {t("odbl", "ODbL")}
               </a>{" "}
-              &amp;{" "}
-              <a
-                href="https://opendatacommons.org/licenses/dbcl/1.0/"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: P.muted, textDecoration: "underline" }}
-              >
-                DbCL
-              </a>
-              .
+              {t("amp", "&amp;")}{" "}
+              <Trans i18nKey="aHrefhttpsopendatacommonsorglicensesdbcl10Target_blankRelnoopenerNoreferrerStyleColorPmutedTextdecorationUnderlineDbclA">
+                <a
+                  href="https://opendatacommons.org/licenses/dbcl/1.0/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: P.muted, textDecoration: "underline" }}
+                >
+                  DbCL
+                </a>
+                .
+              </Trans>
             </p>
             <a
               href="https://world.openfoodfacts.org/terms-of-use"
@@ -164,17 +169,17 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
                 fontSize: "0.74rem",
               }}
             >
-              Terms of Use →
+              {t("termsOfUse", "Terms of Use →")}
             </a>
           </div>
         )}
 
-        <style>{`
-          @keyframes slideIn {
-            from { opacity: 0; transform: translateY(6px); }
-            to   { opacity: 1; transform: translateY(0);   }
-          }
-        `}</style>
+        <style>
+          {t(
+            "keyframesSlideinFromOpacity0TransformTranslatey6pxToOpacity1TransformTranslatey0",
+            "@keyframes slideIn {\n            from { opacity: 0; transform: translateY(6px); }\n            to   { opacity: 1; transform: translateY(0);   }\n          }",
+          )}
+        </style>
       </div>
     );
   }
@@ -210,7 +215,7 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
               e.currentTarget.style.borderColor = P.border;
               e.currentTarget.style.color = P.muted;
             }}
-            title="Data Attribution"
+            title={t("dataAttribution", "Data Attribution")}
           >
             ⓘ
           </button>
@@ -247,7 +252,7 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
                   letterSpacing: "0.02em",
                 }}
               >
-                Data Attribution
+                {t("dataAttribution", "Data Attribution")}
               </span>
               <button
                 onClick={() => setIsExpanded(false)}
@@ -265,43 +270,45 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
                 onMouseLeave={(e) => {
                   e.currentTarget.style.color = P.subtle;
                 }}
-                title="Close"
+                title={t("close", "Close")}
               >
                 ×
               </button>
             </div>
             <p style={{ margin: "0 0 0.4rem", color: P.muted }}>
-              Uses data from{" "}
+              {t("usesDataFrom", "Uses data from")}{" "}
               <a
                 href="https://world.openfoodfacts.org"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: "#5eead4", textDecoration: "none" }}
               >
-                Open Food Facts
+                {t("openFoodFacts", "Open Food Facts")}
               </a>{" "}
-              (database dump &amp; API).
+              {t("databaseDumpAmpApi", "(database dump &amp; API).")}
             </p>
             <p style={{ margin: "0 0 0.4rem", color: P.subtle }}>
-              Licensed under{" "}
+              {t("licensedUnder", "Licensed under")}{" "}
               <a
                 href="https://opendatacommons.org/licenses/odbl/1.0/"
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: P.muted, textDecoration: "underline" }}
               >
-                ODbL
+                {t("odbl", "ODbL")}
               </a>{" "}
-              &amp;{" "}
-              <a
-                href="https://opendatacommons.org/licenses/dbcl/1.0/"
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: P.muted, textDecoration: "underline" }}
-              >
-                DbCL
-              </a>
-              .
+              {t("amp", "&amp;")}{" "}
+              <Trans i18nKey="aHrefhttpsopendatacommonsorglicensesdbcl10Target_blankRelnoopenerNoreferrerStyleColorPmutedTextdecorationUnderlineDbclA">
+                <a
+                  href="https://opendatacommons.org/licenses/dbcl/1.0/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: P.muted, textDecoration: "underline" }}
+                >
+                  DbCL
+                </a>
+                .
+              </Trans>
             </p>
             <a
               href="https://world.openfoodfacts.org/terms-of-use"
@@ -313,17 +320,17 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
                 fontSize: "0.74rem",
               }}
             >
-              Terms of Use →
+              {t("termsOfUse", "Terms of Use →")}
             </a>
           </div>
         )}
 
-        <style>{`
-          @keyframes slideIn {
-            from { opacity: 0; transform: translateY(6px); }
-            to   { opacity: 1; transform: translateY(0);   }
-          }
-        `}</style>
+        <style>
+          {t(
+            "keyframesSlideinFromOpacity0TransformTranslatey6pxToOpacity1TransformTranslatey0",
+            "@keyframes slideIn {\n            from { opacity: 0; transform: translateY(6px); }\n            to   { opacity: 1; transform: translateY(0);   }\n          }",
+          )}
+        </style>
       </div>
     );
   }
@@ -341,56 +348,73 @@ const AttributionNotice: React.FC<AttributionNoticeProps> = ({
       }}
     >
       <h3 style={{ marginTop: 0, fontSize: "1.1rem", color: "#333" }}>
-        Data Attribution
+        {t("dataAttribution", "Data Attribution")}
       </h3>
       <p style={{ margin: "0.5rem 0", color: "#555" }}>
-        This application uses product data and services provided by{" "}
-        <a
-          href="https://world.openfoodfacts.org"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "#ff8000", textDecoration: "underline" }}
-        >
-          Open Food Facts
-        </a>
-        , including:
+        {t(
+          "thisApplicationUsesProductDataAndServicesProvidedBy",
+          "This application uses product data and services provided by",
+        )}{" "}
+        <Trans i18nKey="aHrefhttpsworldopenfoodfactsorgTarget_blankRelnoopenerNoreferrerStyleColorFf8000TextdecorationUnderlineOpenFoodFactsAIncluding">
+          <a
+            href="https://world.openfoodfacts.org"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "#ff8000", textDecoration: "underline" }}
+          >
+            Open Food Facts
+          </a>
+          , including:
+        </Trans>
       </p>
       <ul style={{ margin: "0.5rem 0 1rem 1.5rem", color: "#555" }}>
-        <li>Product database dump</li>
-        <li>Open Food Facts API</li>
+        <li>{t("productDatabaseDump", "Product database dump")}</li>
+        <li>{t("openFoodFactsApi", "Open Food Facts API")}</li>
       </ul>
       <p style={{ margin: "0.5rem 0", color: "#555" }}>
-        The Open Food Facts database is available under the{" "}
-        <a
-          href="https://opendatacommons.org/licenses/odbl/1.0/"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "#ff8000", textDecoration: "underline" }}
-        >
-          Open Database License (ODbL)
-        </a>
-        , and individual contents are available under the{" "}
-        <a
-          href="https://opendatacommons.org/licenses/dbcl/1.0/"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "#ff8000", textDecoration: "underline" }}
-        >
-          Database Contents License (DbCL)
-        </a>
-        .
+        {t(
+          "theOpenFoodFactsDatabaseIsAvailableUnderThe",
+          "The Open Food Facts database is available under the",
+        )}{" "}
+        <Trans i18nKey="aHrefhttpsopendatacommonsorglicensesodbl10Target_blankRelnoopenerNoreferrerStyleColorFf8000TextdecorationUnderlineOpenDatabaseLicenseOdblAAndIndividualContentsAreAvailableUnderThe">
+          <a
+            href="https://opendatacommons.org/licenses/odbl/1.0/"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "#ff8000", textDecoration: "underline" }}
+          >
+            Open Database License (ODbL)
+          </a>
+          , and individual contents are available under the
+        </Trans>{" "}
+        <Trans i18nKey="aHrefhttpsopendatacommonsorglicensesdbcl10Target_blankRelnoopenerNoreferrerStyleColorFf8000TextdecorationUnderlineDatabaseContentsLicenseDbclA">
+          <a
+            href="https://opendatacommons.org/licenses/dbcl/1.0/"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "#ff8000", textDecoration: "underline" }}
+          >
+            Database Contents License (DbCL)
+          </a>
+          .
+        </Trans>
       </p>
       <p style={{ margin: "0.5rem 0 0", color: "#555" }}>
-        For complete terms of use and licensing information, please refer to{" "}
-        <a
-          href="https://world.openfoodfacts.org/terms-of-use"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "#ff8000", textDecoration: "underline" }}
-        >
-          Open Food Facts Terms of Use
-        </a>
-        .
+        {t(
+          "forCompleteTermsOfUseAndLicensingInformationPleaseReferTo",
+          "For complete terms of use and licensing information, please refer to",
+        )}{" "}
+        <Trans i18nKey="aHrefhttpsworldopenfoodfactsorgtermsofuseTarget_blankRelnoopenerNoreferrerStyleColorFf8000TextdecorationUnderlineOpenFoodFactsTermsOfUseA">
+          <a
+            href="https://world.openfoodfacts.org/terms-of-use"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "#ff8000", textDecoration: "underline" }}
+          >
+            Open Food Facts Terms of Use
+          </a>
+          .
+        </Trans>
       </p>
     </div>
   );

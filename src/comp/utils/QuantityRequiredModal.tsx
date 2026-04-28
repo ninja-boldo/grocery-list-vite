@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 type QuantityRequiredModalProps = {
   open: boolean;
   itemName: string;
@@ -23,18 +24,20 @@ const QuantityRequiredModal = ({
   onConfirm,
   onClose,
 }: QuantityRequiredModalProps) => {
+  const { t } = useTranslation();
   if (!open) {
     return null;
   }
 
   const parsedQuantity = Number.parseFloat(quantityValue);
-  const canSubmit = Number.isFinite(parsedQuantity) && parsedQuantity > 0 && !submitting;
+  const canSubmit =
+    Number.isFinite(parsedQuantity) && parsedQuantity > 0 && !submitting;
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Quantity details required"
+      aria-label={t("quantityDetailsRequired", "Quantity details required")}
       onClick={onClose}
       style={{
         position: "fixed",
@@ -88,7 +91,7 @@ const QuantityRequiredModal = ({
             textTransform: "uppercase",
           }}
         >
-          Quantity Required
+          {t("quantityRequired", "Quantity Required")}
         </div>
 
         <h3
@@ -100,12 +103,16 @@ const QuantityRequiredModal = ({
             fontFamily: "var(--font-display)",
           }}
         >
-          Add quantity and unit
+          {t("addQuantityAndUnit", "Add quantity and unit")}
         </h3>
 
         <p style={{ margin: "0 0 14px", fontSize: 13, color: "#b4bfbe" }}>
-          The server needs quantity details for
-          <span style={{ color: "#e8f4d3", fontWeight: 700 }}> {itemName}</span> before it can save this item.
+          {t(
+            "theServerNeedsQuantityDetailsFor",
+            "The server needs quantity details for",
+          )}
+          <span style={{ color: "#e8f4d3", fontWeight: 700 }}> {itemName}</span>{" "}
+          {t("beforeItCanSaveThisItem", "before it can save this item.")}
         </p>
 
         <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
@@ -120,7 +127,7 @@ const QuantityRequiredModal = ({
                 letterSpacing: "0.07em",
               }}
             >
-              Quantity
+              {t("quantity", "Quantity")}
             </label>
             <input
               type="number"
@@ -155,7 +162,7 @@ const QuantityRequiredModal = ({
                 letterSpacing: "0.07em",
               }}
             >
-              Unit
+              {t("unit", "Unit")}
             </label>
             <select
               value={unitValue}
@@ -190,10 +197,9 @@ const QuantityRequiredModal = ({
             width: "100%",
             borderRadius: 13,
             border: "1px solid rgba(124, 170, 124, 0.55)",
-            background:
-              canSubmit
-                ? "linear-gradient(135deg, rgba(124, 170, 124, 0.95) 0%, rgba(80, 121, 92, 0.95) 100%)"
-                : "rgba(44, 56, 58, 0.8)",
+            background: canSubmit
+              ? "linear-gradient(135deg, rgba(124, 170, 124, 0.95) 0%, rgba(80, 121, 92, 0.95) 100%)"
+              : "rgba(44, 56, 58, 0.8)",
             color: canSubmit ? "#101c12" : "#7f8d8a",
             fontWeight: 800,
             fontSize: 14,
@@ -202,7 +208,9 @@ const QuantityRequiredModal = ({
             marginBottom: 10,
           }}
         >
-          {submitting ? "Saving item..." : "Save item with quantity"}
+          {submitting
+            ? t("savingItem", "Saving item...")
+            : t("saveItemWithQuantity", "Save item with quantity")}
         </button>
 
         <button
@@ -222,7 +230,7 @@ const QuantityRequiredModal = ({
             opacity: submitting ? 0.6 : 1,
           }}
         >
-          Cancel
+          {t("cancel", "Cancel")}
         </button>
       </div>
     </div>

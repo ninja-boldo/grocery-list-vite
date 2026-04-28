@@ -1,45 +1,63 @@
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
+import i18next from "i18next";
 
 interface SidebarCompProps {
   isOpen: boolean;
   onClose: () => void;
-  setNeedReauth?: (value: boolean) => void
+  setNeedReauth?: (value: boolean) => void;
 }
 
 const NAV_ITEMS = [
   {
     href: "/",
-    label: "Item List",
-    icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
+    label: i18next.t("itemList", "Item List"),
+    icon: i18next.t(
+      "m95h7a2200022v12a2200022h10a2200022v7a2200022h2m95a2200022h2a2200022m95a2200122h2a2200122",
+      "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2",
+    ),
     dot: "#0d9488",
   },
   {
     href: "/wish_list",
-    label: "Wish List",
-    icon: "M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z",
+    label: i18next.t("wishList", "Wish List"),
+    icon: i18next.t(
+      "m43186318a454500006364l1220364l76827682a454500063646364l127636l13181318a454500063640z",
+      "M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z",
+    ),
     dot: "#3b82f6",
   },
   {
     href: "/market_mapping",
-    label: "Supermarkets",
-    icon: "M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z M15 11a3 3 0 11-6 0 3 3 0 016 0z",
+    label: i18next.t("supermarkets", "Supermarkets"),
+    icon: i18next.t(
+      "m1765716657l13414209a1998199800128270l42444243a88011113140zM1511a33011603300160z",
+      "M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z M15 11a3 3 0 11-6 0 3 3 0 016 0z",
+    ),
     dot: "#f59e0b",
   },
-  { 
+  {
     href: "/settings",
-    label: "Settings",
-    icon: "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z",
+    label: i18next.t("settings", "Settings"),
+    icon: i18next.t(
+      "m103254317c4261756292417563350a1724172400025731066c154394331826237237a1724172400010652572c1756426175629240335a1724172400010662573c941543826331237237a1724172400025721065c4261756292417563350a1724172400025731066c154394331826237237a1724172400010652572c1756426175629240335a1724172400010662573c94154382633123723799660822960725721065zM1512a33011603300160z",
+      "M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z M15 12a3 3 0 11-6 0 3 3 0 016 0z",
+    ),
     dot: "#8b5cf6",
   },
-  { 
+  {
     href: "/attribution",
-    label: "Attribution",
-    icon: "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+    label: i18next.t("attribution", "Attribution"),
+    icon: i18next.t(
+      "m1316h1v4h1m14h01m2112a9901118099001180z",
+      "M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+    ),
     dot: "#8b5cf6",
   },
 ] as const;
 
 const SidebarComp = ({ isOpen, onClose, setNeedReauth }: SidebarCompProps) => {
+  const { t } = useTranslation();
   const currentPath = window.location.pathname;
 
   return (
@@ -101,7 +119,7 @@ const SidebarComp = ({ isOpen, onClose, setNeedReauth }: SidebarCompProps) => {
               color: "#4d5566",
             }}
           >
-            Navigation
+            {t("navigation", "Navigation")}
           </span>
         </div>
 
@@ -223,7 +241,7 @@ const SidebarComp = ({ isOpen, onClose, setNeedReauth }: SidebarCompProps) => {
               alignItems: "center",
               justifyContent: "center",
               flexShrink: 0,
-              cursor: "Pointer"
+              cursor: "Pointer",
             }}
             onClick={() => setNeedReauth?.(true)}
           >
@@ -250,8 +268,14 @@ const SidebarComp = ({ isOpen, onClose, setNeedReauth }: SidebarCompProps) => {
                 flexShrink: 0,
               }}
             />
-            <span style={{ fontSize: 11, color: "#4d5566", fontFamily: "monospace" }}>
-              v1.0
+            <span
+              style={{
+                fontSize: 11,
+                color: "#4d5566",
+                fontFamily: "monospace",
+              }}
+            >
+              {t("v1.0", "v1.0")}
             </span>
           </div>
         </div>

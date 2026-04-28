@@ -11,6 +11,7 @@ import CatalogueUploadModal, {
 } from "./CatalogueUploadModal";
 import type { OfferCardProps } from "./OfferCard";
 import OfferModal from "./OfferModal";
+import { useTranslation } from "react-i18next";
 
 export interface Position {
   lat: number;
@@ -177,6 +178,7 @@ const MapComponent = ({
   height,
   width,
 }: Props) => {
+  const { t } = useTranslation();
   const [activePopup, setActivePopup] = useState<Position | null>(null);
   const [catalogueTarget, setCatalogueTarget] = useState<Position | null>(null);
   const [isCatalogueOpen, setIsCatalogueOpen] = useState(false);
@@ -238,7 +240,7 @@ const MapComponent = ({
       const message =
         error instanceof Error && error.message
           ? error.message
-          : "Could not load offers right now.";
+          : t("couldNotLoadOffersRightNow", "Could not load offers right now.");
       setOffersError(message);
     } finally {
       setIsOffersLoading(false);
@@ -314,7 +316,9 @@ const MapComponent = ({
       />
 
       <div className="geo-badge">
-        {markedPositions.length} location
+        {t("lengthLocation", "{{length}} location", {
+          length: markedPositions.length,
+        })}
         {markedPositions.length !== 1 ? "s" : ""}
       </div>
     </div>

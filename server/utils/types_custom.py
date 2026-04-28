@@ -66,16 +66,27 @@ class AddSupermarketRequest(BaseModel):
     longitude: Optional[float] = None
 
 
-class QuantityInfo(BaseModel):
-    product_quantity: Optional[int]
-    product_quantity_unit: Optional[str]
-
-
 class ItemInfo(BaseModel):
     product_name: str
     quantity: Optional[str] = None
     product_quantity: Optional[int] = None
     product_quantity_unit: Optional[str] = None
+
+
+class QuantityInfo(BaseModel):
+    product_quantity: Optional[int]
+    product_quantity_unit: Optional[str]
+
+
+class AddEanRequest(BaseModel):
+    """Request model for add_ean_to_list endpoint"""
+
+    ean: Optional[str] = None
+    item_name: Optional[str] = None
+    count: Optional[int] = 1
+    wish_list: Optional[str] = None
+    quantity_data: Optional[QuantityInfo] = None
+
 
 
 class ItemInfoParsed(BaseModel):
@@ -327,17 +338,6 @@ class AddRecipe(BaseModel):
     favorited: Optional[bool] = False
     ingredients: list[Ingredient]
     steps: list[str]
-
-
-class AddEanRequest(BaseModel):
-    """Request model for add_ean_to_list endpoint"""
-
-    ean: Optional[str] = None
-    item_name: Optional[str] = None
-    count: Optional[int] = 1
-    wish_list: Optional[str] = None
-    quantity_data: Optional[QuantityInfo] = None
-
 
 class ChangePasswordRequest(BaseModel):
     current_password: str

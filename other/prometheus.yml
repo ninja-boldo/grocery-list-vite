@@ -1,19 +1,16 @@
-
 global:
-  scrape_interval:     15s #
-
+  scrape_interval: 15s #
 
   external_labels:
-    monitor: 'prometheus_watch'
-
+    monitor: "prometheus_watch"
 
 scrape_configs:
   # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
-  - job_name: 'backend'
+  - job_name: "backend"
 
     # Override the global default and scrape targets from this job every 5 seconds.
     scrape_interval: 5s
 
     static_configs:
-      - targets: ['app:3030']
-    metrics_path: '/metrics'
+      - targets: ["app:3030"]
+    metrics_path: "/metrics"

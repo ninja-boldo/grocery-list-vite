@@ -1,4 +1,6 @@
 import OfferCard, { type OfferCardProps } from "./OfferCard";
+import { useTranslation } from "react-i18next";
+import i18next from "i18next";
 
 type OfferListProps = {
   offers: OfferCardProps[];
@@ -9,8 +11,9 @@ type OfferListProps = {
 const OfferList = ({
   offers,
   className,
-  emptyMessage = "Keine Angebote gefunden.",
+  emptyMessage = i18next.t("keineAngeboteGefunden", "Keine Angebote gefunden."),
 }: OfferListProps) => {
+  const { t } = useTranslation();
   if (!offers.length) {
     return (
       <section
@@ -25,7 +28,7 @@ const OfferList = ({
       >
         <div className="pointer-events-none absolute -top-10 left-1/2 h-24 w-24 -translate-x-1/2 rounded-full bg-[#48d7c533] blur-2xl" />
         <p className="relative text-[11px] uppercase tracking-[0.16em] font-semibold text-[#8ec9bf]">
-          Angebotsvorschau
+          {t("angebotsvorschau", "Angebotsvorschau")}
         </p>
         <p className="relative mt-2 text-sm text-[#c6ebe3]">{emptyMessage}</p>
       </section>
@@ -37,7 +40,7 @@ const OfferList = ({
       className={["my-1.5 space-y-2.5 sm:space-y-3", className]
         .filter(Boolean)
         .join(" ")}
-      aria-label="Angebotsliste"
+      aria-label={t("angebotsliste", "Angebotsliste")}
     >
       <div className="grid grid-cols-1 gap-2.5 sm:gap-3 lg:grid-cols-2 xl:grid-cols-3">
         {offers.map((offer, index) => (

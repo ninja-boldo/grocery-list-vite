@@ -2,44 +2,44 @@
 
 ## Core Endpoints
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| `POST` | `/token` | - | Login, get JWT |
-| `POST` | `/change_password` | ✓ | Change password |
-| `GET` | `/fetch_items` | ✓ | List inventory items |
-| `POST` | `/add_ean_to_list/` | ✓ | Add item by EAN |
-| `POST` | `/add_fetched_items` | ✓ | Batch add items |
-| `GET` | `/recipes` | ✓ | Get user recipes |
-| `POST` | `/recipes` | ✓ | Create recipe |
-| `GET` | `/recipes/{id}` | ✓ | Get single recipe |
+| Method | Path                 | Auth | Purpose              |
+| ------ | -------------------- | ---- | -------------------- |
+| `POST` | `/token`             | -    | Login, get JWT       |
+| `POST` | `/change_password`   | ✓    | Change password      |
+| `GET`  | `/fetch_items`       | ✓    | List inventory items |
+| `POST` | `/add_ean_to_list/`  | ✓    | Add item by EAN      |
+| `POST` | `/add_fetched_items` | ✓    | Batch add items      |
+| `GET`  | `/recipes`           | ✓    | Get user recipes     |
+| `POST` | `/recipes`           | ✓    | Create recipe        |
+| `GET`  | `/recipes/{id}`      | ✓    | Get single recipe    |
 
 ## Week Plan
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| `GET` | `/week_plan` | ✓ | Get plan + settings |
-| `POST` | `/week_plan` | ✓ | Replace plan + settings |
+| Method | Path         | Auth | Purpose                 |
+| ------ | ------------ | ---- | ----------------------- |
+| `GET`  | `/week_plan` | ✓    | Get plan + settings     |
+| `POST` | `/week_plan` | ✓    | Replace plan + settings |
 
 ## Supermarkets
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| `GET` | `/get_supermarkets_close` | ✓ | Geo search |
-| `POST` | `/add_new_market` | ✓ | Add supermarket |
-| `GET` | `/get_catalogue_offers` | ✓ | Get offers |
-| `POST` | `/post_catalogue` | admin | Upload catalogue |
+| Method | Path                      | Auth  | Purpose          |
+| ------ | ------------------------- | ----- | ---------------- |
+| `GET`  | `/get_supermarkets_close` | ✓     | Geo search       |
+| `POST` | `/add_new_market`         | ✓     | Add supermarket  |
+| `GET`  | `/get_catalogue_offers`   | ✓     | Get offers       |
+| `POST` | `/post_catalogue`         | admin | Upload catalogue |
 
 ## Transcription (ML)
 
-| Method | Path | Auth | Purpose |
-|--------|------|------|---------|
-| `POST` | `/transcribe` | ✓ | Audio → item |
+| Method | Path          | Auth | Purpose      |
+| ------ | ------------- | ---- | ------------ |
+| `POST` | `/transcribe` | ✓    | Audio → item |
 
 ## Infrastructure
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `GET` | `/health` | Health check |
+| Method | Path      | Purpose      |
+| ------ | --------- | ------------ |
+| `GET`  | `/health` | Health check |
 
 ## Auth Middleware
 

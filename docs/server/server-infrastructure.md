@@ -29,15 +29,15 @@ FastAPI-based backend service running on port **3030** with PostgreSQL database.
 
 ## Key Components
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| [[server]] | `server.py` | Main app, endpoints, lifespan |
-| [[database]] | `utils/db/` | Schema, connection pooling |
-| [[api-helpers]] | `utils/api_helpers.py` | Business logic helpers |
-| [[query-builder]] | `utils/query_builder.py` | Dynamic SQL construction |
-| [[auth]] | `utils/password_helper.py` | JWT authentication |
-| [[types]] | `utils/types.py` | Pydantic models |
-| [[daemons]] | Background tasks | Classification, image rescanning |
+| Component         | File                       | Purpose                          |
+| ----------------- | -------------------------- | -------------------------------- |
+| [[server]]        | `server.py`                | Main app, endpoints, lifespan    |
+| [[database]]      | `utils/db/`                | Schema, connection pooling       |
+| [[api-helpers]]   | `utils/api_helpers.py`     | Business logic helpers           |
+| [[query-builder]] | `utils/query_builder.py`   | Dynamic SQL construction         |
+| [[auth]]          | `utils/password_helper.py` | JWT authentication               |
+| [[types]]         | `utils/types.py`           | Pydantic models                  |
+| [[daemons]]       | Background tasks           | Classification, image rescanning |
 
 ## Startup
 
@@ -51,6 +51,7 @@ uvicorn server:app --host 0.0.0.0 --port 3030
 ## Configuration
 
 All settings in `Config` class (`utils/db/dbManager.py`):
+
 - `ENABLE_WHISPER_MODEL_CLOUD` - Groq transcription
 - `DB_POOL_MIN_SIZE` / `DB_POOL_MAX_SIZE` - Connection pool
 - `ENABLE_LOKI_LOGGING` - Loki integration

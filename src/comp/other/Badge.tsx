@@ -1,42 +1,45 @@
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 
 export const BadgeType = {
   DateBadge: "date_badge",
   TextBadge: "text_badge",
 } as const;
 
-export type BadgeType = typeof BadgeType[keyof typeof BadgeType];
+export type BadgeType = (typeof BadgeType)[keyof typeof BadgeType];
 
-
-interface Props{
-    text_or_dates: string | string[],
-    type: BadgeType | null,
-    Color_1: string | undefined,
-    Color_2: string | undefined
+interface Props {
+  text_or_dates: string | string[];
+  type: BadgeType | null;
+  Color_1: string | undefined;
+  Color_2: string | undefined;
 }
-
 
 const Badge = ({
   text_or_dates,
   type,
   Color_1 = "#5eead4",
-  Color_2 = "#0f2a28"
+  Color_2 = "#0f2a28",
 }: Props) => {
+  const { t } = useTranslation();
 
-  const isTextBadge = !type || type === BadgeType.TextBadge
-  const isDateBadge = type === BadgeType.DateBadge
+  const isTextBadge = !type || type === BadgeType.TextBadge;
+  const isDateBadge = type === BadgeType.DateBadge;
 
   if (isTextBadge && Array.isArray(text_or_dates)) {
-    console.error("TextBadge cannot receive an array")
-    throw "TextBadge cannot receive an array"
+    console.error("TextBadge cannot receive an array");
+    throw t(
+      "textbadgeCannotReceiveAnArray",
+      "TextBadge cannot receive an array",
+    );
   }
 
   if (isDateBadge && typeof text_or_dates === "string") {
-    text_or_dates = [text_or_dates]
+    text_or_dates = [text_or_dates];
   }
 
-  const text = isTextBadge ? text_or_dates as string : null
-  const dates = isDateBadge ? text_or_dates as string[] : []
+  const text = isTextBadge ? (text_or_dates as string) : null;
+  const dates = isDateBadge ? (text_or_dates as string[]) : [];
 
   return isTextBadge ? (
     <div
@@ -70,7 +73,6 @@ const Badge = ({
           padding: "3px 10px",
           margin: "0.4em",
           marginInline: "0.6em",
-
         }}
       >
         <svg
@@ -87,10 +89,11 @@ const Badge = ({
           <line x1="8" y1="2" x2="8" y2="6" />
           <line x1="3" y1="10" x2="21" y2="10" />
         </svg>
-        {dates.length} date{dates.length !== 1 ? "s" : ""}
+        {t("lengthDate", "{{length}} date", { length: dates.length })}
+        {dates.length !== 1 ? "s" : ""}
       </span>
     </div>
-  )
-}
+  );
+};
 
 export default memo(Badge);

@@ -60,7 +60,30 @@ export async function authApiCall<T>(
       }
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        let responseDetail = "";
+        const responseContentType = response.headers.get("content-type") ?? "";
+
+        try {
+          if (responseContentType.includes("application/json")) {
+            const payload = (await response.json()) as { detail?: unknown };
+            if (payload?.detail !== undefined) {
+              responseDetail =
+                typeof payload.detail === "string"
+                  ? payload.detail
+                  : JSON.stringify(payload.detail);
+            } else {
+              responseDetail = JSON.stringify(payload);
+            }
+          } else {
+            responseDetail = (await response.text()).trim();
+          }
+        } catch {
+          responseDetail = "";
+        }
+
+        throw new Error(
+          `HTTP ${response.status}: ${response.statusText}${responseDetail ? ` - ${responseDetail}` : ""}`,
+        );
       }
 
       const contentType = response.headers.get("content-type") ?? "";

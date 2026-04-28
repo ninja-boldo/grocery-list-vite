@@ -2,6 +2,8 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import React, { Suspense } from "react";
 import App from "./App";
 import AttributionPage from "./sites/Attribution";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 const Dashboard = React.lazy(() => import("./sites/Dashboard"));
 const WishList = React.lazy(() => import("./sites/WishList"));
@@ -11,10 +13,10 @@ const ImprovedScanner = React.lazy(
   () => import("./comp/scanning/ImprovedScanner"),
 );
 const SettingsPage = React.lazy(() => import("./sites/Settings"));
-const MealPlanner  = React.lazy(() => import("./sites/MealPlanner"));
+const MealPlanner = React.lazy(() => import("./sites/MealPlanner"));
 const RecipesPage = React.lazy(() => import("./sites/Recipes"));
 
-const PageLoader = () => (
+const PageLoader = ({ t }: { t: TFunction }) => (
   <div
     style={{
       minHeight: "100dvh",
@@ -48,14 +50,16 @@ const PageLoader = () => (
           boxShadow: "0 0 0 6px rgba(29, 158, 117, 0.2)",
         }}
       />
-      Loading pantry experience
+      {t("LoadingPantry", "Loading pantry")}
     </div>
   </div>
 );
 
 export default function AppRouter() {
+  const { t } = useTranslation();
+
   return (
-    <Suspense fallback={<PageLoader />}>
+    <Suspense fallback={<PageLoader t={t} />}>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
@@ -65,7 +69,7 @@ export default function AppRouter() {
         <Route path="/market_mapping" element={<GeoSupermarkets />} />
         <Route path="/scanner" element={<ImprovedScanner />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/planner"     element={<MealPlanner />} />
+        <Route path="/planner" element={<MealPlanner />} />
         <Route path="/recipes" element={<RecipesPage />} />
         <Route path="/attribution" element={<AttributionPage />} />
       </Routes>

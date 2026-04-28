@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import Badge, { BadgeType } from "./Badge";
 import CountPill from "./ContainerComp/CountPill";
 import AttributionNotice from "../utils/AttributionNotice";
+import { useTranslation } from "react-i18next";
 
 export interface ContainerProps {
   text: string | null;
@@ -54,6 +55,7 @@ const Container = ({
   onClickIncrease,
   onClickDecrease,
 }: ContainerProps) => {
+  const { t } = useTranslation();
   const checkedTags: string[] = parseArr(tags);
 
   const [open, setOpen] = useState(false);
@@ -69,13 +71,16 @@ const Container = ({
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
- 
+
   const dates = parseArr(perish_dates);
   const hasValidDates = dates.length > 0 && dates[0] !== "none";
-  const displayName = shortened_name && shortened_name !== "none" ? shortened_name : text;
+  const displayName =
+    shortened_name && shortened_name !== "none" ? shortened_name : text;
   const eanDisplay = ["", "0", "-1", "1", "none"].includes(ean) ? null : ean;
-  const mappedInventoryCount = mapped_items?.reduce((sum, item) => sum + item.count, 0) ?? 0;
-  const countPillInStockNumber = isWishedNumber !== null ? mappedInventoryCount : count;
+  const mappedInventoryCount =
+    mapped_items?.reduce((sum, item) => sum + item.count, 0) ?? 0;
+  const countPillInStockNumber =
+    isWishedNumber !== null ? mappedInventoryCount : count;
 
   const handleInc = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -123,7 +128,7 @@ const Container = ({
   };
 
   const ACCENT = "var(--accent-primary)";
-  const ACCENT_D = "rgba(44, 66, 52, 0.8)";
+  const ACCENT_D = t("rgba44665208", "rgba(44, 66, 52, 0.8)");
   const ACCENT_B = "var(--accent-glow)";
   const ACCENT_C = "var(--border-strong)";
   const SURFACE = "var(--surface-0)";
@@ -146,7 +151,13 @@ const Container = ({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    border: `1px solid ${active ? (activeColor === "accent" ? ACCENT_B : "rgba(229, 115, 115, 0.3)") : BORDER}`,
+    border: t("1pxSolidVal", "1px solid {{val}}", {
+      val: active
+        ? activeColor === "accent"
+          ? ACCENT_B
+          : "rgba(229, 115, 115, 0.3)"
+        : BORDER,
+    }),
     borderRadius: 8,
     cursor: "pointer",
     fontSize: 16,
@@ -162,7 +173,7 @@ const Container = ({
         ? "#9FCF9F"
         : "#E57373"
       : "#6B7280",
-    transition: "all 0.15s",
+    transition: t("all015s", "all 0.15s"),
   });
 
   return (
@@ -227,9 +238,15 @@ const Container = ({
           </p>
 
           {/* Count pill */}
-          <CountPill instockNumber={countPillInStockNumber} wishedNumber={isWishedNumber} isIncreasing={isIncreasing}
-            isDecreasing={isDecreasing} TEAL={TEAL} TEAL_B={TEAL_B} TEAL_D={TEAL_D} 
-           />
+          <CountPill
+            instockNumber={countPillInStockNumber}
+            wishedNumber={isWishedNumber}
+            isIncreasing={isIncreasing}
+            isDecreasing={isDecreasing}
+            TEAL={TEAL}
+            TEAL_B={TEAL_B}
+            TEAL_D={TEAL_D}
+          />
 
           {/* Buttons */}
           <div
@@ -239,7 +256,7 @@ const Container = ({
             <button
               onClick={handleDec}
               disabled={isDecreasing}
-              aria-label="Decrease"
+              aria-label={t("Decrease", "Decrease")}
               style={btnStyle(isDecreasing, "red")}
               onMouseEnter={(e) => {
                 if (!isDecreasing) {
@@ -263,7 +280,7 @@ const Container = ({
             <button
               onClick={handleInc}
               disabled={isIncreasing}
-              aria-label="Increase"
+              aria-label={t("Increase", "Increase")}
               style={btnStyle(isIncreasing, "accent")}
               onMouseEnter={(e) => {
                 if (!isIncreasing) {
@@ -360,12 +377,16 @@ const Container = ({
                         src={imageUrl}
                         loading="lazy"
                         decoding="async"
-                        alt={`image with url: ${imageUrl}`}
+                        alt={t(
+                          "imageWithUrlImageurl",
+                          "image with url: {{imageUrl}}",
+                          { imageUrl },
+                        )}
                         style={{
                           width: "100%",
                           height: "100%",
                           objectFit: "cover",
-                          borderRadius: "8px"
+                          borderRadius: "8px",
                         }}
                       />
                     )}
@@ -422,7 +443,7 @@ const Container = ({
                             whiteSpace: "nowrap",
                           }}
                         >
-                          EAN
+                          {t("EAN", "EAN")}
                         </span>
                         <span
                           style={{
@@ -544,7 +565,7 @@ const Container = ({
                     color: "#4d5566",
                   }}
                 >
-                  No valid dates (code 42)
+                  {t("noValidDatesCode42", "No valid dates (code 42)")}
                 </span>
               </div>
             )}
@@ -589,7 +610,7 @@ const Container = ({
                       color: "#2dd4bf",
                     }}
                   >
-                    In Inventory
+                    {t("inInventory", "In Inventory")}
                   </span>
                   <span
                     style={{
@@ -598,7 +619,8 @@ const Container = ({
                       color: "#4d5566",
                     }}
                   >
-                    {mapped_items.reduce((s, m) => s + m.count, 0)} total
+                    {mapped_items.reduce((s, m) => s + m.count, 0)}{" "}
+                    {t("total", "total")}
                   </span>
                 </div>
 
@@ -628,7 +650,7 @@ const Container = ({
                           fontWeight: 600,
                         }}
                       >
-                        ×{m.count}
+                        {t("count2", "×{{count}}", { count: m.count })}
                       </span>
                     </div>
                   ))}

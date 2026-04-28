@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
 import AppHeader from "@/comp/other/AppHeader";
 import BottomTabBar from "@/comp/other/BottomTabBar";
 import AuthPopup from "@/comp/other/AuthPopup";
@@ -7,9 +13,17 @@ import { RecipeBookWeb } from "@/comp/recipe/RecipeBookWeb";
 import { authApiCall, hasStoredJwtToken } from "@/lib/authApi";
 import { apiClient } from "@/lib/api/client";
 import { isAddEanSuccess } from "@/lib/api/addEanFlow";
-import type { AddEanRequest, PantryClassificationWishItem } from "@/lib/api/openapi";
-import { deleteRecipeById, fetchRecipes, type RecipeItem } from "@/lib/recipesApi";
+import type {
+  AddEanRequest,
+  PantryClassificationWishItem,
+} from "@/lib/api/openapi";
+import {
+  deleteRecipeById,
+  fetchRecipes,
+  type RecipeItem,
+} from "@/lib/recipesApi";
 import FeedbackToast, { useFeedbackToast } from "@/comp/utils/FeedbackToast";
+import { useTranslation } from "react-i18next";
 
 const MOBILE_BREAKPOINT = 900;
 
@@ -24,7 +38,7 @@ const pageStyle: CSSProperties = {
 const containerStyle: CSSProperties = {
   maxWidth: 1120,
   margin: "0 auto",
-  padding: "0 16px 16px",
+  padding: "016px16px",
   display: "grid",
   gap: 14,
 };
@@ -44,6 +58,7 @@ type QuantityPrompt = {
 };
 
 export default function RecipesPage() {
+  const { t } = useTranslation();
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [recipes, setRecipes] = useState<RecipeItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -53,7 +68,9 @@ export default function RecipesPage() {
   const [addingRecipeId, setAddingRecipeId] = useState<number | null>(null);
   const [deletingRecipeId, setDeletingRecipeId] = useState<number | null>(null);
   const [toast, showToast, clearToast] = useFeedbackToast(4000);
-  const [quantityPrompt, setQuantityPrompt] = useState<QuantityPrompt | null>(null);
+  const [quantityPrompt, setQuantityPrompt] = useState<QuantityPrompt | null>(
+    null,
+  );
   const [quantityInput, setQuantityInput] = useState("");
   const [unitInput, setUnitInput] = useState("Stück");
 
@@ -89,7 +106,10 @@ export default function RecipesPage() {
       const response = await fetchRecipes(handleNeedReauth);
       setRecipes(response.recipes);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load recipes";
+      const message =
+        err instanceof Error
+          ? err.message
+          : t("failedToLoadRecipes", "Failed to load recipes");
       setError(message);
     } finally {
       setIsLoading(false);
@@ -109,7 +129,9 @@ export default function RecipesPage() {
     return recipes.filter((recipe) => {
       const recipeName = (recipe.name ?? "").toLowerCase();
       const inName = recipeName.includes(normalized);
-      const inTags = recipe.tags.some((tag) => tag.toLowerCase().includes(normalized));
+      const inTags = recipe.tags.some((tag) =>
+        tag.toLowerCase().includes(normalized),
+      );
       const inIngredients = recipe.ingredients.some((ingredient) =>
         ingredient.name.toLowerCase().includes(normalized),
       );
@@ -154,17 +176,19 @@ export default function RecipesPage() {
       }
 
       if (recipe.ingredients.length === 0) {
-        showToast("This recipe has no ingredients to add.", "error");
+        showToast("This recipe has no ingredients to add", "error");
         return;
       }
 
       setAddingRecipeId(recipe.recipe_id);
 
       try {
-        const indexedIngredients = recipe.ingredients.map((ingredient, index) => ({
-          ingredient,
-          wishItemId: `recipe-${recipe.recipe_id}-${index}`,
-        }));
+        const indexedIngredients = recipe.ingredients.map(
+          (ingredient, index) => ({
+            ingredient,
+            wishItemId: `recipe-${recipe.recipe_id}-${index}`,
+          }),
+        );
 
         const payload: PantryClassificationWishItem[] = indexedIngredients.map(
           ({ ingredient, wishItemId }) => ({
@@ -173,7 +197,8 @@ export default function RecipesPage() {
             count: 1,
             quantity: {
               product_quantity:
-                typeof ingredient.amount === "number" && Number.isFinite(ingredient.amount)
+                typeof ingredient.amount === "number" &&
+                Number.isFinite(ingredient.amount)
                   ? Math.max(1, Math.round(ingredient.amount))
                   : null,
               product_quantity_unit: ingredient.unit,
@@ -189,7 +214,10 @@ export default function RecipesPage() {
           const classification = await authApiCall<{
             mapping?: Array<{
               foundMappingWish?: boolean;
-              mappedWishItem?: { item_id?: string | null; item_name?: string | null } | null;
+              mappedWishItem?: {
+                item_id?: string | null;
+                item_name?: string | null;
+              } | null;
               pantryItem?: { item_name?: string | null } | null;
             }>;
           }>(buildClassifyItemsAgainstPantryUrl(payload), undefined, {
@@ -202,41 +230,57 @@ export default function RecipesPage() {
               alreadyInWishlistNames.add(entry.mappedWishItem.item_id);
             }
             if (entry.pantryItem?.item_name && !entry.foundMappingWish) {
-              alreadyInPantryNames.add(entry.pantryItem.item_name.toLowerCase());
+              alreadyInPantryNames.add(
+                entry.pantryItem.item_name.toLowerCase(),
+              );
             }
           }
         } catch {
           // Classification unavailable, skip check
         }
 
-        const missingIngredients = indexedIngredients.filter(({ wishItemId, ingredient }) => {
-          if (alreadyInWishlistNames.has(wishItemId)) return false;
-          if (alreadyInPantryNames.has(ingredient.name.toLowerCase())) return false;
-          return true;
-        });
+        const missingIngredients = indexedIngredients.filter(
+          ({ wishItemId, ingredient }) => {
+            if (alreadyInWishlistNames.has(wishItemId)) return false;
+            if (alreadyInPantryNames.has(ingredient.name.toLowerCase()))
+              return false;
+            return true;
+          },
+        );
 
         if (missingIngredients.length === 0) {
           setAddingRecipeId(null);
-          showToast("All ingredients are already in your pantry or wishlist.", "success");
+          showToast(
+            "All ingredients are already in your pantry and wishlist",
+            "success",
+          );
           return;
         }
 
-        const aggregated = new Map<string, { name: string; count: number; needsQuantity: boolean }>();
+        const aggregated = new Map<
+          string,
+          { name: string; count: number; needsQuantity: boolean }
+        >();
         for (const { ingredient } of missingIngredients) {
           const key = normalizeItemName(ingredient.name);
           if (!key) continue;
-          const needsQty = ingredient.amount === null && ingredient.unit === null;
+          const needsQty =
+            ingredient.amount === null && ingredient.unit === null;
           const existing = aggregated.get(key);
           if (existing) {
             existing.count += 1;
           } else {
-            aggregated.set(key, { name: ingredient.name, count: 1, needsQuantity: needsQty });
+            aggregated.set(key, {
+              name: ingredient.name,
+              count: 1,
+              needsQuantity: needsQty,
+            });
           }
         }
 
         if (aggregated.size === 0) {
           setAddingRecipeId(null);
-          showToast("No new ingredients found to add.", "success");
+          showToast("No new ingredients found to add", "success");
           return;
         }
 
@@ -248,7 +292,10 @@ export default function RecipesPage() {
         }
 
         // Prompt user for quantities on items missing them
-        const quantityOverrides = new Map<string, { quantity: number; unit: string }>();
+        const quantityOverrides = new Map<
+          string,
+          { quantity: number; unit: string }
+        >();
         for (const itemName of itemsNeedingQuantity) {
           const result = await promptForQuantity(itemName);
           if (result) {
@@ -272,14 +319,11 @@ export default function RecipesPage() {
           }
 
           try {
-            const response = await apiClient.addEanToList(
-              body,
-              {
-                retries: 1,
-                retryDelayMs: 300,
-                onUnauthorized: handleNeedReauth,
-              },
-            );
+            const response = await apiClient.addEanToList(body, {
+              retries: 1,
+              retryDelayMs: 300,
+              onUnauthorized: handleNeedReauth,
+            });
             if (isAddEanSuccess(response)) {
               addedCount++;
             }
@@ -291,15 +335,21 @@ export default function RecipesPage() {
         setAddingRecipeId(null);
         const recipeName = recipe.name?.trim() || "Unnamed Recipe";
         if (addedCount > 0) {
-          showToast(`${addedCount} ingredient${addedCount === 1 ? "" : "s"} added to wishlist from ${recipeName}.`, "success");
+          showToast(
+            `${addedCount} ingredient${addedCount === 1 ? "" : "s"} added to wishlist from ${recipeName}`,
+            "success",
+          );
         } else {
-          showToast("Could not add ingredients to wishlist.", "error");
+          showToast("Could not add ingredients to wishlist", "error");
         }
       } catch (err) {
         const message =
           err instanceof Error
             ? err.message
-            : "Failed to add missing ingredients to wishlist.";
+            : t(
+                "failedToAddMissingIngredientsToWishlist",
+                "Failed to add missing ingredients to wishlist.",
+              );
         setAddingRecipeId(null);
         showToast(message, "error");
       }
@@ -316,7 +366,11 @@ export default function RecipesPage() {
 
       const recipeLabel = recipe.name?.trim() || "Unnamed Recipe";
       const shouldDelete = window.confirm(
-        `Delete recipe "${recipeLabel}"? This cannot be undone.`,
+        t(
+          "deleteRecipeRecipelabelThisCannotBeUndone",
+          'Delete recipe "{{recipeLabel}}"? This cannot be undone.',
+          { recipeLabel },
+        ),
       );
       if (!shouldDelete) {
         return;
@@ -328,10 +382,17 @@ export default function RecipesPage() {
         setRecipes((previous) =>
           previous.filter((entry) => entry.recipe_id !== recipe.recipe_id),
         );
-        showToast(`Deleted ${recipeLabel}.`, "success");
+        showToast(
+          t("recipe_deleted_success", "Deleted {{recipeLabel}}", {
+            recipeLabel,
+          }),
+          "success",
+        );
       } catch (err) {
         const message =
-          err instanceof Error ? err.message : "Failed to delete recipe.";
+          err instanceof Error
+            ? err.message
+            : t("failedToDeleteRecipe", "Failed to delete recipe.");
         showToast(message, "error");
       } finally {
         setDeletingRecipeId(null);
@@ -358,7 +419,7 @@ export default function RecipesPage() {
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search recipes by ingredient or tag"
+            placeholder={t("search_recipes_placeholder", "Search recipes...")}
             style={{
               flex: "1 1 320px",
               minWidth: 220,
@@ -387,7 +448,9 @@ export default function RecipesPage() {
               cursor: isLoading ? "not-allowed" : "pointer",
             }}
           >
-            {isLoading ? "Refreshing..." : "Refresh"}
+            {isLoading
+              ? t("refreshing", "Refreshing...")
+              : t("refresh", "Refresh")}
           </button>
         </section>
 
@@ -402,19 +465,19 @@ export default function RecipesPage() {
               fontSize: 13,
             }}
           >
-            {error}
+            {t("error_loading_recipes", "Error: {{error}}", { error })}
           </section>
         )}
 
         {isLoading && recipes.length === 0 && (
-          <section style={{ color: "#93A4B5", fontSize: 14 }}>Loading recipes...</section>
+          <section style={{ color: "#93A4B5", fontSize: 14 }}>
+            {t("loading_recipes", "Loading recipes...")}
+          </section>
         )}
 
-        {!isLoading && filteredRecipes.length === 0 && (
-          <section style={{ color: "#93A4B5", fontSize: 14 }}>
-            {recipes.length === 0
-              ? "No recipes available from the server yet."
-              : "No recipes matched your search."}
+        {!isLoading && filteredRecipes.length === 0 && error && (
+          <section style={{ color: "#FCA5A5", fontSize: 13 }}>
+            {t("error_loading_recipes", "Error: {{error}}", { error })}
           </section>
         )}
 
@@ -464,12 +527,31 @@ export default function RecipesPage() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ width: 36, height: 4, borderRadius: 2, background: "#21262d", margin: "0 auto 18px" }} />
-            <div style={{ fontSize: 17, fontWeight: 800, color: "#e6edf3", marginBottom: 8 }}>
-              Quantity needed
+            <div
+              style={{
+                width: 36,
+                height: 4,
+                borderRadius: 2,
+                background: "#21262d",
+                margin: "0 auto 18px",
+              }}
+            />
+            <div
+              style={{
+                fontSize: 17,
+                fontWeight: 800,
+                color: "#e6edf3",
+                marginBottom: 8,
+              }}
+            >
+              {t("add_quantity_title", "Quantity")}
             </div>
             <div style={{ fontSize: 14, color: "#8b949e", marginBottom: 18 }}>
-              How much <strong style={{ color: "#5eead4" }}>{quantityPrompt.displayName}</strong> do you need?
+              {t("quantity_for_item_prompt", "How much")}{" "}
+              <strong style={{ color: "#5eead4" }}>
+                {quantityPrompt.displayName}
+              </strong>{" "}
+              {t("quantity_needed", "do you need?")}
             </div>
 
             <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
@@ -479,7 +561,7 @@ export default function RecipesPage() {
                 step="1"
                 value={quantityInput}
                 onChange={(e) => setQuantityInput(e.target.value)}
-                placeholder="Amount"
+                placeholder={t("quantity_input_placeholder", "Enter quantity")}
                 autoFocus
                 style={{
                   flex: 1,
@@ -508,8 +590,22 @@ export default function RecipesPage() {
                   fontFamily: "inherit",
                 }}
               >
-                {["g", "kg", "ml", "L", "EL", "TL", "Stück", "Prise", "Bund", "Scheiben", "Zehe"].map((u) => (
-                  <option key={u} value={u}>{u}</option>
+                {[
+                  "g",
+                  "kg",
+                  "ml",
+                  "L",
+                  "EL",
+                  "TL",
+                  "Stück",
+                  "Prise",
+                  "Bund",
+                  "Scheiben",
+                  "Zehe",
+                ].map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
                 ))}
               </select>
             </div>
@@ -531,7 +627,7 @@ export default function RecipesPage() {
                   fontFamily: "inherit",
                 }}
               >
-                Skip
+                {t("skip_button", "Skip")}
               </button>
               <button
                 type="button"
@@ -541,16 +637,25 @@ export default function RecipesPage() {
                   flex: 1,
                   padding: 12,
                   borderRadius: 13,
-                  background: quantityInput && parseFloat(quantityInput) > 0 ? "#1D9E75" : "#0F2A28",
-                  color: quantityInput && parseFloat(quantityInput) > 0 ? "#FFFFFF" : "#5eead480",
+                  background:
+                    quantityInput && parseFloat(quantityInput) > 0
+                      ? "#1D9E75"
+                      : "#0F2A28",
+                  color:
+                    quantityInput && parseFloat(quantityInput) > 0
+                      ? "#FFFFFF"
+                      : "#5eead480",
                   fontSize: 14,
                   fontWeight: 700,
                   border: "none",
-                  cursor: quantityInput && parseFloat(quantityInput) > 0 ? "pointer" : "not-allowed",
+                  cursor:
+                    quantityInput && parseFloat(quantityInput) > 0
+                      ? "pointer"
+                      : "not-allowed",
                   fontFamily: "inherit",
                 }}
               >
-                Add with quantity
+                {t("add_with_quantity_button", "Add with quantity")}
               </button>
             </div>
           </div>

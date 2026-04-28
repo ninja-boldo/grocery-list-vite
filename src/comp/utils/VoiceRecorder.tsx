@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 
 interface VoiceRecorderProps {
   isRecording: boolean;
@@ -11,6 +12,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   isLoading,
   onRecordClick,
 }) => {
+  const { t } = useTranslation();
   return (
     <button
       onClick={onRecordClick}
@@ -50,7 +52,11 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
         e.currentTarget.style.opacity = "1";
         e.currentTarget.style.transform = "scale(1)";
       }}
-      title={isRecording ? "Stop recording" : "Start recording"}
+      title={
+        isRecording
+          ? t("stopRecording", "Stop recording")
+          : t("startRecording", "Start recording")
+      }
     >
       {isLoading ? (
         <svg

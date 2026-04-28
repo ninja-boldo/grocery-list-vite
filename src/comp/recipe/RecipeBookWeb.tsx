@@ -1,6 +1,7 @@
-import React from 'react';
-import type { RecipeItem } from '@/lib/recipesApi';
-import { RecipeCardWeb } from './RecipeCardWeb';
+import React from "react";
+import type { RecipeItem } from "@/lib/recipesApi";
+import { RecipeCardWeb } from "./RecipeCardWeb";
+import { useTranslation } from "react-i18next";
 
 type RecipeBookWebProps = {
   recipes?: RecipeItem[];
@@ -17,8 +18,13 @@ export const RecipeBookWeb = ({
   onAddMissingToWishList,
   onDeleteRecipe,
 }: RecipeBookWebProps) => {
+  const { t } = useTranslation();
   if (!recipes) {
-    return <div data-testid="recipe-book-web">Web RecipeBook Component</div>;
+    return (
+      <div data-testid="recipe-book-web">
+        {t("webRecipebookComponent", "Web RecipeBook Component")}
+      </div>
+    );
   }
 
   return (

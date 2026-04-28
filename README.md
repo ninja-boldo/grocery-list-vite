@@ -33,6 +33,7 @@ Live instance: https://boldo.ddns.net
 ---
 
 ## Architecture
+
 ```
 React (Client)
       |
@@ -78,6 +79,7 @@ The system prioritizes **low hosting cost and simplicity** over large cloud infr
 ---
 
 ## Running locally
+
 ```bash
 git clone https://github.com/ninja-boldo/grocery-list-runner
 cd grocery-list-runner
@@ -87,6 +89,7 @@ docker compose up -d
 ```
 
 The application will then be available at:
+
 ```
 http://localhost
 ```

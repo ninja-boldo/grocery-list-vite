@@ -13,6 +13,8 @@ import AddSupermarketModal, {
 import { authApiCall } from "@/lib/authApi";
 import { API_PATHS } from "@/lib/api/openapi";
 import FeedbackToast, { useFeedbackToast } from "@/comp/utils/FeedbackToast";
+import { useTranslation } from "react-i18next";
+import i18next from "i18next";
 
 // ── Palette ────────────────────────────────────────────────────────────────
 const P = {
@@ -22,16 +24,18 @@ const P = {
   teal: "#1D9E75",
   tealD: "#0f2a28",
   tealB: "#0d948850",
-  text: "#e6edf3",
+  text: i18next.t("e6edf3", "#e6edf3"),
   muted: "#6e7681",
   subtle: "#4d5566",
 } as const;
 
 const formatMeters = (meters: number) => {
   if (meters >= 1000) {
-    return `${(meters / 1000).toFixed(meters % 1000 === 0 ? 0 : 1)} km`;
+    return i18next.t("valKm", "{{val}} km", {
+      val: (meters / 1000).toFixed(meters % 1000 === 0 ? 0 : 1),
+    });
   }
-  return `${meters} m`;
+  return i18next.t("metersM", "{{meters}} m", { meters });
 };
 
 type AddMarketResponse = {
@@ -41,6 +45,7 @@ type AddMarketResponse = {
 };
 
 const GeoSupermarketSite = () => {
+  const { t } = useTranslation();
   const [userPos, setUserPos] = useState<Position>({
     lon: 1,
     lat: 1,
@@ -79,12 +84,20 @@ const GeoSupermarketSite = () => {
     );
 
     if (response.status !== "success") {
-      showToast(response.message ?? "Backend rejected market upload.", "error");
+      showToast(
+        response.message ??
+          t("backendRejectedMarketUpload", "Backend rejected market upload."),
+        "error",
+      );
       throw new Error(response.message ?? "Backend rejected market upload.");
     }
 
     showToast(
-      response.detail ?? "Supermarket submitted successfully.",
+      response.detail ??
+        t(
+          "supermarketSubmittedSuccessfully",
+          "Supermarket submitted successfully.",
+        ),
       "success",
     );
 
@@ -102,7 +115,11 @@ const GeoSupermarketSite = () => {
   useEffect(() => {
     getUserLocation()
       .then((coords) => {
-        setUserPos({ lat: coords.latitude, lon: coords.longitude, valid: true });
+        setUserPos({
+          lat: coords.latitude,
+          lon: coords.longitude,
+          valid: true,
+        });
         setError(null);
       })
       .catch((err) => {
@@ -126,7 +143,12 @@ const GeoSupermarketSite = () => {
   }, [userPos, debouncedRadius]);
 
   // Cleanup debounce timer
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    },
+    [],
+  );
 
   const username = localStorage.getItem("username") ?? "L";
 
@@ -187,7 +209,10 @@ const GeoSupermarketSite = () => {
                 }}
               />
               <p style={{ marginTop: 10, fontSize: 13, color: P.muted }}>
-                Loading map and nearby supermarkets...
+                {t(
+                  "loadingMapAndNearbySupermarkets",
+                  "Loading map and nearby supermarkets...",
+                )}
               </p>
             </div>
           ) : (
@@ -238,12 +263,10 @@ const GeoSupermarketSite = () => {
                   textTransform: "uppercase",
                 }}
               >
-                Radius
+                {t("radius", "Radius")}
               </span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span
-                  style={{ fontSize: 14, fontWeight: 700, color: P.teal }}
-                >
+                <span style={{ fontSize: 14, fontWeight: 700, color: P.teal }}>
                   {formatMeters(displayRadius)}
                 </span>
                 <button
@@ -265,15 +288,17 @@ const GeoSupermarketSite = () => {
                     transition: "all 0.15s",
                   }}
                   onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.borderColor = P.tealB;
+                    (e.currentTarget as HTMLElement).style.borderColor =
+                      P.tealB;
                     (e.currentTarget as HTMLElement).style.color = "#5eead4";
                   }}
                   onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.borderColor = P.border;
+                    (e.currentTarget as HTMLElement).style.borderColor =
+                      P.border;
                     (e.currentTarget as HTMLElement).style.color = P.muted;
                   }}
                 >
-                  Reset
+                  {t("reset", "Reset")}
                 </button>
               </div>
             </div>
@@ -302,8 +327,8 @@ const GeoSupermarketSite = () => {
                 color: P.subtle,
               }}
             >
-              <span>500 m</span>
-              <span>10 km</span>
+              <span>{t("500M", "500 m")}</span>
+              <span>{t("10Km", "10 km")}</span>
             </div>
 
             {/* Divider */}
@@ -336,19 +361,30 @@ const GeoSupermarketSite = () => {
                 transition: "all 0.15s",
               }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.backgroundColor = "#152e28";
-                (e.currentTarget as HTMLElement).style.borderColor = `${P.teal}80`;
+                (e.currentTarget as HTMLElement).style.backgroundColor =
+                  "#152e28";
+                (e.currentTarget as HTMLElement).style.borderColor =
+                  `${P.teal}80`;
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.backgroundColor = P.tealD;
+                (e.currentTarget as HTMLElement).style.backgroundColor =
+                  P.tealD;
                 (e.currentTarget as HTMLElement).style.borderColor = P.tealB;
               }}
             >
-              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5" strokeLinecap="round">
+              <svg
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              >
                 <line x1="12" y1="5" x2="12" y2="19" />
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
-              Add Supermarket
+              {t("addSupermarket", "Add Supermarket")}
             </button>
           </div>
         </div>
@@ -365,7 +401,12 @@ const GeoSupermarketSite = () => {
       <BottomTabBar />
 
       {/* Spinner keyframe */}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>
+        {t(
+          "keyframesSpinToTransformRotate360deg",
+          "@keyframes spin { to { transform: rotate(360deg); } }",
+        )}
+      </style>
     </div>
   );
 };

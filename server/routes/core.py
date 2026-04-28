@@ -24,7 +24,6 @@ from utils.types_custom import (
     Item,
     ClassificationWishListVsPantryInternal,
     InternalClassification,
-    QuantityInfo,
 )
 
 router = APIRouter(prefix="", tags=["core"])
@@ -107,8 +106,6 @@ async def fetch_items(
             }
             for row in rows
         ]
-
-        print(f"returning these items: {json.dumps(items)}")
 
         return FetchItemsResponse.model_validate(
             {
