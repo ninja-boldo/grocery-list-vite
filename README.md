@@ -2,8 +2,6 @@
 
 Self-hosted, AI-powered grocery management app with barcode scanning, meal planning, and multilingual product classification.
 
-🌐 **Live Demo:** https://boldo.ddns.net  
-
 > ⚠️ Work in progress — core features are functional and self-hostable, but still evolving.
 
 ---
